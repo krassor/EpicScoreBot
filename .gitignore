@@ -1,0 +1,21 @@
+# Binaries
+bin/
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets (keep template)
+config/config.yml
+
+# Go
+vendor/
+
+# Docker
+main

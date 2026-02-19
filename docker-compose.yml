@@ -1,0 +1,44 @@
+version: '3.8'
+services:
+  app-epic-score-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: app-epic-score-bot
+    container_name: app-epic-score-bot
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      - VOLUME_PATH=${VOLUME_PATH}
+      - CONFIG_FILEPATH=${CONFIG_FILEPATH}
+      - CONFIG_FILENAME=${CONFIG_FILENAME}
+      - TGBOT_APITOKEN=${TGBOT_APITOKEN}
+    volumes:
+      - backend-service-epic-score-bot:${VOLUME_PATH}
+    networks:
+      - back-tier
+
+  postgres:
+    image: postgres:16
+    hostname: postgres
+    container_name: postgres
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_DB=epic-score-db
+      - POSTGRES_USER=epicbot
+      - POSTGRES_PASSWORD=epicbot@
+    restart: unless-stopped
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    networks:
+      - back-tier
+
+volumes:
+  pg-data:
+  backend-service-epic-score-bot:
+
+
+networks:
+  back-tier:
