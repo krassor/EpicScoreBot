@@ -150,3 +150,64 @@ func (r *Repository) GetUnscoredEpicsByUser(ctx context.Context, userID uuid.UUI
 	}
 	return epics, nil
 }
+
+// GetAllEpics returns every epic ordered by number.
+func (r *Repository) GetAllEpics(ctx context.Context) ([]domain.Epic, error) {
+	op := "Repository.GetAllEpics"
+	var epics []domain.Epic
+	query := `SELECT id, number, name, description, team_id, status,
+		final_score, created_at, updated_at
+		FROM epics ORDER BY number`
+	rows, err := r.DB.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var e domain.Epic
+		if err := rows.Scan(&e.ID, &e.Number, &e.Name, &e.Description,
+			&e.TeamID, &e.Status, &e.FinalScore,
+			&e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		epics = append(epics, e)
+	}
+	return epics, nil
+}
+
+// GetEpicsByStatus returns all epics with a given status.
+func (r *Repository) GetEpicsByStatus(ctx context.Context, status domain.Status) ([]domain.Epic, error) {
+	op := "Repository.GetEpicsByStatus"
+	var epics []domain.Epic
+	query := `SELECT id, number, name, description, team_id, status,
+		final_score, created_at, updated_at
+		FROM epics WHERE status = $1 ORDER BY number`
+	rows, err := r.DB.QueryContext(ctx, query, string(status))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var e domain.Epic
+		if err := rows.Scan(&e.ID, &e.Number, &e.Name, &e.Description,
+			&e.TeamID, &e.Status, &e.FinalScore,
+			&e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		epics = append(epics, e)
+	}
+	return epics, nil
+}
+
+// DeleteEpic permanently removes an epic and all related data (cascade).
+func (r *Repository) DeleteEpic(ctx context.Context, epicID uuid.UUID) error {
+	op := "Repository.DeleteEpic"
+	query := `DELETE FROM epics WHERE id = $1`
+	_, err := r.DB.ExecContext(ctx, query, epicID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}

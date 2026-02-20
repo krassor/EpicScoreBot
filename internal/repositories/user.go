@@ -145,3 +145,50 @@ func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (*domain
 	}
 	return &user, nil
 }
+
+// GetAllUsers returns every registered user.
+func (r *Repository) GetAllUsers(ctx context.Context) ([]domain.User, error) {
+	op := "Repository.GetAllUsers"
+	var users []domain.User
+	query := `SELECT id, first_name, last_name, telegram_id, weight,
+		created_at, updated_at
+		FROM users ORDER BY last_name, first_name`
+	rows, err := r.DB.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var u domain.User
+		if err := rows.Scan(&u.ID, &u.FirstName, &u.LastName,
+			&u.TelegramID, &u.Weight,
+			&u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		users = append(users, u)
+	}
+	return users, nil
+}
+
+// RemoveUserRole removes a role assignment from a user.
+func (r *Repository) RemoveUserRole(ctx context.Context, userID, roleID uuid.UUID) error {
+	op := "Repository.RemoveUserRole"
+	query := `DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`
+	_, err := r.DB.ExecContext(ctx, query, userID, roleID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// RemoveUserTeam removes a user from a team.
+func (r *Repository) RemoveUserTeam(ctx context.Context, userID, teamID uuid.UUID) error {
+	op := "Repository.RemoveUserTeam"
+	query := `DELETE FROM user_teams WHERE user_id = $1 AND team_id = $2`
+	_, err := r.DB.ExecContext(ctx, query, userID, teamID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}

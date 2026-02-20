@@ -11,48 +11,53 @@ import (
 
 	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/scoring"
+	"EpicScoreBot/internal/utils/logger/sl"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/google/uuid"
 )
+
+// ─── Command dispatcher ────────────────────────────────────────────────────
 
 // commandHandler dispatches bot commands.
 func (bot *Bot) commandHandler(ctx context.Context, update *tgbotapi.Update) error {
 	chatID := update.Message.Chat.ID
+	// Starting a new command cancels any pending session.
+	bot.sessions.clear(chatID)
 
 	switch update.Message.Command() {
 	case "start":
 		return bot.handleStart(chatID, update.Message)
-
 	case "help":
-		return bot.handleHelp(chatID)
-
+		return bot.handleHelp(chatID, update.Message)
 	case "addteam":
 		return bot.handleAddTeam(ctx, chatID, update.Message)
-
 	case "adduser":
 		return bot.handleAddUser(ctx, chatID, update.Message)
-
 	case "assignrole":
 		return bot.handleAssignRole(ctx, chatID, update.Message)
-
 	case "assignteam":
 		return bot.handleAssignTeam(ctx, chatID, update.Message)
-
 	case "addepic":
 		return bot.handleAddEpic(ctx, chatID, update.Message)
-
 	case "addrisk":
 		return bot.handleAddRisk(ctx, chatID, update.Message)
-
 	case "startscore":
 		return bot.handleStartScore(ctx, chatID, update.Message)
-
 	case "results":
 		return bot.handleResults(ctx, chatID, update.Message)
-
+	case "epicstatus":
+		return bot.handleEpicStatus(ctx, chatID, update.Message)
 	case "score":
 		return bot.handleScoreMenu(ctx, chatID, update.Message)
-
+	case "unassignrole":
+		return bot.handleUnassignRole(ctx, chatID, update.Message)
+	case "removefromteam":
+		return bot.handleRemoveFromTeam(ctx, chatID, update.Message)
+	case "deleteepic":
+		return bot.handleDeleteEpic(ctx, chatID, update.Message)
+	case "deleterisk":
+		return bot.handleDeleteRisk(ctx, chatID, update.Message)
 	default:
 		return bot.sendReply(chatID,
 			fmt.Sprintf("❓ Неизвестная команда: /%s\nИспользуйте /help для списка команд.",
@@ -60,7 +65,8 @@ func (bot *Bot) commandHandler(ctx context.Context, update *tgbotapi.Update) err
 	}
 }
 
-// handleStart greets the user.
+// ─── /start ───────────────────────────────────────────────────────────────
+
 func (bot *Bot) handleStart(chatID int64, msg *tgbotapi.Message) error {
 	text := fmt.Sprintf("👋 Привет, %s!\n\n"+
 		"Я бот для оценки трудоёмкости эпиков и рисков.\n"+
@@ -69,316 +75,409 @@ func (bot *Bot) handleStart(chatID int64, msg *tgbotapi.Message) error {
 	return bot.sendReply(chatID, text)
 }
 
-// handleHelp shows available commands.
-func (bot *Bot) handleHelp(chatID int64) error {
-	text := `📋 *Команды бота*
+// ─── /help ────────────────────────────────────────────────────────────────
 
-*Для администратора:*
+func (bot *Bot) handleHelp(chatID int64, msg *tgbotapi.Message) error {
+	var text string
+	if bot.isAdmin(msg) {
+		text = `📋 *Команды бота*
+
+*👤 Для всех:*
+/score — меню оценки эпиков и рисков
+/epicstatus — статус оценки эпика
+
+*🔧 Для администраторов:*
 /addteam <название> — создать команду
-/adduser <@username> <имя> <фамилия> <вес> — добавить пользователя
-/assignrole <@username> <название роли> — назначить роль
-/assignteam <@username> <название команды> — добавить в команду
-/addepic <команда> | <номер> | <название> | <описание> — создать эпик
-/addrisk <номер эпика> | <описание риска> — добавить риск
-/startscore <номер эпика> — отправить эпик на оценку
-/results <номер эпика> — показать результаты
+/adduser [@username имя фамилия вес] — добавить пользователя
+/assignrole — назначить роль пользователю
+/assignteam — добавить пользователя в команду
+/addepic — создать эпик (интерактивно)
+/addrisk — добавить риск к эпику (интерактивно)
+/startscore — запустить оценку эпика
+/results — показать результаты эпика
+/unassignrole — снять роль у пользователя
+/removefromteam — удалить пользователя из команды
+/deleteepic — удалить эпик
+/deleterisk — удалить риск`
+	} else {
+		text = `📋 *Команды бота*
 
-*Для участников:*
-/score — меню оценки эпиков и рисков`
+/score — меню оценки эпиков и рисков
+/epicstatus — статус оценки эпика
 
-	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ParseMode = tgbotapi.ModeMarkdown
-	_, err := bot.tgbot.Send(msg)
+Для управления командой и эпиками — обратитесь к администратору.`
+	}
+	m := tgbotapi.NewMessage(chatID, text)
+	m.ParseMode = tgbotapi.ModeMarkdown
+	_, err := bot.tgbot.Send(m)
 	return err
 }
 
-// handleAddTeam creates a team. Admin only.
-// Usage: /addteam TeamName
+// ─── /addteam ─────────────────────────────────────────────────────────────
+
 func (bot *Bot) handleAddTeam(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
-
 	args := strings.TrimSpace(msg.CommandArguments())
 	if args == "" {
-		return bot.sendReply(chatID,
-			"⚠️ Использование: /addteam <название команды>")
+		return bot.sendReply(chatID, "⚠️ Использование: /addteam <название команды>")
 	}
-
 	team, err := bot.repo.CreateTeam(ctx, args, "")
 	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Ошибка создания команды: %v", err))
+		return bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка создания команды: %v", err))
 	}
-
 	return bot.sendReply(chatID,
 		fmt.Sprintf("✅ Команда «%s» создана (ID: %s)", team.Name, team.ID))
 }
 
-// handleAddUser creates a user. Admin only.
-// Usage: /adduser <@username> <firstName> <lastName> <weight>
+// ─── /adduser ─────────────────────────────────────────────────────────────
+
+// handleAddUser creates a user.
+// With args: /adduser @username имя фамилия вес  → immediate create
+// Without args: interactive session (ask @username, then name, surname, weight)
 func (bot *Bot) handleAddUser(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
 
 	args := strings.Fields(msg.CommandArguments())
-	if len(args) < 4 {
+	if len(args) >= 4 {
+		// Direct form: /adduser @username имя фамилия вес
+		username := strings.TrimPrefix(args[0], "@")
+		if username == "" {
+			return bot.sendReply(chatID, "❌ Некорректный @username.")
+		}
+		weight, err := strconv.Atoi(args[3])
+		if err != nil || weight < 0 || weight > 100 {
+			return bot.sendReply(chatID, "❌ Вес должен быть числом от 0 до 100.")
+		}
+		user, err := bot.repo.CreateUser(ctx, args[1], args[2], username, weight)
+		if err != nil {
+			return bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка создания пользователя: %v", err))
+		}
 		return bot.sendReply(chatID,
-			"⚠️ Использование: /adduser <@username> <имя> <фамилия> <вес>")
+			fmt.Sprintf("✅ Пользователь %s %s (@%s) создан",
+				user.FirstName, user.LastName, user.TelegramID))
 	}
 
-	username := strings.TrimPrefix(args[0], "@")
-	if username == "" {
-		return bot.sendReply(chatID, "❌ Некорректный @username.")
-	}
-
-	weight, err := strconv.Atoi(args[3])
-	if err != nil || weight < 0 || weight > 100 {
-		return bot.sendReply(chatID,
-			"❌ Вес должен быть числом от 0 до 100.")
-	}
-
-	user, err := bot.repo.CreateUser(ctx, args[1], args[2], username, weight)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Ошибка создания пользователя: %v", err))
-	}
-
-	return bot.sendReply(chatID,
-		fmt.Sprintf("✅ Пользователь %s %s (@%s) создан (вес: %d%%)",
-			user.FirstName, user.LastName, user.TelegramID, user.Weight))
+	// Interactive form: start session
+	bot.sessions.set(chatID, &Session{
+		Step: StepAddUserUsername,
+		Data: make(map[string]string),
+	})
+	return bot.sendReply(chatID, "👤 Введите @username пользователя (без @):")
 }
 
-// handleAssignRole assigns a role to a user. Admin only.
-// Usage: /assignrole <@username> <roleName>
+// ─── /assignrole — inline keyboard ────────────────────────────────────────
+
 func (bot *Bot) handleAssignRole(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
-
-	args := msg.CommandArguments()
-	parts := strings.SplitN(args, " ", 2)
-	if len(parts) < 2 {
-		return bot.sendReply(chatID,
-			"⚠️ Использование: /assignrole <@username> <название роли>")
-	}
-
-	username := strings.TrimPrefix(strings.TrimSpace(parts[0]), "@")
-	if username == "" {
-		return bot.sendReply(chatID, "❌ Некорректный @username.")
-	}
-
-	roleName := strings.TrimSpace(parts[1])
-
-	user, err := bot.repo.FindUserByTelegramID(ctx, username)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Пользователь @%s не найден.", username))
-	}
-
-	role, err := bot.repo.GetRoleByName(ctx, roleName)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Роль «%s» не найдена.", roleName))
-	}
-
-	if err := bot.repo.AssignUserRole(ctx, user.ID, role.ID); err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Ошибка назначения роли: %v", err))
-	}
-
-	return bot.sendReply(chatID,
-		fmt.Sprintf("✅ Роль «%s» назначена пользователю %s %s.",
-			role.Name, user.FirstName, user.LastName))
+	return bot.showUserPicker(ctx, chatID, "assignrole")
 }
 
-// handleAssignTeam assigns a user to a team. Admin only.
-// Usage: /assignteam <@username> <teamName>
+// ─── /assignteam — inline keyboard ────────────────────────────────────────
+
 func (bot *Bot) handleAssignTeam(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
-
-	args := msg.CommandArguments()
-	parts := strings.SplitN(args, " ", 2)
-	if len(parts) < 2 {
-		return bot.sendReply(chatID,
-			"⚠️ Использование: /assignteam <@username> <название команды>")
-	}
-
-	username := strings.TrimPrefix(strings.TrimSpace(parts[0]), "@")
-	if username == "" {
-		return bot.sendReply(chatID, "❌ Некорректный @username.")
-	}
-
-	teamName := strings.TrimSpace(parts[1])
-
-	user, err := bot.repo.FindUserByTelegramID(ctx, username)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Пользователь @%s не найден.", username))
-	}
-
-	team, err := bot.repo.GetTeamByName(ctx, teamName)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Команда «%s» не найдена.", teamName))
-	}
-
-	if err := bot.repo.AssignUserTeam(ctx, user.ID, team.ID); err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Ошибка добавления в команду: %v", err))
-	}
-
-	return bot.sendReply(chatID,
-		fmt.Sprintf("✅ Пользователь %s %s добавлен в команду «%s».",
-			user.FirstName, user.LastName, team.Name))
+	return bot.showUserPicker(ctx, chatID, "assignteam")
 }
 
-// handleAddEpic creates an epic. Admin only.
-// Usage: /addepic teamName | epicNumber | epicName | description
+// ─── /addepic — inline keyboard then session ──────────────────────────────
+
 func (bot *Bot) handleAddEpic(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
-
-	args := msg.CommandArguments()
-	parts := strings.SplitN(args, "|", 4)
-	if len(parts) < 3 {
-		return bot.sendReply(chatID,
-			"⚠️ Использование: /addepic <команда> | <номер> | <название> | <описание>")
-	}
-
-	teamName := strings.TrimSpace(parts[0])
-	epicNumber := strings.TrimSpace(parts[1])
-	epicName := strings.TrimSpace(parts[2])
-	description := ""
-	if len(parts) == 4 {
-		description = strings.TrimSpace(parts[3])
-	}
-
-	team, err := bot.repo.GetTeamByName(ctx, teamName)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Команда «%s» не найдена.", teamName))
-	}
-
-	epic, err := bot.repo.CreateEpic(ctx, epicNumber, epicName, description, team.ID)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Ошибка создания эпика: %v", err))
-	}
-
-	return bot.sendReply(chatID,
-		fmt.Sprintf("✅ Эпик #%s «%s» создан для команды «%s» (статус: NEW)",
-			epic.Number, epic.Name, team.Name))
+	return bot.showTeamPicker(ctx, chatID, "addepic")
 }
 
-// handleAddRisk creates a risk for an epic. Admin only.
-// Usage: /addrisk epicNumber | riskDescription
+// ─── /addrisk — inline keyboard then session ──────────────────────────────
+
 func (bot *Bot) handleAddRisk(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
-
-	args := msg.CommandArguments()
-	parts := strings.SplitN(args, "|", 2)
-	if len(parts) < 2 {
-		return bot.sendReply(chatID,
-			"⚠️ Использование: /addrisk <номер эпика> | <описание риска>")
-	}
-
-	epicNumber := strings.TrimSpace(parts[0])
-	riskDesc := strings.TrimSpace(parts[1])
-
-	epic, err := bot.repo.GetEpicByNumber(ctx, epicNumber)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Эпик #%s не найден.", epicNumber))
-	}
-
-	risk, err := bot.repo.CreateRisk(ctx, riskDesc, epic.ID)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Ошибка создания риска: %v", err))
-	}
-
-	return bot.sendReply(chatID,
-		fmt.Sprintf("✅ Риск создан для эпика #%s (ID: %s)",
-			epic.Number, risk.ID))
+	return bot.showEpicPicker(ctx, chatID, "addrisk", "")
 }
 
-// handleStartScore moves an epic and its risks to SCORING. Admin only.
-// Usage: /startscore epicNumber
+// ─── /startscore — inline keyboard ───────────────────────────────────────
+
 func (bot *Bot) handleStartScore(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
-
-	epicNumber := strings.TrimSpace(msg.CommandArguments())
-	if epicNumber == "" {
-		return bot.sendReply(chatID,
-			"⚠️ Использование: /startscore <номер эпика>")
-	}
-
-	epic, err := bot.repo.GetEpicByNumber(ctx, epicNumber)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Эпик #%s не найден.", epicNumber))
-	}
-
-	if epic.Status != domain.StatusNew {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("⚠️ Эпик #%s уже в статусе %s.",
-				epic.Number, string(epic.Status)))
-	}
-
-	if err := bot.repo.UpdateEpicStatus(ctx, epic.ID, domain.StatusScoring); err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Ошибка смены статуса эпика: %v", err))
-	}
-
-	// Move all risks to SCORING as well
-	risks, err := bot.repo.GetRisksByEpicID(ctx, epic.ID)
-	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Ошибка получения рисков: %v", err))
-	}
-
-	for _, risk := range risks {
-		if err := bot.repo.UpdateRiskStatus(ctx, risk.ID, domain.StatusScoring); err != nil {
-			bot.log.Error("failed to update risk status",
-				slog.String("riskID", risk.ID.String()),
-				slog.String("error", err.Error()))
-		}
-	}
-
-	return bot.sendReply(chatID,
-		fmt.Sprintf("🚀 Эпик #%s «%s» и %d рисков отправлены на оценку!",
-			epic.Number, epic.Name, len(risks)))
+	return bot.showEpicPicker(ctx, chatID, "startscore", string(domain.StatusNew))
 }
 
-// handleResults shows the scoring results for an epic.
-// Usage: /results epicNumber
+// ─── /results — inline keyboard ──────────────────────────────────────────
+
 func (bot *Bot) handleResults(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	epicNumber := strings.TrimSpace(msg.CommandArguments())
-	if epicNumber == "" {
+	return bot.showEpicPicker(ctx, chatID, "results", "")
+}
+
+// ─── /epicstatus — inline keyboard ───────────────────────────────────────
+
+func (bot *Bot) handleEpicStatus(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	return bot.showEpicPicker(ctx, chatID, "epicstatus", "")
+}
+
+// ─── /unassignrole — inline keyboard ─────────────────────────────────────
+
+func (bot *Bot) handleUnassignRole(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+	return bot.showUserPicker(ctx, chatID, "unassignrole")
+}
+
+// ─── /removefromteam — inline keyboard ───────────────────────────────────
+
+func (bot *Bot) handleRemoveFromTeam(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+	return bot.showUserPicker(ctx, chatID, "removefromteam")
+}
+
+// ─── /deleteepic — inline keyboard ───────────────────────────────────────
+
+func (bot *Bot) handleDeleteEpic(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+	return bot.showEpicPicker(ctx, chatID, "deleteepic", "")
+}
+
+// ─── /deleterisk — inline keyboard ───────────────────────────────────────
+
+func (bot *Bot) handleDeleteRisk(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+	return bot.showEpicPicker(ctx, chatID, "deleterisk", "")
+}
+
+// ─── /score ───────────────────────────────────────────────────────────────
+
+func (bot *Bot) handleScoreMenu(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	username := msg.From.UserName
+	if username == "" {
 		return bot.sendReply(chatID,
-			"⚠️ Использование: /results <номер эпика>")
+			"❌ У вас не задан @username в Telegram. Установите его в настройках профиля.")
 	}
 
-	epic, err := bot.repo.GetEpicByNumber(ctx, epicNumber)
+	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Эпик #%s не найден.", epicNumber))
+		if errors.Is(err, sql.ErrNoRows) {
+			return bot.sendReply(chatID,
+				"❌ Вы не зарегистрированы в системе. Обратитесь к администратору.")
+		}
+		return bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка: %v", err))
+	}
+
+	teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, username)
+	if err != nil || len(teams) == 0 {
+		return bot.sendReply(chatID, "❌ Вы не состоите ни в одной команде.")
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, team := range teams {
+		btn := tgbotapi.NewInlineKeyboardButtonData(
+			fmt.Sprintf("👥 %s", team.Name),
+			fmt.Sprintf("team_%s", team.ID.String()))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	replyMsg := tgbotapi.NewMessage(chatID,
+		fmt.Sprintf("👤 %s %s, выберите команду:", user.FirstName, user.LastName))
+	replyMsg.ReplyMarkup = keyboard
+	_, err = bot.tgbot.Send(replyMsg)
+	return err
+}
+
+// ─── Inline picker helpers ─────────────────────────────────────────────────
+
+// showUserPicker sends an inline keyboard with all registered users.
+// action is embedded in the callback data so the callback handler knows the flow.
+func (bot *Bot) showUserPicker(ctx context.Context, chatID int64, action string) error {
+	users, err := bot.repo.GetAllUsers(ctx)
+	if err != nil || len(users) == 0 {
+		return bot.sendReply(chatID, "❌ Пользователи не найдены.")
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, u := range users {
+		label := fmt.Sprintf("👤 %s %s (@%s)", u.FirstName, u.LastName, u.TelegramID)
+		data := fmt.Sprintf("adm_user_%s_%s", action, u.ID.String())
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, data)))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	m := tgbotapi.NewMessage(chatID, "👤 Выберите пользователя:")
+	m.ReplyMarkup = kb
+	_, err = bot.tgbot.Send(m)
+	return err
+}
+
+// showTeamPicker sends an inline keyboard with all teams.
+func (bot *Bot) showTeamPicker(ctx context.Context, chatID int64, action string) error {
+	teams, err := bot.repo.GetAllTeams(ctx)
+	if err != nil || len(teams) == 0 {
+		return bot.sendReply(chatID, "❌ Команды не найдены.")
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, t := range teams {
+		data := fmt.Sprintf("adm_team_%s_%s", action, t.ID.String())
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("👥 "+t.Name, data)))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	m := tgbotapi.NewMessage(chatID, "👥 Выберите команду:")
+	m.ReplyMarkup = kb
+	_, err = bot.tgbot.Send(m)
+	return err
+}
+
+// showEpicPicker sends an inline keyboard with epics, optionally filtered by status.
+func (bot *Bot) showEpicPicker(ctx context.Context, chatID int64, action, statusFilter string) error {
+	var epics []domain.Epic
+	var err error
+	if statusFilter != "" {
+		epics, err = bot.repo.GetEpicsByStatus(ctx, domain.Status(statusFilter))
+	} else {
+		epics, err = bot.repo.GetAllEpics(ctx)
+	}
+	if err != nil || len(epics) == 0 {
+		return bot.sendReply(chatID, "❌ Эпики не найдены.")
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, e := range epics {
+		label := fmt.Sprintf("📝 #%s %s [%s]", e.Number, e.Name, string(e.Status))
+		data := fmt.Sprintf("adm_epic_%s_%s", action, e.ID.String())
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, data)))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	m := tgbotapi.NewMessage(chatID, "📝 Выберите эпик:")
+	m.ReplyMarkup = kb
+	_, err = bot.tgbot.Send(m)
+	return err
+}
+
+// showRolePicker sends an inline keyboard with all roles.
+func (bot *Bot) showRolePicker(ctx context.Context, chatID int64, action, userIDStr string) error {
+	roles, err := bot.repo.GetAllRoles(ctx)
+	if err != nil || len(roles) == 0 {
+		return bot.sendReply(chatID, "❌ Роли не найдены.")
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, r := range roles {
+		data := fmt.Sprintf("adm_role_%s_%s_%s", action, userIDStr, r.ID.String())
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🎭 "+r.Name, data)))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	m := tgbotapi.NewMessage(chatID, "🎭 Выберите роль:")
+	m.ReplyMarkup = kb
+	_, err = bot.tgbot.Send(m)
+	return err
+}
+
+// showUserRolePicker sends roles currently assigned to a user.
+func (bot *Bot) showUserRolePicker(ctx context.Context, chatID int64, action string, userID uuid.UUID) error {
+	roles, err := bot.repo.GetRolesByUserID(ctx, userID)
+	if err != nil || len(roles) == 0 {
+		return bot.sendReply(chatID, "❌ У пользователя нет назначенных ролей.")
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, r := range roles {
+		data := fmt.Sprintf("adm_role_%s_%s_%s", action, userID.String(), r.ID.String())
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🎭 "+r.Name, data)))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	m := tgbotapi.NewMessage(chatID, "🎭 Выберите роль для снятия:")
+	m.ReplyMarkup = kb
+	_, err = bot.tgbot.Send(m)
+	return err
+}
+
+// showUserTeamPicker sends teams to which the user belongs.
+func (bot *Bot) showUserTeamPicker(ctx context.Context, chatID int64, action string, user *domain.User) error {
+	teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, user.TelegramID)
+	if err != nil || len(teams) == 0 {
+		return bot.sendReply(chatID, "❌ Пользователь не состоит ни в одной команде.")
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, t := range teams {
+		data := fmt.Sprintf("adm_team_%s_%s_%s", action, user.ID.String(), t.ID.String())
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("👥 "+t.Name, data)))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	m := tgbotapi.NewMessage(chatID, "👥 Выберите команду:")
+	m.ReplyMarkup = kb
+	_, err = bot.tgbot.Send(m)
+	return err
+}
+
+// showRiskPicker sends risks for an epic.
+func (bot *Bot) showRiskPicker(ctx context.Context, chatID int64, action string, epic *domain.Epic) error {
+	risks, err := bot.repo.GetRisksByEpicID(ctx, epic.ID)
+	if err != nil || len(risks) == 0 {
+		return bot.sendReply(chatID, "❌ Риски не найдены для выбранного эпика.")
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, r := range risks {
+		desc := r.Description
+		if len(desc) > 50 {
+			desc = desc[:47] + "..."
+		}
+		data := fmt.Sprintf("adm_risk_%s_%s_%s", action, epic.ID.String(), r.ID.String())
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⚠️ "+desc, data)))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	m := tgbotapi.NewMessage(chatID,
+		fmt.Sprintf("⚠️ Выберите риск для эпика #%s «%s»:", epic.Number, epic.Name))
+	m.ReplyMarkup = kb
+	_, err = bot.tgbot.Send(m)
+	return err
+}
+
+// ─── /results logic (called by callback) ──────────────────────────────────
+
+// showEpicResults sends the full result report for an epic.
+func (bot *Bot) showEpicResults(ctx context.Context, chatID int64, epicID uuid.UUID) {
+	epic, err := bot.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		bot.sendReply(chatID, "❌ Эпик не найден.")
+		return
 	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "📊 *Результаты эпика #%s «%s»*\n", epic.Number, epic.Name)
 	fmt.Fprintf(&sb, "Статус: %s\n\n", string(epic.Status))
 
-	// Role scores
 	roleScores, err := bot.repo.GetEpicRoleScoresByEpicID(ctx, epic.ID)
 	if err == nil && len(roleScores) > 0 {
 		sb.WriteString("📋 *Оценки по ролям:*\n")
@@ -393,7 +492,6 @@ func (bot *Bot) handleResults(ctx context.Context, chatID int64, msg *tgbotapi.M
 		sb.WriteString("\n")
 	}
 
-	// Risks
 	risks, err := bot.repo.GetRisksByEpicID(ctx, epic.ID)
 	if err == nil && len(risks) > 0 {
 		sb.WriteString("⚠️ *Риски:*\n")
@@ -401,9 +499,7 @@ func (bot *Bot) handleResults(ctx context.Context, chatID int64, msg *tgbotapi.M
 			coeff := ""
 			if risk.WeightedScore != nil {
 				c := scoring.RiskCoefficient(*risk.WeightedScore)
-				coeff = fmt.Sprintf(
-					" (оценка: %.2f, коэфф: %.2f)",
-					*risk.WeightedScore, c)
+				coeff = fmt.Sprintf(" (оценка: %.2f, коэфф: %.2f)", *risk.WeightedScore, c)
 			}
 			fmt.Fprintf(&sb, "  • %s [%s]%s\n",
 				risk.Description, string(risk.Status), coeff)
@@ -411,59 +507,251 @@ func (bot *Bot) handleResults(ctx context.Context, chatID int64, msg *tgbotapi.M
 		sb.WriteString("\n")
 	}
 
-	// Final score
 	if epic.FinalScore != nil {
 		fmt.Fprintf(&sb, "🏆 *Итоговая оценка: %.0f*\n", *epic.FinalScore)
 	} else {
 		sb.WriteString("⏳ Итоговая оценка ещё не рассчитана.\n")
 	}
 
-	resultMsg := tgbotapi.NewMessage(chatID, sb.String())
-	resultMsg.ParseMode = tgbotapi.ModeMarkdown
-	_, err = bot.tgbot.Send(resultMsg)
-	return err
+	m := tgbotapi.NewMessage(chatID, sb.String())
+	m.ParseMode = tgbotapi.ModeMarkdown
+	bot.tgbot.Send(m)
 }
 
-// handleScoreMenu shows the scoring menu for the user.
-// Usage: /score
-func (bot *Bot) handleScoreMenu(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	username := msg.From.UserName
-	if username == "" {
-		return bot.sendReply(chatID,
-			"❌ У вас не задан @username в Telegram. Установите его в настройках профиля.")
-	}
+// ─── /epicstatus logic (called by callback) ───────────────────────────────
 
-	user, err := bot.repo.FindUserByTelegramID(ctx, username)
+// showEpicStatusReport shows who has not yet scored an epic and its risks.
+func (bot *Bot) showEpicStatusReport(ctx context.Context, chatID int64, epicID uuid.UUID) {
+	epic, err := bot.repo.GetEpicByID(ctx, epicID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return bot.sendReply(chatID,
-				"❌ Вы не зарегистрированы в системе. Обратитесь к администратору.")
+		bot.sendReply(chatID, "❌ Эпик не найден.")
+		return
+	}
+
+	teamMembers, err := bot.repo.GetUsersByTeamID(ctx, epic.TeamID)
+	if err != nil {
+		bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка получения участников: %v", err))
+		return
+	}
+
+	scoredEpic, _ := bot.repo.GetUsersWhoScoredEpic(ctx, epic.ID)
+	scoredSet := make(map[uuid.UUID]bool)
+	for _, u := range scoredEpic {
+		scoredSet[u.ID] = true
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "📊 *Статус оценки эпика #%s «%s»*\n\n", epic.Number, epic.Name)
+
+	sb.WriteString("📋 *Трудоёмкость — не оценили:*\n")
+	missing := 0
+	for _, u := range teamMembers {
+		if !scoredSet[u.ID] {
+			fmt.Fprintf(&sb, "  • %s %s (@%s)\n", u.FirstName, u.LastName, u.TelegramID)
+			missing++
 		}
-		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Ошибка: %v", err))
+	}
+	if missing == 0 {
+		sb.WriteString("  ✅ Все оценили\n")
 	}
 
-	// Get user's teams
-	teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, username)
-	if err != nil || len(teams) == 0 {
-		return bot.sendReply(chatID,
-			"❌ Вы не состоите ни в одной команде.")
+	risks, _ := bot.repo.GetRisksByEpicID(ctx, epic.ID)
+	if len(risks) > 0 {
+		sb.WriteString("\n⚠️ *Риски:*\n")
+		for _, risk := range risks {
+			scoredRisk, _ := bot.repo.GetUsersWhoScoredRisk(ctx, risk.ID)
+			riskScoredSet := make(map[uuid.UUID]bool)
+			for _, u := range scoredRisk {
+				riskScoredSet[u.ID] = true
+			}
+			desc := risk.Description
+			if len(desc) > 40 {
+				desc = desc[:37] + "..."
+			}
+			fmt.Fprintf(&sb, "\n*%s* [%s] — не оценили:\n", desc, string(risk.Status))
+			riskMissing := 0
+			for _, u := range teamMembers {
+				if !riskScoredSet[u.ID] {
+					fmt.Fprintf(&sb, "  • %s %s (@%s)\n",
+						u.FirstName, u.LastName, u.TelegramID)
+					riskMissing++
+				}
+			}
+			if riskMissing == 0 {
+				sb.WriteString("  ✅ Все оценили\n")
+			}
+		}
 	}
 
-	// Build inline keyboard with teams
-	var rows [][]tgbotapi.InlineKeyboardButton
-	for _, team := range teams {
-		btn := tgbotapi.NewInlineKeyboardButtonData(
-			fmt.Sprintf("👥 %s", team.Name),
-			fmt.Sprintf("team_%s", team.ID.String()))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
-	}
+	m := tgbotapi.NewMessage(chatID, sb.String())
+	m.ParseMode = tgbotapi.ModeMarkdown
+	bot.tgbot.Send(m)
+}
 
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	replyMsg := tgbotapi.NewMessage(chatID,
-		fmt.Sprintf("👤 %s %s, выберите команду:",
-			user.FirstName, user.LastName))
-	replyMsg.ReplyMarkup = keyboard
-	_, err = bot.tgbot.Send(replyMsg)
-	return err
+// ─── Session input handler ────────────────────────────────────────────────
+
+// handleSessionInput handles plain-text messages that continue a multi-step flow.
+func (bot *Bot) handleSessionInput(update *tgbotapi.Update) {
+	if update.Message == nil {
+		return
+	}
+	chatID := update.Message.Chat.ID
+	text := strings.TrimSpace(update.Message.Text)
+
+	sess, ok := bot.sessions.get(chatID)
+	if !ok {
+		// No active session — ignore silently
+		return
+	}
+	bot.sessions.touch(chatID)
+
+	ctx := bot.ctx
+
+	switch sess.Step {
+
+	// ── /adduser interactive steps ─────────────────────────────────────
+
+	case StepAddUserUsername:
+		username := strings.TrimPrefix(text, "@")
+		if username == "" {
+			bot.sendReply(chatID, "❌ Некорректный @username. Попробуйте ещё раз:")
+			return
+		}
+		sess.Data["username"] = username
+		sess.Step = StepAddUserFirstName
+		bot.sessions.set(chatID, sess)
+		bot.sendReply(chatID, "📝 Введите имя:")
+
+	case StepAddUserFirstName:
+		if text == "" {
+			bot.sendReply(chatID, "❌ Имя не может быть пустым. Введите имя:")
+			return
+		}
+		sess.Data["firstName"] = text
+		sess.Step = StepAddUserLastName
+		bot.sessions.set(chatID, sess)
+		bot.sendReply(chatID, "📝 Введите фамилию:")
+
+	case StepAddUserLastName:
+		if text == "" {
+			bot.sendReply(chatID, "❌ Фамилия не может быть пустой. Введите фамилию:")
+			return
+		}
+		sess.Data["lastName"] = text
+		sess.Step = StepAddUserWeight
+		bot.sessions.set(chatID, sess)
+		bot.sendReply(chatID, "📝 Введите вес пользователя (0–100):")
+
+	case StepAddUserWeight:
+		weight, err := strconv.Atoi(text)
+		if err != nil || weight < 0 || weight > 100 {
+			bot.sendReply(chatID, "❌ Вес должен быть числом от 0 до 100. Введите ещё раз:")
+			return
+		}
+		user, err := bot.repo.CreateUser(ctx,
+			sess.Data["firstName"], sess.Data["lastName"],
+			sess.Data["username"], weight)
+		bot.sessions.clear(chatID)
+		if err != nil {
+			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка создания пользователя: %v", err))
+			return
+		}
+		bot.sendReply(chatID,
+			fmt.Sprintf("✅ Пользователь %s %s (@%s) создан",
+				user.FirstName, user.LastName, user.TelegramID))
+
+	// ── /addepic interactive steps ─────────────────────────────────────
+
+	case StepAddEpicNumber:
+		sess.Data["number"] = text
+		sess.Step = StepAddEpicName
+		bot.sessions.set(chatID, sess)
+		bot.sendReply(chatID, "📝 Введите название эпика:")
+
+	case StepAddEpicName:
+		sess.Data["name"] = text
+		sess.Step = StepAddEpicDesc
+		bot.sessions.set(chatID, sess)
+		bot.sendReply(chatID, "📝 Введите описание эпика (или напишите «-» чтобы пропустить):")
+
+	case StepAddEpicDesc:
+		desc := text
+		if desc == "-" {
+			desc = ""
+		}
+		teamIDStr := sess.Data["teamID"]
+		bot.sessions.clear(chatID)
+		teamID, err := uuid.Parse(teamIDStr)
+		if err != nil {
+			bot.sendReply(chatID, "❌ Ошибка: неверный ID команды.")
+			return
+		}
+		epic, err := bot.repo.CreateEpic(ctx, sess.Data["number"], sess.Data["name"], desc, teamID)
+		if err != nil {
+			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка создания эпика: %v", err))
+			return
+		}
+		bot.sendReply(chatID,
+			fmt.Sprintf("✅ Эпик #%s «%s» создан (статус: NEW)", epic.Number, epic.Name))
+
+	// ── /addrisk interactive steps ─────────────────────────────────────
+
+	case StepAddRiskDesc:
+		epicIDStr := sess.Data["epicID"]
+		bot.sessions.clear(chatID)
+		epicID, err := uuid.Parse(epicIDStr)
+		if err != nil {
+			bot.sendReply(chatID, "❌ Ошибка: неверный ID эпика.")
+			return
+		}
+		risk, err := bot.repo.CreateRisk(ctx, text, epicID)
+		if err != nil {
+			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка создания риска: %v", err))
+			return
+		}
+		epic, _ := bot.repo.GetEpicByID(ctx, epicID)
+		epicNum := epicID.String()
+		if epic != nil {
+			epicNum = epic.Number
+		}
+		bot.sendReply(chatID,
+			fmt.Sprintf("✅ Риск создан для эпика #%s (ID: %s)", epicNum, risk.ID))
+
+	default:
+		bot.sessions.clear(chatID)
+	}
+}
+
+// ─── /startscore execution (called by callback) ───────────────────────────
+
+// execStartScore moves an epic and its risks to SCORING.
+func (bot *Bot) execStartScore(ctx context.Context, chatID int64, epicID uuid.UUID) {
+	epic, err := bot.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		bot.sendReply(chatID, "❌ Эпик не найден.")
+		return
+	}
+	if epic.Status != domain.StatusNew {
+		bot.sendReply(chatID,
+			fmt.Sprintf("⚠️ Эпик #%s уже в статусе %s.", epic.Number, string(epic.Status)))
+		return
+	}
+	if err := bot.repo.UpdateEpicStatus(ctx, epic.ID, domain.StatusScoring); err != nil {
+		bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка смены статуса эпика: %v", err))
+		return
+	}
+	risks, err := bot.repo.GetRisksByEpicID(ctx, epic.ID)
+	if err != nil {
+		bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка получения рисков: %v", err))
+		return
+	}
+	for _, risk := range risks {
+		if err := bot.repo.UpdateRiskStatus(ctx, risk.ID, domain.StatusScoring); err != nil {
+			bot.log.Error("failed to update risk status",
+				slog.String("riskID", risk.ID.String()), sl.Err(err))
+		}
+	}
+	bot.sendReply(chatID,
+		fmt.Sprintf("🚀 Эпик #%s «%s» и %d рисков отправлены на оценку!",
+			epic.Number, epic.Name, len(risks)))
 }
