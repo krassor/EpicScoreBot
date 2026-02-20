@@ -115,6 +115,9 @@ func (s *Service) CalculateRiskWeightedScore(ctx context.Context, riskID uuid.UU
 // If so, calculates the weighted score and saves it.
 func (s *Service) TryCompleteRiskScoring(ctx context.Context, riskID uuid.UUID) error {
 	op := "scoring.TryCompleteRiskScoring"
+	log := slog.With(
+		slog.String("op", op),
+	)
 
 	risk, err := s.repo.GetRiskByID(ctx, riskID)
 	if err != nil {
@@ -137,7 +140,7 @@ func (s *Service) TryCompleteRiskScoring(ctx context.Context, riskID uuid.UUID) 
 	}
 
 	if riskScoreCount < teamMembers {
-		s.log.Debug("risk scoring not complete yet",
+		log.Debug("risk scoring not complete yet",
 			slog.String("riskID", riskID.String()),
 			slog.Int("scored", riskScoreCount),
 			slog.Int("total", teamMembers))
@@ -153,7 +156,7 @@ func (s *Service) TryCompleteRiskScoring(ctx context.Context, riskID uuid.UUID) 
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	s.log.Info("risk scoring completed",
+	log.Info("risk scoring completed",
 		slog.String("riskID", riskID.String()),
 		slog.Float64("weightedScore", weightedScore),
 		slog.Float64("coefficient", RiskCoefficient(weightedScore)))
@@ -166,6 +169,9 @@ func (s *Service) TryCompleteRiskScoring(ctx context.Context, riskID uuid.UUID) 
 // and all its risks are scored. If so, calculates the final score.
 func (s *Service) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) error {
 	op := "scoring.TryCompleteEpicScoring"
+	log := slog.With(
+		slog.String("op", op),
+	)
 
 	epic, err := s.repo.GetEpicByID(ctx, epicID)
 	if err != nil {
@@ -187,7 +193,7 @@ func (s *Service) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) 
 	}
 
 	if epicScoreCount < teamMembers {
-		s.log.Debug("epic scoring not complete yet",
+		log.Debug("epic scoring not complete yet",
 			slog.String("epicID", epicID.String()),
 			slog.Int("scored", epicScoreCount),
 			slog.Int("total", teamMembers))
@@ -222,7 +228,7 @@ func (s *Service) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) 
 
 	for _, risk := range risks {
 		if risk.Status != domain.StatusScored {
-			s.log.Debug("waiting for risk scoring",
+			log.Debug("waiting for risk scoring",
 				slog.String("epicID", epicID.String()),
 				slog.String("riskID", risk.ID.String()))
 			return nil

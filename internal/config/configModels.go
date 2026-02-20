@@ -13,7 +13,7 @@ type Config struct {
 }
 
 type HttpServerConfig struct {
-	Address string        `yaml:"address" env-default:"localhost"`
+	Address string        `yaml:"address" env-default:"0.0.0.0"`
 	Port    string        `yaml:"port" env-default:"8080"`
 	Timeout time.Duration `yaml:"timeout" env-default:"5"`
 }
