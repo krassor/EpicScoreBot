@@ -75,9 +75,9 @@ func (bot *Bot) handleHelp(chatID int64) error {
 
 *Для администратора:*
 /addteam <название> — создать команду
-/adduser <tgID> <имя> <фамилия> — добавить пользователя
-/assignrole <tgID> <название роли> — назначить роль
-/assignteam <tgID> <название команды> — добавить в команду
+/adduser <@username> <имя> <фамилия> <вес> — добавить пользователя
+/assignrole <@username> <название роли> — назначить роль
+/assignteam <@username> <название команды> — добавить в команду
 /addepic <команда> | <номер> | <название> | <описание> — создать эпик
 /addrisk <номер эпика> | <описание риска> — добавить риск
 /startscore <номер эпика> — отправить эпик на оценку
@@ -116,7 +116,7 @@ func (bot *Bot) handleAddTeam(ctx context.Context, chatID int64, msg *tgbotapi.M
 }
 
 // handleAddUser creates a user. Admin only.
-// Usage: /adduser <telegramID> <firstName> <lastName> <weight>
+// Usage: /adduser <@username> <firstName> <lastName> <weight>
 func (bot *Bot) handleAddUser(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
@@ -125,12 +125,12 @@ func (bot *Bot) handleAddUser(ctx context.Context, chatID int64, msg *tgbotapi.M
 	args := strings.Fields(msg.CommandArguments())
 	if len(args) < 4 {
 		return bot.sendReply(chatID,
-			"⚠️ Использование: /adduser <telegramID> <имя> <фамилия> <вес>")
+			"⚠️ Использование: /adduser <@username> <имя> <фамилия> <вес>")
 	}
 
-	tgID, err := strconv.ParseInt(args[0], 10, 64)
-	if err != nil {
-		return bot.sendReply(chatID, "❌ Некорректный telegramID.")
+	username := strings.TrimPrefix(args[0], "@")
+	if username == "" {
+		return bot.sendReply(chatID, "❌ Некорректный @username.")
 	}
 
 	weight, err := strconv.Atoi(args[3])
@@ -139,19 +139,19 @@ func (bot *Bot) handleAddUser(ctx context.Context, chatID int64, msg *tgbotapi.M
 			"❌ Вес должен быть числом от 0 до 100.")
 	}
 
-	user, err := bot.repo.CreateUser(ctx, args[1], args[2], tgID, weight)
+	user, err := bot.repo.CreateUser(ctx, args[1], args[2], username, weight)
 	if err != nil {
 		return bot.sendReply(chatID,
 			fmt.Sprintf("❌ Ошибка создания пользователя: %v", err))
 	}
 
 	return bot.sendReply(chatID,
-		fmt.Sprintf("✅ Пользователь %s %s создан (вес: %d%%)",
-			user.FirstName, user.LastName, user.Weight))
+		fmt.Sprintf("✅ Пользователь %s %s (@%s) создан (вес: %d%%)",
+			user.FirstName, user.LastName, user.TelegramID, user.Weight))
 }
 
 // handleAssignRole assigns a role to a user. Admin only.
-// Usage: /assignrole <telegramID> <roleName>
+// Usage: /assignrole <@username> <roleName>
 func (bot *Bot) handleAssignRole(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
@@ -161,20 +161,20 @@ func (bot *Bot) handleAssignRole(ctx context.Context, chatID int64, msg *tgbotap
 	parts := strings.SplitN(args, " ", 2)
 	if len(parts) < 2 {
 		return bot.sendReply(chatID,
-			"⚠️ Использование: /assignrole <telegramID> <название роли>")
+			"⚠️ Использование: /assignrole <@username> <название роли>")
 	}
 
-	tgID, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
-	if err != nil {
-		return bot.sendReply(chatID, "❌ Некорректный telegramID.")
+	username := strings.TrimPrefix(strings.TrimSpace(parts[0]), "@")
+	if username == "" {
+		return bot.sendReply(chatID, "❌ Некорректный @username.")
 	}
 
 	roleName := strings.TrimSpace(parts[1])
 
-	user, err := bot.repo.FindUserByTelegramID(ctx, tgID)
+	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Пользователь с TG ID %d не найден.", tgID))
+			fmt.Sprintf("❌ Пользователь @%s не найден.", username))
 	}
 
 	role, err := bot.repo.GetRoleByName(ctx, roleName)
@@ -194,7 +194,7 @@ func (bot *Bot) handleAssignRole(ctx context.Context, chatID int64, msg *tgbotap
 }
 
 // handleAssignTeam assigns a user to a team. Admin only.
-// Usage: /assignteam <telegramID> <teamName>
+// Usage: /assignteam <@username> <teamName>
 func (bot *Bot) handleAssignTeam(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
@@ -204,20 +204,20 @@ func (bot *Bot) handleAssignTeam(ctx context.Context, chatID int64, msg *tgbotap
 	parts := strings.SplitN(args, " ", 2)
 	if len(parts) < 2 {
 		return bot.sendReply(chatID,
-			"⚠️ Использование: /assignteam <telegramID> <название команды>")
+			"⚠️ Использование: /assignteam <@username> <название команды>")
 	}
 
-	tgID, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
-	if err != nil {
-		return bot.sendReply(chatID, "❌ Некорректный telegramID.")
+	username := strings.TrimPrefix(strings.TrimSpace(parts[0]), "@")
+	if username == "" {
+		return bot.sendReply(chatID, "❌ Некорректный @username.")
 	}
 
 	teamName := strings.TrimSpace(parts[1])
 
-	user, err := bot.repo.FindUserByTelegramID(ctx, tgID)
+	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		return bot.sendReply(chatID,
-			fmt.Sprintf("❌ Пользователь с TG ID %d не найден.", tgID))
+			fmt.Sprintf("❌ Пользователь @%s не найден.", username))
 	}
 
 	team, err := bot.repo.GetTeamByName(ctx, teamName)
@@ -427,9 +427,13 @@ func (bot *Bot) handleResults(ctx context.Context, chatID int64, msg *tgbotapi.M
 // handleScoreMenu shows the scoring menu for the user.
 // Usage: /score
 func (bot *Bot) handleScoreMenu(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	telegramID := msg.From.ID
+	username := msg.From.UserName
+	if username == "" {
+		return bot.sendReply(chatID,
+			"❌ У вас не задан @username в Telegram. Установите его в настройках профиля.")
+	}
 
-	user, err := bot.repo.FindUserByTelegramID(ctx, telegramID)
+	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return bot.sendReply(chatID,
@@ -440,7 +444,7 @@ func (bot *Bot) handleScoreMenu(ctx context.Context, chatID int64, msg *tgbotapi
 	}
 
 	// Get user's teams
-	teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, telegramID)
+	teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, username)
 	if err != nil || len(teams) == 0 {
 		return bot.sendReply(chatID,
 			"❌ Вы не состоите ни в одной команде.")

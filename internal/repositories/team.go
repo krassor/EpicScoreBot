@@ -83,7 +83,7 @@ func (r *Repository) GetAllTeams(ctx context.Context) ([]domain.Team, error) {
 }
 
 // GetTeamsByUserTelegramID returns all teams a user belongs to.
-func (r *Repository) GetTeamsByUserTelegramID(ctx context.Context, telegramID int64) ([]domain.Team, error) {
+func (r *Repository) GetTeamsByUserTelegramID(ctx context.Context, telegramID string) ([]domain.Team, error) {
 	op := "Repository.GetTeamsByUserTelegramID"
 	var teams []domain.Team
 	query := `SELECT t.id, t.name, t.description, t.created_at, t.updated_at
