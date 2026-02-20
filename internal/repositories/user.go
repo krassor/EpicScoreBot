@@ -9,7 +9,7 @@ import (
 )
 
 // CreateUser inserts a new user.
-func (r *Repository) CreateUser(ctx context.Context, firstName, lastName string, telegramID int64, weight int) (*domain.User, error) {
+func (r *Repository) CreateUser(ctx context.Context, firstName, lastName string, telegramID string, weight int) (*domain.User, error) {
 	op := "Repository.CreateUser"
 	user := &domain.User{
 		ID:         uuid.New(),
@@ -32,7 +32,7 @@ func (r *Repository) CreateUser(ctx context.Context, firstName, lastName string,
 }
 
 // FindUserByTelegramID returns a user by Telegram ID.
-func (r *Repository) FindUserByTelegramID(ctx context.Context, telegramID int64) (*domain.User, error) {
+func (r *Repository) FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error) {
 	op := "Repository.FindUserByTelegramID"
 	var user domain.User
 	query := `SELECT id, first_name, last_name, telegram_id, weight,

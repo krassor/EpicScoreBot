@@ -38,7 +38,7 @@ func (bot *Bot) handleCallbackQuery(update *tgbotapi.Update) {
 	defer cancel()
 
 	chatID := callback.Message.Chat.ID
-	telegramID := callback.From.ID
+	username := callback.From.UserName
 
 	switch {
 	// team_<teamID> — show team's unscored epics
@@ -49,7 +49,7 @@ func (bot *Bot) handleCallbackQuery(update *tgbotapi.Update) {
 			bot.sendCallbackAlert(callback, "❌ Ошибка парсинга ID команды")
 			return
 		}
-		bot.showTeamEpics(ctx, chatID, telegramID, teamID)
+		bot.showTeamEpics(ctx, chatID, username, teamID)
 
 	// epic_<epicID> — show scoring options for an epic
 	case strings.HasPrefix(data, "epic_"):
@@ -59,11 +59,11 @@ func (bot *Bot) handleCallbackQuery(update *tgbotapi.Update) {
 			bot.sendCallbackAlert(callback, "❌ Ошибка парсинга ID эпика")
 			return
 		}
-		bot.showEpicScoreOptions(ctx, chatID, telegramID, epicID)
+		bot.showEpicScoreOptions(ctx, chatID, username, epicID)
 
 	// score_epic_<epicID>_<value> — submit epic score
 	case strings.HasPrefix(data, "score_epic_"):
-		bot.handleEpicScoreSubmit(ctx, chatID, telegramID, data)
+		bot.handleEpicScoreSubmit(ctx, chatID, username, data)
 
 	// risks_<epicID> — show unscored risks for epic
 	case strings.HasPrefix(data, "risks_"):
@@ -73,7 +73,7 @@ func (bot *Bot) handleCallbackQuery(update *tgbotapi.Update) {
 			bot.sendCallbackAlert(callback, "❌ Ошибка парсинга ID эпика")
 			return
 		}
-		bot.showEpicRisks(ctx, chatID, telegramID, epicID)
+		bot.showEpicRisks(ctx, chatID, username, epicID)
 
 	// risk_<riskID> — show risk scoring form
 	case strings.HasPrefix(data, "risk_") && !strings.HasPrefix(data, "riskprob_") && !strings.HasPrefix(data, "riskimp_"):
@@ -88,11 +88,11 @@ func (bot *Bot) handleCallbackQuery(update *tgbotapi.Update) {
 	// riskprob_<riskID>_<value> — submit risk probability (step 1),
 	// then show impact buttons
 	case strings.HasPrefix(data, "riskprob_"):
-		bot.handleRiskProbability(ctx, chatID, telegramID, data)
+		bot.handleRiskProbability(ctx, chatID, username, data)
 
 	// riskimp_<riskID>_<prob>_<value> — submit risk impact (step 2)
 	case strings.HasPrefix(data, "riskimp_"):
-		bot.handleRiskImpact(ctx, chatID, telegramID, data)
+		bot.handleRiskImpact(ctx, chatID, username, data)
 
 	default:
 		log.Warn("unknown callback data", slog.String("data", data))
@@ -100,13 +100,13 @@ func (bot *Bot) handleCallbackQuery(update *tgbotapi.Update) {
 }
 
 // showTeamEpics shows the list of unscored SCORING epics for the user in a team.
-func (bot *Bot) showTeamEpics(ctx context.Context, chatID, telegramID int64, teamID uuid.UUID) {
+func (bot *Bot) showTeamEpics(ctx context.Context, chatID int64, username string, teamID uuid.UUID) {
 	op := "bot.showTeamEpics()"
 	log := bot.log.With(
 		slog.String("op", op),
 	)
 
-	user, err := bot.repo.FindUserByTelegramID(ctx, telegramID)
+	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		botErr := bot.sendReply(chatID, "❌ Пользователь не найден.")
 		log.Error("failed to find user", sl.Err(botErr))
@@ -150,7 +150,7 @@ func (bot *Bot) showTeamEpics(ctx context.Context, chatID, telegramID int64, tea
 }
 
 // showEpicScoreOptions shows the score buttons (1–100) and Risks button.
-func (bot *Bot) showEpicScoreOptions(ctx context.Context, chatID, telegramID int64, epicID uuid.UUID) {
+func (bot *Bot) showEpicScoreOptions(ctx context.Context, chatID int64, username string, epicID uuid.UUID) {
 	op := "bot.showEpicScoreOptions()"
 	log := bot.log.With(
 		slog.String("op", op),
@@ -163,7 +163,7 @@ func (bot *Bot) showEpicScoreOptions(ctx context.Context, chatID, telegramID int
 		return
 	}
 
-	user, err := bot.repo.FindUserByTelegramID(ctx, telegramID)
+	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		botErr := bot.sendReply(chatID, "❌ Пользователь не найден.")
 		log.Error("failed to send reply", sl.Err(botErr))
@@ -228,7 +228,7 @@ func (bot *Bot) showEpicScoreOptions(ctx context.Context, chatID, telegramID int
 
 // handleEpicScoreSubmit processes an epic score submission.
 // Format: score_epic_<epicID>_<value>
-func (bot *Bot) handleEpicScoreSubmit(ctx context.Context, chatID, telegramID int64, data string) {
+func (bot *Bot) handleEpicScoreSubmit(ctx context.Context, chatID int64, username string, data string) {
 	op := "bot.handleEpicScoreSubmit()"
 	log := bot.log.With(
 		slog.String("op", op),
@@ -261,7 +261,7 @@ func (bot *Bot) handleEpicScoreSubmit(ctx context.Context, chatID, telegramID in
 		return
 	}
 
-	user, err := bot.repo.FindUserByTelegramID(ctx, telegramID)
+	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		botErr := bot.sendReply(chatID, "❌ Пользователь не найден.")
 		log.Error("failed to send reply", sl.Err(botErr))
@@ -303,13 +303,13 @@ func (bot *Bot) handleEpicScoreSubmit(ctx context.Context, chatID, telegramID in
 }
 
 // showEpicRisks shows unscored risks for an epic.
-func (bot *Bot) showEpicRisks(ctx context.Context, chatID, telegramID int64, epicID uuid.UUID) {
+func (bot *Bot) showEpicRisks(ctx context.Context, chatID int64, username string, epicID uuid.UUID) {
 	op := "bot.showEpicRisks()"
 	log := bot.log.With(
 		slog.String("op", op),
 	)
 
-	user, err := bot.repo.FindUserByTelegramID(ctx, telegramID)
+	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		botErr := bot.sendReply(chatID, "❌ Пользователь не найден.")
 		log.Error("failed to send reply", sl.Err(botErr))
@@ -386,7 +386,7 @@ func (bot *Bot) showRiskScoreForm(ctx context.Context, chatID int64, riskID uuid
 
 // handleRiskProbability processes risk probability selection.
 // Format: riskprob_<riskID>_<value>
-func (bot *Bot) handleRiskProbability(ctx context.Context, chatID, telegramID int64, data string) {
+func (bot *Bot) handleRiskProbability(ctx context.Context, chatID int64, username string, data string) {
 	op := "bot.handleRiskProbability()"
 	log := bot.log.With(
 		slog.String("op", op),
@@ -448,7 +448,7 @@ func (bot *Bot) handleRiskProbability(ctx context.Context, chatID, telegramID in
 
 // handleRiskImpact processes risk impact selection and saves the score.
 // Format: riskimp_<riskID>_<probability>_<impact>
-func (bot *Bot) handleRiskImpact(ctx context.Context, chatID, telegramID int64, data string) {
+func (bot *Bot) handleRiskImpact(ctx context.Context, chatID int64, username string, data string) {
 	op := "bot.handleRiskImpact()"
 	log := bot.log.With(
 		slog.String("op", op),
@@ -507,7 +507,7 @@ func (bot *Bot) handleRiskImpact(ctx context.Context, chatID, telegramID int64, 
 		return
 	}
 
-	user, err := bot.repo.FindUserByTelegramID(ctx, telegramID)
+	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		botErr := bot.sendReply(chatID, "❌ Пользователь не найден.")
 		log.Error("failed to send reply", sl.Err(botErr))
