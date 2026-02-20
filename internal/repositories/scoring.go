@@ -221,3 +221,57 @@ func (r *Repository) GetDistinctRoleIDsForEpicScores(ctx context.Context, epicID
 	}
 	return roleIDs, nil
 }
+
+// GetUsersWhoScoredEpic returns users who have submitted an epic score.
+func (r *Repository) GetUsersWhoScoredEpic(ctx context.Context, epicID uuid.UUID) ([]domain.User, error) {
+	op := "Repository.GetUsersWhoScoredEpic"
+	query := `SELECT u.id, u.first_name, u.last_name, u.telegram_id,
+		u.weight, u.created_at, u.updated_at
+		FROM users u
+		INNER JOIN epic_scores es ON es.user_id = u.id
+		WHERE es.epic_id = $1`
+	rows, err := r.DB.QueryContext(ctx, query, epicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	var users []domain.User
+	for rows.Next() {
+		var u domain.User
+		if err := rows.Scan(&u.ID, &u.FirstName, &u.LastName,
+			&u.TelegramID, &u.Weight,
+			&u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		users = append(users, u)
+	}
+	return users, nil
+}
+
+// GetUsersWhoScoredRisk returns users who have submitted a risk score.
+func (r *Repository) GetUsersWhoScoredRisk(ctx context.Context, riskID uuid.UUID) ([]domain.User, error) {
+	op := "Repository.GetUsersWhoScoredRisk"
+	query := `SELECT u.id, u.first_name, u.last_name, u.telegram_id,
+		u.weight, u.created_at, u.updated_at
+		FROM users u
+		INNER JOIN risk_scores rs ON rs.user_id = u.id
+		WHERE rs.risk_id = $1`
+	rows, err := r.DB.QueryContext(ctx, query, riskID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	var users []domain.User
+	for rows.Next() {
+		var u domain.User
+		if err := rows.Scan(&u.ID, &u.FirstName, &u.LastName,
+			&u.TelegramID, &u.Weight,
+			&u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		users = append(users, u)
+	}
+	return users, nil
+}

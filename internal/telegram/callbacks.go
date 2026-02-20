@@ -41,6 +41,8 @@ func (bot *Bot) handleCallbackQuery(update *tgbotapi.Update) {
 	username := callback.From.UserName
 
 	switch {
+	// ── User scoring flows ──────────────────────────────────────────────────
+
 	// team_<teamID> — show team's unscored epics
 	case strings.HasPrefix(data, "team_"):
 		teamIDStr := strings.TrimPrefix(data, "team_")
@@ -85,14 +87,50 @@ func (bot *Bot) handleCallbackQuery(update *tgbotapi.Update) {
 		}
 		bot.showRiskScoreForm(ctx, chatID, riskID)
 
-	// riskprob_<riskID>_<value> — submit risk probability (step 1),
-	// then show impact buttons
+	// riskprob_<riskID>_<value> — submit risk probability (step 1)
 	case strings.HasPrefix(data, "riskprob_"):
 		bot.handleRiskProbability(ctx, chatID, username, data)
 
 	// riskimp_<riskID>_<prob>_<value> — submit risk impact (step 2)
 	case strings.HasPrefix(data, "riskimp_"):
 		bot.handleRiskImpact(ctx, chatID, username, data)
+
+	// ── Admin flows ─────────────────────────────────────────────────────────
+
+	case data == "adm_cancel":
+		bot.sessions.clear(chatID)
+		bot.sendReply(chatID, "❌ Действие отменено.")
+
+	// adm_user_<action>_<userID> — user selected in picker
+	case strings.HasPrefix(data, "adm_user_"):
+		bot.handleAdmUserSelected(ctx, chatID, callback, data)
+
+	// adm_role_<action>_<userID>_<roleID> — role selected in picker
+	case strings.HasPrefix(data, "adm_role_"):
+		bot.handleAdmRoleSelected(ctx, chatID, callback, data)
+
+	// adm_team_<action>_<...> — team selected in picker
+	case strings.HasPrefix(data, "adm_team_"):
+		bot.handleAdmTeamSelected(ctx, chatID, callback, data)
+
+	// adm_epic_<action>_<epicID> — epic selected in picker
+	case strings.HasPrefix(data, "adm_epic_"):
+		bot.handleAdmEpicSelected(ctx, chatID, callback, data)
+
+	// adm_risk_<action>_<epicID>_<riskID> — risk selected in picker
+	case strings.HasPrefix(data, "adm_risk_"):
+		bot.handleAdmRiskSelected(ctx, chatID, callback, data)
+
+	// adm_confirm_<action>_<id> — confirm destructive action
+	case strings.HasPrefix(data, "adm_confirm_"):
+		bot.handleAdmConfirm(ctx, chatID, callback, data)
+
+	// adm_deny_* — cancel destructive action
+	case strings.HasPrefix(data, "adm_deny_"):
+		bot.sessions.clear(chatID)
+		bot.sendReply(chatID, "❌ Удаление отменено.")
+
+	// epicstatus_<epicID> — handled in epic picker now via adm_epic_epicstatus_
 
 	default:
 		log.Warn("unknown callback data", slog.String("data", data))

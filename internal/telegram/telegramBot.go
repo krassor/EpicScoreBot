@@ -20,6 +20,7 @@ type Bot struct {
 	cfg             *config.Config
 	repo            *repositories.Repository
 	scoring         *scoring.Service
+	sessions        *sessionStore
 	shutdownChannel chan struct{}
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -48,6 +49,7 @@ func New(logger *slog.Logger, cfg *config.Config, repo *repositories.Repository,
 		cfg:             cfg,
 		repo:            repo,
 		scoring:         scoringSvc,
+		sessions:        newSessionStore(),
 		shutdownChannel: make(chan struct{}),
 		ctx:             ctx,
 		cancel:          cancel,
@@ -111,10 +113,9 @@ func (bot *Bot) processUpdate(update *tgbotapi.Update) {
 			}
 		case update.CallbackQuery != nil:
 			bot.handleCallbackQuery(update)
-		default:
-			if update.Message != nil {
-				log.Debug("unsupported message type")
-			}
+		case update.Message != nil:
+			// route plain-text messages through the session handler
+			bot.handleSessionInput(update)
 		}
 	}
 }

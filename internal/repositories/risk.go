@@ -129,3 +129,14 @@ func (r *Repository) GetUnscoredRisksByUser(ctx context.Context, userID, epicID 
 	}
 	return risks, nil
 }
+
+// DeleteRisk permanently removes a risk and its scores (cascade).
+func (r *Repository) DeleteRisk(ctx context.Context, riskID uuid.UUID) error {
+	op := "Repository.DeleteRisk"
+	query := `DELETE FROM risks WHERE id = $1`
+	_, err := r.DB.ExecContext(ctx, query, riskID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
