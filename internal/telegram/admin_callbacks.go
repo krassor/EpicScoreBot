@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"EpicScoreBot/internal/models/domain"
@@ -14,11 +15,11 @@ import (
 // ─── Callback data format ──────────────────────────────────────────────────
 //
 // adm_user_<action>_<userID>
-// adm_role_<action>_<userID>_<roleID>
+// adm_role_<action>_<roleID>        (userID stored in session as pendingUserID)
 // adm_team_<action>_<...>
-//   assignteam flow:   adm_team_assignteam_<userID>_<teamID>
+//   assignteam flow:   adm_team_assignteam_<teamID>  (userID in session)
 //   addepic    flow:   adm_team_addepic_<teamID>
-//   removefromteam:    adm_team_removefromteam_<userID>_<teamID>
+//   removefromteam:    adm_team_removefromteam_<teamID> (userID in session)
 // adm_epic_<action>_<epicID>
 // adm_risk_<action>_<epicID>_<riskID>
 // adm_confirm_<action>_<id>
@@ -27,6 +28,13 @@ import (
 // handleAdmUserSelected handles when an admin picks a user from the user picker.
 // data = "adm_user_<action>_<userID>"
 func (bot *Bot) handleAdmUserSelected(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
+	op := "bot.handleAdmUserSelected"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+		slog.String("data", data),
+	)
+
 	if !bot.isAdminCallback(callback) {
 		bot.sendReply(chatID, "⛔ Только для администраторов.")
 		return
@@ -43,6 +51,8 @@ func (bot *Bot) handleAdmUserSelected(ctx context.Context, chatID int64, callbac
 	userIDStr := rest[len(rest)-36:]
 	action := rest[:len(rest)-37] // cut trailing "_<uuid>"
 
+	log.Debug("parsed", slog.String("user_id", userIDStr), slog.String("action", action))
+
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
 		bot.sendReply(chatID, "❌ Ошибка парсинга ID пользователя.")
@@ -54,6 +64,8 @@ func (bot *Bot) handleAdmUserSelected(ctx context.Context, chatID int64, callbac
 		bot.sendReply(chatID, "❌ Пользователь не найден.")
 		return
 	}
+
+	log.Debug("user found", slog.Any("user tg id", user.TelegramID))
 
 	switch action {
 	case "assignrole":
@@ -71,15 +83,25 @@ func (bot *Bot) handleAdmUserSelected(ctx context.Context, chatID int64, callbac
 }
 
 // showTeamPickerForUser shows all teams for admin to assign a user to.
+// user.ID is stored in the session; callback data carries only action + teamID
+// to stay within Telegram's 64-byte callback-data limit.
 func (bot *Bot) showTeamPickerForUser(ctx context.Context, chatID int64, action string, user *domain.User) error {
 	teams, err := bot.repo.GetAllTeams(ctx)
 	if err != nil || len(teams) == 0 {
 		return bot.sendReply(chatID, "❌ Команды не найдены.")
 	}
+	// Persist userID in session so the callback handler can retrieve it.
+	sess, _ := bot.sessions.get(chatID)
+	if sess == nil {
+		sess = &Session{Data: make(map[string]string)}
+	}
+	sess.Data["pendingUserID"] = user.ID.String()
+	bot.sessions.set(chatID, sess)
+
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, t := range teams {
-		// adm_team_assignteam_<userID>_<teamID>
-		data := fmt.Sprintf("adm_team_%s_%s_%s", action, user.ID.String(), t.ID.String())
+		// adm_team_assignteam_<teamID> — fits well under 64 bytes
+		data := fmt.Sprintf("adm_team_%s_%s", action, t.ID.String())
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("👥 "+t.Name, data)))
 	}
@@ -94,23 +116,33 @@ func (bot *Bot) showTeamPickerForUser(ctx context.Context, chatID int64, action 
 }
 
 // handleAdmRoleSelected handles role selection.
-// data = "adm_role_<action>_<userID>_<roleID>"
+// data = "adm_role_<action>_<roleID>"
+// userID is read from session key "pendingUserID" (set by the role picker).
 func (bot *Bot) handleAdmRoleSelected(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
 	if !bot.isAdminCallback(callback) {
 		bot.sendReply(chatID, "⛔ Только для администраторов.")
 		return
 	}
 	rest := strings.TrimPrefix(data, "adm_role_")
-	// rest = "<action>_<userID 36>_<roleID 36>"
-	// both UUIDs are 36 chars; total suffix = 36+1+36 = 73
-	if len(rest) < 74 {
+	// rest = "<action>_<roleID 36>"
+	if len(rest) < 38 { // minimum: 1 char action + "_" + 36 char uuid
 		bot.sendReply(chatID, "❌ Некорректные данные.")
 		return
 	}
 	roleIDStr := rest[len(rest)-36:]
-	rest2 := rest[:len(rest)-37]
-	userIDStr := rest2[len(rest2)-36:]
-	action := rest2[:len(rest2)-37]
+	action := rest[:len(rest)-37] // cut trailing "_<uuid>"
+
+	// Retrieve the target userID stored by the picker in the session.
+	sess, ok := bot.sessions.get(chatID)
+	if !ok || sess == nil {
+		bot.sendReply(chatID, "❌ Сессия истекла. Повторите команду.")
+		return
+	}
+	userIDStr, hasPending := sess.Data["pendingUserID"]
+	if !hasPending || userIDStr == "" {
+		bot.sendReply(chatID, "❌ Сессия истекла. Повторите команду.")
+		return
+	}
 
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
@@ -133,6 +165,10 @@ func (bot *Bot) handleAdmRoleSelected(ctx context.Context, chatID int64, callbac
 		bot.sendReply(chatID, "❌ Роль не найдена.")
 		return
 	}
+
+	// Clean up session pendingUserID after successful lookup.
+	delete(sess.Data, "pendingUserID")
+	bot.sessions.set(chatID, sess)
 
 	switch action {
 	case "assignrole":
@@ -159,9 +195,9 @@ func (bot *Bot) handleAdmRoleSelected(ctx context.Context, chatID int64, callbac
 // handleAdmTeamSelected handles team selection.
 // data formats:
 //
-//	adm_team_addepic_<teamID>          — addepic: team picked, start session
-//	adm_team_assignteam_<uID>_<tID>   — assign user to team
-//	adm_team_removefromteam_<uID>_<tID>
+//	adm_team_addepic_<teamID>             — addepic: team picked, start session
+//	adm_team_assignteam_<teamID>          — assign user (ID in session) to team
+//	adm_team_removefromteam_<teamID>      — remove user (ID in session) from team
 func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
 	if !bot.isAdminCallback(callback) {
 		bot.sendReply(chatID, "⛔ Только для администраторов.")
@@ -174,10 +210,10 @@ func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callbac
 		return
 	}
 	lastID := rest[len(rest)-36:]
-	prefix := rest[:len(rest)-37] // action[_userID]
+	action := rest[:len(rest)-37] // action name only (no embedded userID)
 
-	switch {
-	case prefix == "addepic":
+	switch action {
+	case "addepic":
 		// Start addepic session: teamID picked
 		teamID, err := uuid.Parse(lastID)
 		if err != nil {
@@ -190,11 +226,18 @@ func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callbac
 		})
 		bot.sendReply(chatID, "📝 Введите номер эпика (например, EP-1):")
 
-	case strings.HasPrefix(prefix, "assignteam_") || strings.HasPrefix(prefix, "removefromteam_"):
-		// prefix = "assignteam_<userID>" or "removefromteam_<userID>"
-		underIdx := strings.Index(prefix, "_")
-		action := prefix[:underIdx]
-		userIDStr := prefix[underIdx+1:]
+	case "assignteam", "removefromteam":
+		// Retrieve the target userID stored in the session by the team picker.
+		sess, ok := bot.sessions.get(chatID)
+		if !ok || sess == nil {
+			bot.sendReply(chatID, "❌ Сессия истекла. Повторите команду.")
+			return
+		}
+		userIDStr, hasPending := sess.Data["pendingUserID"]
+		if !hasPending || userIDStr == "" {
+			bot.sendReply(chatID, "❌ Сессия истекла. Повторите команду.")
+			return
+		}
 
 		teamID, err := uuid.Parse(lastID)
 		if err != nil {
@@ -216,6 +259,11 @@ func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callbac
 			bot.sendReply(chatID, "❌ Команда не найдена.")
 			return
 		}
+
+		// Clean up session pendingUserID after successful lookup.
+		delete(sess.Data, "pendingUserID")
+		bot.sessions.set(chatID, sess)
+
 		switch action {
 		case "assignteam":
 			if err := bot.repo.AssignUserTeam(ctx, userID, teamID); err != nil {

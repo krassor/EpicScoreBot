@@ -23,6 +23,9 @@ const (
 	// /addrisk interactive flow (epic is picked via inline keyboard)
 	StepAddRiskDesc SessionStep = "addrisk_desc"
 
+	// /score epic effort text-input flow
+	StepScoreEpicEffort SessionStep = "score_epic_effort"
+
 	// delete confirmation
 	StepConfirmDeleteEpic SessionStep = "confirm_delete_epic"
 	StepConfirmDeleteRisk SessionStep = "confirm_delete_risk"
