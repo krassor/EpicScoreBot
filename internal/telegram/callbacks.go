@@ -548,7 +548,8 @@ func (bot *Bot) handleRiskImpact(ctx context.Context, chatID int64, username str
 	// Parse: <uuid>_<prob>_<impact>
 	// Find last two underscores
 	parts := strings.Split(trimmed, "_")
-	if len(parts) < 7 { // UUID has 5 parts separated by "-" → split by "_" gives uuid segments + prob + impact
+	if len(parts) != 3 { // UUID has 5 parts separated by "-" → split by "_" gives uuid segments + prob + impact
+		log.Error("invalid callback data format", slog.String("len(parts) != 3", data))
 		botErr := bot.sendReply(chatID, "❌ Некорректные данные.")
 		if botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -563,16 +564,17 @@ func (bot *Bot) handleRiskImpact(ctx context.Context, chatID int64, username str
 	// So we need a different approach
 
 	// Let's find the last two underscores
-	lastIdx := strings.LastIndex(trimmed, "_")
-	if lastIdx < 0 {
-		botErr := bot.sendReply(chatID, "❌ Некорректные данные.")
-		if botErr != nil {
-			log.Error("failed to send reply", sl.Err(botErr))
-		}
-		return
-	}
-	impact, err := strconv.Atoi(trimmed[lastIdx+1:])
+	// lastIdx := strings.LastIndex(trimmed, "_")
+	// if lastIdx < 0 {
+	// 	botErr := bot.sendReply(chatID, "❌ Некорректные данные.")
+	// 	if botErr != nil {
+	// 		log.Error("failed to send reply", sl.Err(botErr))
+	// 	}
+	// 	return
+	// }
+	impact, err := strconv.Atoi(parts[2])
 	if err != nil || impact < 1 || impact > 4 {
+		log.Error("invalid impact", slog.String("impact", parts[2]))
 		botErr := bot.sendReply(chatID, "❌ Влияние должно быть от 1 до 4.")
 		if botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -580,17 +582,18 @@ func (bot *Bot) handleRiskImpact(ctx context.Context, chatID int64, username str
 		return
 	}
 
-	rest := trimmed[:lastIdx]
-	secondLastIdx := strings.LastIndex(rest, "_")
-	if secondLastIdx < 0 {
-		botErr := bot.sendReply(chatID, "❌ Некорректные данные.")
-		if botErr != nil {
-			log.Error("failed to send reply", sl.Err(botErr))
-		}
-		return
-	}
-	prob, err := strconv.Atoi(rest[secondLastIdx+1:])
+	// rest := trimmed[:lastIdx]
+	// secondLastIdx := strings.LastIndex(rest, "_")
+	// if secondLastIdx < 0 {
+	// 	botErr := bot.sendReply(chatID, "❌ Некорректные данные.")
+	// 	if botErr != nil {
+	// 		log.Error("failed to send reply", sl.Err(botErr))
+	// 	}
+	// 	return
+	// }
+	prob, err := strconv.Atoi(parts[1])
 	if err != nil || prob < 1 || prob > 4 {
+		log.Error("invalid probability", slog.String("prob", parts[1]))
 		botErr := bot.sendReply(chatID, "❌ Вероятность должна быть от 1 до 4.")
 		if botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -598,9 +601,10 @@ func (bot *Bot) handleRiskImpact(ctx context.Context, chatID int64, username str
 		return
 	}
 
-	riskIDStr := rest[:secondLastIdx]
+	riskIDStr := parts[0]
 	riskID, err := uuid.Parse(riskIDStr)
 	if err != nil {
+		log.Error("invalid risk id", slog.String("risk_id", riskIDStr))
 		botErr := bot.sendReply(chatID, "❌ Ошибка парсинга ID риска.")
 		if botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -610,6 +614,7 @@ func (bot *Bot) handleRiskImpact(ctx context.Context, chatID int64, username str
 
 	user, err := bot.repo.FindUserByTelegramID(ctx, username)
 	if err != nil {
+		log.Error("user not found", slog.String("username", username))
 		botErr := bot.sendReply(chatID, "❌ Пользователь не найден.")
 		if botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -618,6 +623,7 @@ func (bot *Bot) handleRiskImpact(ctx context.Context, chatID int64, username str
 	}
 
 	if err := bot.repo.CreateRiskScore(ctx, riskID, user.ID, prob, impact); err != nil {
+		log.Error("failed to create risk score", sl.Err(err))
 		botErr := bot.sendReply(chatID,
 			fmt.Sprintf("❌ Ошибка сохранения оценки риска: %v", err))
 		if botErr != nil {
@@ -640,8 +646,10 @@ func (bot *Bot) handleRiskImpact(ctx context.Context, chatID int64, username str
 
 	// Try to auto-complete risk scoring
 	if err := bot.scoring.TryCompleteRiskScoring(ctx, riskID); err != nil {
-		bot.log.Error("failed to try complete risk scoring",
-			slog.String("riskID", riskID.String()), sl.Err(err))
+		log.Error(
+			"failed to try complete risk scoring",
+			slog.String("riskID", riskID.String()),
+			sl.Err(err))
 	}
 }
 
