@@ -118,8 +118,9 @@ func (r *Repository) SetEpicFinalScore(ctx context.Context, epicID uuid.UUID, sc
 	return nil
 }
 
-// GetUnscoredEpicsByUser returns SCORING epics in a user's teams
-// that the user has not yet scored.
+// GetUnscoredEpicsByUser returns SCORING epics in a team where the user
+// still has outstanding work: either the epic effort is not yet scored,
+// or one or more of its SCORING risks are not scored by this user.
 func (r *Repository) GetUnscoredEpicsByUser(ctx context.Context, userID uuid.UUID, teamID uuid.UUID) ([]domain.Epic, error) {
 	op := "Repository.GetUnscoredEpicsByUser"
 	query := `SELECT e.id, e.number, e.name, e.description,
@@ -127,9 +128,22 @@ func (r *Repository) GetUnscoredEpicsByUser(ctx context.Context, userID uuid.UUI
 		e.created_at, e.updated_at
 		FROM epics e
 		WHERE e.team_id = $1 AND e.status = $2
-		AND NOT EXISTS (
-			SELECT 1 FROM epic_scores es
-			WHERE es.epic_id = e.id AND es.user_id = $3
+		AND (
+			-- effort not yet scored by this user
+			NOT EXISTS (
+				SELECT 1 FROM epic_scores es
+				WHERE es.epic_id = e.id AND es.user_id = $3
+			)
+			OR
+			-- at least one SCORING risk not scored by this user
+			EXISTS (
+				SELECT 1 FROM risks ri
+				WHERE ri.epic_id = e.id AND ri.status = $2
+				AND NOT EXISTS (
+					SELECT 1 FROM risk_scores rs
+					WHERE rs.risk_id = ri.id AND rs.user_id = $3
+				)
+			)
 		)
 		ORDER BY e.number`
 	rows, err := r.DB.QueryContext(ctx, query, teamID, string(domain.StatusScoring), userID)
