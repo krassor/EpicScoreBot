@@ -376,35 +376,83 @@ func (bot *Bot) showEpicPicker(ctx context.Context, chatID int64, action, status
 }
 
 // showRolePicker sends an inline keyboard with all roles.
+// userIDStr is stored in the session by the caller; callback data carries only
+// action + roleID to stay within Telegram's 64-byte callback-data limit.
 func (bot *Bot) showRolePicker(ctx context.Context, chatID int64, action, userIDStr string) error {
+	op := "bot.showRolePicker"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+		slog.String("action", action),
+		slog.String("user_id", userIDStr),
+	)
+
 	roles, err := bot.repo.GetAllRoles(ctx)
+
+	log.Debug("roles found", slog.Int("roles count", len(roles)))
+
 	if err != nil || len(roles) == 0 {
 		return bot.sendReply(chatID, "❌ Роли не найдены.")
 	}
+
+	// Persist userID in the session so the callback handler can retrieve it
+	// without embedding it in callback data (two UUIDs exceed the 64-byte limit).
+	sess, _ := bot.sessions.get(chatID)
+	if sess == nil {
+		sess = &Session{Data: make(map[string]string)}
+	}
+	sess.Data["pendingUserID"] = userIDStr
+	bot.sessions.set(chatID, sess)
+
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, r := range roles {
-		data := fmt.Sprintf("adm_role_%s_%s_%s", action, userIDStr, r.ID.String())
+		// callback: adm_role_<action>_<roleID>  — fits well under 64 bytes
+		data := fmt.Sprintf("adm_role_%s_%s", action, r.ID.String())
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🎭 "+r.Name, data)))
 	}
+
+	log.Debug("rows created", slog.Int("rows count", len(rows)))
+
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
+
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
 	m := tgbotapi.NewMessage(chatID, "🎭 Выберите роль:")
 	m.ReplyMarkup = kb
 	_, err = bot.tgbot.Send(m)
+
+	if err != nil {
+		log.Error("error sending rows", slog.String("error", err.Error()))
+	} else {
+		log.Debug(
+			"rows sent",
+			slog.Int("rows count", len(rows)),
+		)
+	}
+
 	return err
 }
 
 // showUserRolePicker sends roles currently assigned to a user.
+// userID is stored in the session; callback data carries only action + roleID.
 func (bot *Bot) showUserRolePicker(ctx context.Context, chatID int64, action string, userID uuid.UUID) error {
 	roles, err := bot.repo.GetRolesByUserID(ctx, userID)
 	if err != nil || len(roles) == 0 {
 		return bot.sendReply(chatID, "❌ У пользователя нет назначенных ролей.")
 	}
+	// Persist userID in session so the callback handler can retrieve it.
+	sess, _ := bot.sessions.get(chatID)
+	if sess == nil {
+		sess = &Session{Data: make(map[string]string)}
+	}
+	sess.Data["pendingUserID"] = userID.String()
+	bot.sessions.set(chatID, sess)
+
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, r := range roles {
-		data := fmt.Sprintf("adm_role_%s_%s_%s", action, userID.String(), r.ID.String())
+		// callback: adm_role_<action>_<roleID>  — fits well under 64 bytes
+		data := fmt.Sprintf("adm_role_%s_%s", action, r.ID.String())
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🎭 "+r.Name, data)))
 	}
@@ -418,14 +466,24 @@ func (bot *Bot) showUserRolePicker(ctx context.Context, chatID int64, action str
 }
 
 // showUserTeamPicker sends teams to which the user belongs.
+// user.ID is stored in the session; callback data carries only action + teamID.
 func (bot *Bot) showUserTeamPicker(ctx context.Context, chatID int64, action string, user *domain.User) error {
 	teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, user.TelegramID)
 	if err != nil || len(teams) == 0 {
 		return bot.sendReply(chatID, "❌ Пользователь не состоит ни в одной команде.")
 	}
+	// Persist userID in session so the callback handler can retrieve it.
+	sess, _ := bot.sessions.get(chatID)
+	if sess == nil {
+		sess = &Session{Data: make(map[string]string)}
+	}
+	sess.Data["pendingUserID"] = user.ID.String()
+	bot.sessions.set(chatID, sess)
+
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, t := range teams {
-		data := fmt.Sprintf("adm_team_%s_%s_%s", action, user.ID.String(), t.ID.String())
+		// callback: adm_team_<action>_<teamID>  — fits well under 64 bytes
+		data := fmt.Sprintf("adm_team_%s_%s", action, t.ID.String())
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("👥 "+t.Name, data)))
 	}
@@ -716,6 +774,56 @@ func (bot *Bot) handleSessionInput(update *tgbotapi.Update) {
 		}
 		bot.sendReply(chatID,
 			fmt.Sprintf("✅ Риск создан для эпика #%s (ID: %s)", epicNum, risk.ID))
+
+	// ── /score epic effort text-input step ────────────────────────────
+
+	case StepScoreEpicEffort:
+		score, err := strconv.Atoi(text)
+		if err != nil || score < 0 || score > 500 {
+			bot.sendReply(chatID,
+				"❌ Некорректный ввод. Введите целое число от 0 до 500:")
+			return
+		}
+
+		epicIDStr := sess.Data["epicID"]
+		username := sess.Data["username"]
+		bot.sessions.clear(chatID)
+
+		epicID, err := uuid.Parse(epicIDStr)
+		if err != nil {
+			bot.sendReply(chatID, "❌ Ошибка: неверный ID эпика.")
+			return
+		}
+
+		user, err := bot.repo.FindUserByTelegramID(ctx, username)
+		if err != nil {
+			bot.sendReply(chatID, "❌ Пользователь не найден.")
+			return
+		}
+
+		roles, err := bot.repo.GetRolesByUserID(ctx, user.ID)
+		if err != nil || len(roles) == 0 {
+			bot.sendReply(chatID, "❌ У вас нет назначенной роли.")
+			return
+		}
+
+		if err := bot.repo.CreateEpicScore(ctx, epicID, user.ID, roles[0].ID, score); err != nil {
+			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка сохранения оценки: %v", err))
+			return
+		}
+
+		epic, _ := bot.repo.GetEpicByID(ctx, epicID)
+		epicNum := epicIDStr
+		if epic != nil {
+			epicNum = epic.Number
+		}
+		bot.sendReply(chatID,
+			fmt.Sprintf("✅ Оценка %d для эпика #%s сохранена!", score, epicNum))
+
+		if err := bot.scoring.TryCompleteEpicScoring(ctx, epicID); err != nil {
+			bot.log.Error("failed to try complete epic scoring",
+				slog.String("epicID", epicID.String()), sl.Err(err))
+		}
 
 	default:
 		bot.sessions.clear(chatID)
