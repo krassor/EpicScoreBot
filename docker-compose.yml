@@ -2,7 +2,7 @@ version: '3.8'
 services:
   app-epic-score-bot:
     build:
-      context: .
+      context: eventsBot
       dockerfile: Dockerfile
     hostname: app-epic-score-bot
     container_name: app-epic-score-bot
@@ -13,14 +13,13 @@ services:
       - VOLUME_PATH=${VOLUME_PATH}
       - CONFIG_FILEPATH=${CONFIG_FILEPATH}
       - CONFIG_FILENAME=${CONFIG_FILENAME}
-      - TGBOT_APITOKEN=${TGBOT_APITOKEN}
     volumes:
       - backend-service-epic-score-bot:${VOLUME_PATH}
     networks:
       - back-tier
 
   postgres:
-    image: postgres:16
+    image: postgres
     hostname: postgres
     container_name: postgres
     ports:
@@ -29,9 +28,11 @@ services:
       - POSTGRES_DB=epic-score-db
       - POSTGRES_USER=epicbot
       - POSTGRES_PASSWORD=epicbot@
+    # command:
+    #   - 'echo "host skygrowdb krassor all trust" >> /var/lib/postgresql/data/pg_hba.conf'
     restart: unless-stopped
     volumes:
-      - pg-data:/var/lib/postgresql/data
+      - pg-data:/var/lib/postgres
     networks:
       - back-tier
 
