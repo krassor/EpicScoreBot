@@ -1,11 +1,10 @@
-version: '3.8'
 services:
-  app-epic-score-bot:
+  app-backend-service-epic-score-bot:
     build:
-      context: eventsBot
+      context: EpicScoreBot
       dockerfile: Dockerfile
-    hostname: app-epic-score-bot
-    container_name: app-epic-score-bot
+    hostname: app-backend-service-epic-score-bot
+    container_name: app-backend-service-epic-score-bot
     restart: unless-stopped
     depends_on:
       - postgres
