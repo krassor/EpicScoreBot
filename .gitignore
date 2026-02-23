@@ -20,5 +20,5 @@ vendor/
 # Docker
 main
 
-.env
+# Env
 docker-compose.yml

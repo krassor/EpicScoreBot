@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
-    / BIGINT NOT NULL UNIQUE,
+    telegram_id BIGINT NOT NULL UNIQUE,
     weight INT NOT NULL DEFAULT 100 CHECK (
         weight >= 0
         AND weight <= 100
