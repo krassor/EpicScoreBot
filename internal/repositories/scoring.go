@@ -80,6 +80,17 @@ func (r *Repository) HasUserScoredEpic(ctx context.Context, epicID, userID uuid.
 	return count > 0, nil
 }
 
+// DeleteEpicScore removes all scores for a given epic.
+func (r *Repository) DeleteEpicScore(ctx context.Context, epicID uuid.UUID) error {
+	op := "Repository.DeleteEpicScore"
+	query := `DELETE FROM epic_scores WHERE epic_id = $1`
+	_, err := r.DB.ExecContext(ctx, query, epicID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
 // CreateRiskScore inserts a user's risk assessment.
 func (r *Repository) CreateRiskScore(ctx context.Context, riskID, userID uuid.UUID, probability, impact int) error {
 	op := "Repository.CreateRiskScore"
@@ -129,6 +140,17 @@ func (r *Repository) HasUserScoredRisk(ctx context.Context, riskID, userID uuid.
 	return count > 0, nil
 }
 
+// DeleteRiskScore removes a single risk score by its ID.
+func (r *Repository) DeleteRiskScore(ctx context.Context, riskID uuid.UUID) error {
+	op := "Repository.DeleteRiskScore"
+	query := `DELETE FROM risk_scores WHERE risk_id = $1`
+	_, err := r.DB.ExecContext(ctx, query, riskID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
 // UpsertEpicRoleScore inserts or updates the weighted average for a role.
 func (r *Repository) UpsertEpicRoleScore(ctx context.Context, epicID, roleID uuid.UUID, weightedAvg float64) error {
 	op := "Repository.UpsertEpicRoleScore"
@@ -136,6 +158,17 @@ func (r *Repository) UpsertEpicRoleScore(ctx context.Context, epicID, roleID uui
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (epic_id, role_id) DO UPDATE SET weighted_avg = $4`
 	_, err := r.DB.ExecContext(ctx, query, uuid.New(), epicID, roleID, weightedAvg)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// DeleteEpicRoleScore removes all role-level scores for a given epic.
+func (r *Repository) DeleteEpicRoleScore(ctx context.Context, epicID uuid.UUID) error {
+	op := "Repository.DeleteEpicRoleScore"
+	query := `DELETE FROM epic_role_scores WHERE epic_id = $1`
+	_, err := r.DB.ExecContext(ctx, query, epicID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}

@@ -77,6 +77,38 @@ func (bot *Bot) handleAdmUserSelected(ctx context.Context, chatID int64, callbac
 		bot.showTeamPickerForUser(ctx, chatID, "assignteam", user)
 	case "removefromteam":
 		bot.showUserTeamPicker(ctx, chatID, "removefromteam", user)
+	case "deleteuser":
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("✅ Да, удалить",
+					"adm_confirm_deleteuser_"+userID.String()),
+				tgbotapi.NewInlineKeyboardButtonData("❌ Отмена",
+					"adm_deny_deleteuser"),
+			),
+		)
+		m := tgbotapi.NewMessage(chatID,
+			fmt.Sprintf("⚠️ Удалить пользователя %s %s (@%s)?\n"+
+				"Будут удалены все его роли, привязки к командам и оценки.\n"+
+				"Это действие необратимо.",
+				user.FirstName, user.LastName, user.TelegramID))
+		m.ReplyMarkup = kb
+		bot.tgbot.Send(m)
+	case "renameuser":
+		bot.sessions.set(chatID, &Session{
+			Step: StepRenameUserFirstName,
+			Data: map[string]string{"pendingUserID": userID.String()},
+		})
+		bot.sendReply(chatID,
+			fmt.Sprintf("✏️ Переименование пользователя %s %s (@%s).\n📝 Введите новое имя:",
+				user.FirstName, user.LastName, user.TelegramID))
+	case "changerate":
+		bot.sessions.set(chatID, &Session{
+			Step: StepChangeRateWeight,
+			Data: map[string]string{"pendingUserID": userID.String()},
+		})
+		bot.sendReply(chatID,
+			fmt.Sprintf("⚖️ Изменение веса пользователя %s %s (@%s).\nТекущий вес: %d\n📝 Введите новый вес (0–100):",
+				user.FirstName, user.LastName, user.TelegramID, user.Weight))
 	default:
 		bot.sendReply(chatID, fmt.Sprintf("❌ Неизвестное действие: %s", action))
 	}
@@ -436,6 +468,46 @@ func (bot *Bot) handleAdmConfirm(ctx context.Context, chatID int64, callback *tg
 	switch action {
 	case "deleteepic":
 		epic, _ := bot.repo.GetEpicByID(ctx, id)
+
+		// risks, _ := bot.repo.GetRisksByEpicID(ctx, id)
+		// if len(risks) > 0 {
+		// 	for _, risk := range risks {
+		// 		risk_scores, _ := bot.repo.GetRiskScoresByRiskID(ctx, risk.ID)
+		// 		if len(risk_scores) > 0 {
+		// 			for _, risk_score := range risk_scores {
+		// 				if err := bot.repo.DeleteRiskScore(ctx, risk_score.ID); err != nil {
+		// 					bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления оценки риска: %v", err))
+		// 					return
+		// 				}
+		// 			}
+		// 		}
+		// 		if err := bot.repo.DeleteRisk(ctx, risk.ID); err != nil {
+		// 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления риска: %v", err))
+		// 			return
+		// 		}
+		// 	}
+		// }
+
+		// epic_scores, _ := bot.repo.GetEpicScoresByEpicID(ctx, id)
+		// if len(epic_scores) > 0 {
+		// 	for _, epic_score := range epic_scores {
+		// 		if err := bot.repo.DeleteEpicScore(ctx, epic_score.ID); err != nil {
+		// 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления оценки эпика: %v", err))
+		// 			return
+		// 		}
+		// 	}
+		// }
+
+		// epic_role_scores, _ := bot.repo.GetEpicRoleScoresByEpicID(ctx, id)
+		// if len(epic_role_scores) > 0 {
+		// 	for _, epic_role_score := range epic_role_scores {
+		// 		if err := bot.repo.DeleteEpicRoleScore(ctx, epic_role_score.ID); err != nil {
+		// 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления оценки роли эпика: %v", err))
+		// 			return
+		// 		}
+		// 	}
+		// }
+
 		if err := bot.repo.DeleteEpic(ctx, id); err != nil {
 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления эпика: %v", err))
 			return
@@ -448,6 +520,17 @@ func (bot *Bot) handleAdmConfirm(ctx context.Context, chatID int64, callback *tg
 
 	case "deleterisk":
 		risk, _ := bot.repo.GetRiskByID(ctx, id)
+
+		// risk_scores, _ := bot.repo.GetRiskScoresByRiskID(ctx, risk.ID)
+		// if len(risk_scores) > 0 {
+		// 	for _, risk_score := range risk_scores {
+		// 		if err := bot.repo.DeleteRiskScore(ctx, risk_score.ID); err != nil {
+		// 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления оценки риска: %v", err))
+		// 			return
+		// 		}
+		// 	}
+		// }
+
 		if err := bot.repo.DeleteRisk(ctx, id); err != nil {
 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления риска: %v", err))
 			return
@@ -460,6 +543,19 @@ func (bot *Bot) handleAdmConfirm(ctx context.Context, chatID int64, callback *tg
 			}
 		}
 		bot.sendReply(chatID, fmt.Sprintf("🗑️ Риск «%s» удалён.", desc))
+
+	case "deleteuser":
+		user, _ := bot.repo.GetUserByID(ctx, id)
+		if err := bot.repo.DeleteUser(ctx, id); err != nil {
+			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления пользователя: %v", err))
+			return
+		}
+		userLabel := id.String()
+		if user != nil {
+			userLabel = fmt.Sprintf("%s %s (@%s)",
+				user.FirstName, user.LastName, user.TelegramID)
+		}
+		bot.sendReply(chatID, fmt.Sprintf("🗑️ Пользователь %s удалён.", userLabel))
 
 	default:
 		bot.sendReply(chatID, "❌ Неизвестное действие.")

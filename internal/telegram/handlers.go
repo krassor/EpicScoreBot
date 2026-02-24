@@ -35,6 +35,8 @@ func (bot *Bot) commandHandler(ctx context.Context, update *tgbotapi.Update) err
 		return bot.handleAddTeam(ctx, chatID, update.Message)
 	case "adduser":
 		return bot.handleAddUser(ctx, chatID, update.Message)
+	case "renameuser":
+		return bot.handleRenameUser(ctx, chatID, update.Message)
 	case "assignrole":
 		return bot.handleAssignRole(ctx, chatID, update.Message)
 	case "assignteam":
@@ -59,10 +61,15 @@ func (bot *Bot) commandHandler(ctx context.Context, update *tgbotapi.Update) err
 		return bot.handleDeleteEpic(ctx, chatID, update.Message)
 	case "deleterisk":
 		return bot.handleDeleteRisk(ctx, chatID, update.Message)
+	case "deleteuser":
+		return bot.handleDeleteUser(ctx, chatID, update.Message)
+	case "changerate":
+		return bot.handleChangeRate(ctx, chatID, update.Message)
 	case "addadmin":
 		return bot.handleAddAdmin(ctx, chatID, update.Message)
 	case "removeadmin":
 		return bot.handleRemoveAdmin(ctx, chatID, update.Message)
+
 	default:
 		return bot.sendReply(chatID,
 			fmt.Sprintf("❓ Неизвестная команда: /%s\nИспользуйте /help для списка команд.",
@@ -94,6 +101,7 @@ func (bot *Bot) handleHelp(chatID int64, msg *tgbotapi.Message) error {
 *🔧 Для администраторов:*
 /addteam <название> — создать команду
 /adduser [@username имя фамилия вес] — добавить пользователя
+/renameuser — переименовать пользователя
 /assignrole — назначить роль пользователю
 /assignteam — добавить пользователя в команду
 /addepic — создать эпик (интерактивно)
@@ -103,7 +111,9 @@ func (bot *Bot) handleHelp(chatID int64, msg *tgbotapi.Message) error {
 /unassignrole — снять роль у пользователя
 /removefromteam — удалить пользователя из команды
 /deleteepic — удалить эпик
-/deleterisk — удалить риск`
+/deleterisk — удалить риск
+/deleteuser — удалить пользователя
+/changerate — изменить вес пользователя`
 	} else {
 		text = `📋 *Команды бота*
 
@@ -128,9 +138,18 @@ func (bot *Bot) handleAddTeam(ctx context.Context, chatID int64, msg *tgbotapi.M
 	if args == "" {
 		return bot.sendReply(chatID, "⚠️ Использование: /addteam <название команды>")
 	}
-	team, err := bot.repo.CreateTeam(ctx, args, "")
+
+	team, err := bot.repo.GetTeamByName(ctx, args)
 	if err != nil {
-		return bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка создания команды: %v", err))
+		return bot.sendReply(chatID, "❌ Ошибка поиска команды.")
+	}
+	if team != nil {
+		return bot.sendReply(chatID, "❌ Команда с таким названием уже существует.")
+	}
+
+	team, err = bot.repo.CreateTeam(ctx, args, "")
+	if err != nil {
+		return bot.sendReply(chatID, "❌ Ошибка создания команды.")
 	}
 	return bot.sendReply(chatID,
 		fmt.Sprintf("✅ Команда «%s» создана (ID: %s)", team.Name, team.ID))
@@ -157,9 +176,18 @@ func (bot *Bot) handleAddUser(ctx context.Context, chatID int64, msg *tgbotapi.M
 		if err != nil || weight < 0 || weight > 100 {
 			return bot.sendReply(chatID, "❌ Вес должен быть числом от 0 до 100.")
 		}
-		user, err := bot.repo.CreateUser(ctx, args[1], args[2], username, weight)
+
+		user, err := bot.repo.FindUserByTelegramID(ctx, username)
 		if err != nil {
-			return bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка создания пользователя: %v", err))
+			return bot.sendReply(chatID, "❌ Ошибка поиска пользователя.")
+		}
+		if user != nil {
+			return bot.sendReply(chatID, "❌ Пользователь с таким @username уже существует.")
+		}
+
+		user, err = bot.repo.CreateUser(ctx, args[1], args[2], username, weight)
+		if err != nil {
+			return bot.sendReply(chatID, "❌ Ошибка создания пользователя.")
 		}
 		return bot.sendReply(chatID,
 			fmt.Sprintf("✅ Пользователь %s %s (@%s) создан",
@@ -265,6 +293,33 @@ func (bot *Bot) handleDeleteRisk(ctx context.Context, chatID int64, msg *tgbotap
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
 	return bot.showEpicPicker(ctx, chatID, "deleterisk", "")
+}
+
+// ─── /deleteuser — inline keyboard ───────────────────────────────────────
+
+func (bot *Bot) handleDeleteUser(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+	return bot.showUserPicker(ctx, chatID, "deleteuser")
+}
+
+// ─── /renameuser ──────────────────────────────────────────────────────────
+
+func (bot *Bot) handleRenameUser(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+	return bot.showUserPicker(ctx, chatID, "renameuser")
+}
+
+// ─── /changerate ──────────────────────────────────────────────────────────
+
+func (bot *Bot) handleChangeRate(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+	return bot.showUserPicker(ctx, chatID, "changerate")
 }
 
 // ─── /score ───────────────────────────────────────────────────────────────
@@ -723,9 +778,72 @@ func (bot *Bot) handleSessionInput(update *tgbotapi.Update) {
 			fmt.Sprintf("✅ Пользователь %s %s (@%s) создан",
 				user.FirstName, user.LastName, user.TelegramID))
 
+	// ── /renameuser interactive steps ──────────────────────────────────
+
+	case StepRenameUserFirstName:
+		if text == "" {
+			bot.sendReply(chatID, "❌ Имя не может быть пустым. Введите новое имя:")
+			return
+		}
+		sess.Data["firstName"] = text
+		sess.Step = StepRenameUserLastName
+		bot.sessions.set(chatID, sess)
+		bot.sendReply(chatID, "📝 Введите новую фамилию:")
+
+	case StepRenameUserLastName:
+		if text == "" {
+			bot.sendReply(chatID, "❌ Фамилия не может быть пустой. Введите новую фамилию:")
+			return
+		}
+		userIDStr := sess.Data["pendingUserID"]
+		bot.sessions.clear(chatID)
+		userID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			bot.sendReply(chatID, "❌ Ошибка: неверный ID пользователя.")
+			return
+		}
+		if err := bot.repo.UpdateUserName(ctx, userID, sess.Data["firstName"], text); err != nil {
+			bot.sendReply(chatID, "❌ Ошибка переименования.")
+			return
+		}
+		bot.sendReply(chatID,
+			fmt.Sprintf("✅ Пользователь переименован: %s %s",
+				sess.Data["firstName"], text))
+
+	// ── /changerate interactive steps ─────────────────────────────────
+
+	case StepChangeRateWeight:
+		weight, err := strconv.Atoi(text)
+		if err != nil || weight < 0 || weight > 100 {
+			bot.sendReply(chatID, "❌ Вес должен быть числом от 0 до 100. Введите ещё раз:")
+			return
+		}
+		userIDStr := sess.Data["pendingUserID"]
+		bot.sessions.clear(chatID)
+		userID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			bot.sendReply(chatID, "❌ Ошибка: неверный ID пользователя.")
+			return
+		}
+		if err := bot.repo.UpdateUserWeight(ctx, userID, weight); err != nil {
+			bot.sendReply(chatID, "❌ Ошибка изменения веса.")
+			return
+		}
+		bot.sendReply(chatID,
+			fmt.Sprintf("✅ Вес пользователя изменён на %d", weight))
+
 	// ── /addepic interactive steps ─────────────────────────────────────
 
 	case StepAddEpicNumber:
+		epic, err := bot.repo.GetEpicByNumber(ctx, sess.Data["number"])
+		if err != nil {
+			bot.sendReply(chatID, "❌ Ошибка поиска эпика.")
+			return
+		}
+		if epic != nil {
+			bot.sendReply(chatID, "❌ Эпик с таким номером уже существует.")
+			return
+		}
 		sess.Data["number"] = text
 		sess.Step = StepAddEpicName
 		bot.sessions.set(chatID, sess)
@@ -749,9 +867,20 @@ func (bot *Bot) handleSessionInput(update *tgbotapi.Update) {
 			bot.sendReply(chatID, "❌ Ошибка: неверный ID команды.")
 			return
 		}
-		epic, err := bot.repo.CreateEpic(ctx, sess.Data["number"], sess.Data["name"], desc, teamID)
+
+		epic, err := bot.repo.GetEpicByNumber(ctx, sess.Data["number"])
 		if err != nil {
-			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка создания эпика: %v", err))
+			bot.sendReply(chatID, "❌ Ошибка поиска эпика.")
+			return
+		}
+		if epic != nil {
+			bot.sendReply(chatID, "❌ Эпик с таким номером уже существует.")
+			return
+		}
+
+		epic, err = bot.repo.CreateEpic(ctx, sess.Data["number"], sess.Data["name"], desc, teamID)
+		if err != nil {
+			bot.sendReply(chatID, "❌ Ошибка создания эпика.")
 			return
 		}
 		bot.sendReply(chatID,
