@@ -192,3 +192,38 @@ func (r *Repository) RemoveUserTeam(ctx context.Context, userID, teamID uuid.UUI
 	}
 	return nil
 }
+
+// DeleteUser deletes a user by ID.
+// Related records in user_roles, user_teams, epic_scores, and risk_scores
+// are removed automatically by the database's ON DELETE CASCADE constraints.
+func (r *Repository) DeleteUser(ctx context.Context, userID uuid.UUID) error {
+	op := "Repository.DeleteUser"
+	query := `DELETE FROM users WHERE id = $1`
+	_, err := r.DB.ExecContext(ctx, query, userID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// UpdateUserName updates first and last name for a user.
+func (r *Repository) UpdateUserName(ctx context.Context, userID uuid.UUID, firstName, lastName string) error {
+	op := "Repository.UpdateUserName"
+	query := `UPDATE users SET first_name = $2, last_name = $3, updated_at = NOW() WHERE id = $1`
+	_, err := r.DB.ExecContext(ctx, query, userID, firstName, lastName)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// UpdateUserWeight updates the weight for a user.
+func (r *Repository) UpdateUserWeight(ctx context.Context, userID uuid.UUID, weight int) error {
+	op := "Repository.UpdateUserWeight"
+	query := `UPDATE users SET weight = $2, updated_at = NOW() WHERE id = $1`
+	_, err := r.DB.ExecContext(ctx, query, userID, weight)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}

@@ -26,6 +26,13 @@ const (
 	// /score epic effort text-input flow
 	StepScoreEpicEffort SessionStep = "score_epic_effort"
 
+	// /renameuser interactive flow (user is picked via inline keyboard)
+	StepRenameUserFirstName SessionStep = "renameuser_firstname"
+	StepRenameUserLastName  SessionStep = "renameuser_lastname"
+
+	// /changerate interactive flow (user is picked via inline keyboard)
+	StepChangeRateWeight SessionStep = "changerate_weight"
+
 	// delete confirmation
 	StepConfirmDeleteEpic SessionStep = "confirm_delete_epic"
 	StepConfirmDeleteRisk SessionStep = "confirm_delete_risk"
