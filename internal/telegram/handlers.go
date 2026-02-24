@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -58,6 +59,10 @@ func (bot *Bot) commandHandler(ctx context.Context, update *tgbotapi.Update) err
 		return bot.handleDeleteEpic(ctx, chatID, update.Message)
 	case "deleterisk":
 		return bot.handleDeleteRisk(ctx, chatID, update.Message)
+	case "addadmin":
+		return bot.handleAddAdmin(ctx, chatID, update.Message)
+	case "removeadmin":
+		return bot.handleRemoveAdmin(ctx, chatID, update.Message)
 	default:
 		return bot.sendReply(chatID,
 			fmt.Sprintf("❓ Неизвестная команда: /%s\nИспользуйте /help для списка команд.",
@@ -862,4 +867,66 @@ func (bot *Bot) execStartScore(ctx context.Context, chatID int64, epicID uuid.UU
 	bot.sendReply(chatID,
 		fmt.Sprintf("🚀 Эпик #%s «%s» и %d рисков отправлены на оценку!",
 			epic.Number, epic.Name, len(risks)))
+}
+
+func (bot *Bot) handleAddAdmin(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	op := "bot.handleAddAdmin"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chatID", chatID),
+	)
+
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+	args := strings.TrimSpace(msg.CommandArguments())
+	if args == "" {
+		return bot.sendReply(chatID, "⚠️ Использование: /addadmin <username>")
+	}
+	username := strings.TrimPrefix(args, "@")
+
+	bot.cfg.BotConfig.Admins = append(bot.cfg.BotConfig.Admins, username)
+	err := bot.cfg.Write()
+	if err != nil {
+		bot.cfg.BotConfig.Admins = bot.cfg.BotConfig.Admins[:len(bot.cfg.BotConfig.Admins)-1]
+		log.Error("failed to add admin", slog.String("username", username), sl.Err(err))
+		return bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка добавления администратора: %v", err))
+	}
+	log.Info("admin added", slog.String("username", username))
+	return bot.sendReply(chatID, fmt.Sprintf("✅ Администратор @%s добавлен.", username))
+}
+
+func (bot *Bot) handleRemoveAdmin(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	op := "bot.handleRemoveAdmin"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chatID", chatID),
+	)
+
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+	args := strings.TrimSpace(msg.CommandArguments())
+	if args == "" {
+		return bot.sendReply(chatID, "⚠️ Использование: /removeadmin <username>")
+	}
+	username := strings.TrimPrefix(args, "@")
+
+	idx := slices.Index(bot.cfg.BotConfig.Admins, username)
+	if idx == -1 {
+		return bot.sendReply(chatID, fmt.Sprintf("❌ Администратор @%s не найден.", username))
+	}
+
+	removed := bot.cfg.BotConfig.Admins[idx]
+	bot.cfg.BotConfig.Admins = slices.Delete(bot.cfg.BotConfig.Admins, idx, idx+1)
+
+	if err := bot.cfg.Write(); err != nil {
+		// rollback
+		bot.cfg.BotConfig.Admins = slices.Insert(bot.cfg.BotConfig.Admins, idx, removed)
+		log.Error("failed to remove admin", slog.String("username", username), sl.Err(err))
+		return bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления администратора: %v", err))
+	}
+
+	log.Info("admin removed", slog.String("username", username))
+	return bot.sendReply(chatID, fmt.Sprintf("✅ Администратор @%s удалён.", username))
 }

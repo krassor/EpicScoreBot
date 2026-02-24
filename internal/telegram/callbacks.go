@@ -89,7 +89,7 @@ func (bot *Bot) handleCallbackQuery(update *tgbotapi.Update) {
 
 	// riskprob_<riskID>_<value> — submit risk probability (step 1)
 	case strings.HasPrefix(data, "riskprob_"):
-		bot.handleRiskProbability(ctx, chatID, username, data)
+		bot.handleRiskProbability(ctx, chatID, data)
 
 	// riskimp_<riskID>_<prob>_<value> — submit risk impact (step 2)
 	case strings.HasPrefix(data, "riskimp_"):
@@ -462,7 +462,7 @@ func (bot *Bot) showRiskScoreForm(ctx context.Context, chatID int64, riskID uuid
 
 // handleRiskProbability processes risk probability selection.
 // Format: riskprob_<riskID>_<value>
-func (bot *Bot) handleRiskProbability(ctx context.Context, chatID int64, username string, data string) {
+func (bot *Bot) handleRiskProbability(ctx context.Context, chatID int64, data string) {
 	op := "bot.handleRiskProbability()"
 	log := bot.log.With(
 		slog.String("op", op),
