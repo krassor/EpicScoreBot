@@ -227,8 +227,8 @@ func (bot *Bot) showEpicScoreOptions(ctx context.Context, chatID int64, username
 	}
 
 	// Get user's role (required for effort scoring label).
-	roles, err := bot.repo.GetRolesByUserID(ctx, user.ID)
-	if err != nil || len(roles) == 0 {
+	role, err := bot.repo.GetRoleByUserID(ctx, user.ID)
+	if err != nil {
 		botErr := bot.sendReply(chatID, "❌ У вас нет назначенной роли.")
 		if botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -267,7 +267,7 @@ func (bot *Bot) showEpicScoreOptions(ctx context.Context, chatID int64, username
 		},
 	})
 
-	roleName := roles[0].Name
+	roleName := role.Name
 	botErr := bot.sendReply(chatID,
 		fmt.Sprintf("📝 Эпик #%s «%s»\n\n%s\n\nВаша роль: *%s*\n\nВведите оценку трудоёмкости (число от 0 до 500):",
 			epic.Number, epic.Name, epic.Description, roleName))
@@ -327,15 +327,15 @@ func (bot *Bot) handleEpicScoreSubmit(ctx context.Context, chatID int64, usernam
 	}
 
 	// Get user's role
-	roles, err := bot.repo.GetRolesByUserID(ctx, user.ID)
-	if err != nil || len(roles) == 0 {
+	role, err := bot.repo.GetRoleByUserID(ctx, user.ID)
+	if err != nil {
 		botErr := bot.sendReply(chatID, "❌ У вас нет назначенной роли.")
 		if botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
 		}
 		return
 	}
-	roleID := roles[0].ID
+	roleID := role.ID
 
 	if err := bot.repo.CreateEpicScore(ctx, epicID, user.ID, roleID, score); err != nil {
 		botErr := bot.sendReply(chatID,

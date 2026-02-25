@@ -281,6 +281,7 @@ func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callbac
 			bot.sendReply(chatID, "❌ Ошибка парсинга ID пользователя.")
 			return
 		}
+
 		user, err := bot.repo.GetUserByID(ctx, userID)
 		if err != nil {
 			bot.sendReply(chatID, "❌ Пользователь не найден.")
@@ -298,8 +299,19 @@ func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callbac
 
 		switch action {
 		case "assignteam":
+			teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, user.TelegramID)
+			if err != nil {
+				bot.sendReply(chatID, "❌ Ошибка получения команд пользователя.")
+				return
+			}
+			for _, t := range teams {
+				if t.ID == teamID {
+					bot.sendReply(chatID, "❌ Пользователь уже состоит в этой команде.")
+					return
+				}
+			}
 			if err := bot.repo.AssignUserTeam(ctx, userID, teamID); err != nil {
-				bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка добавления в команду: %v", err))
+				bot.sendReply(chatID, "❌ Ошибка добавления в команду.")
 				return
 			}
 			bot.sendReply(chatID,
@@ -314,6 +326,27 @@ func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callbac
 				fmt.Sprintf("✅ Пользователь %s %s удалён из команды «%s».",
 					user.FirstName, user.LastName, team.Name))
 		}
+	case "list":
+		teamID, err := uuid.Parse(lastID)
+		if err != nil {
+			bot.sendReply(chatID, "❌ Ошибка парсинга ID команды.")
+			return
+		}
+		users, err := bot.repo.GetUsersByTeamID(ctx, teamID)
+		if err != nil {
+			bot.sendReply(chatID, "❌ Ошибка получения пользователей команды.")
+			return
+		}
+		msg := ""
+		for _, user := range users {
+			role, err := bot.repo.GetRoleByUserID(ctx, user.ID)
+			roleName := "—"
+			if err == nil {
+				roleName = role.Name
+			}
+			msg += fmt.Sprintf("@%s %s %s - %s\n", user.TelegramID, user.FirstName, user.LastName, roleName)
+		}
+		bot.sendReply(chatID, msg)
 	default:
 		bot.sendReply(chatID, "❌ Неизвестное действие.")
 	}

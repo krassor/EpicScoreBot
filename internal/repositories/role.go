@@ -55,27 +55,20 @@ func (r *Repository) GetRoleByName(ctx context.Context, name string) (*domain.Ro
 	return &role, nil
 }
 
-// GetRolesByUserID returns all roles assigned to a user.
-func (r *Repository) GetRolesByUserID(ctx context.Context, userID uuid.UUID) ([]domain.Role, error) {
-	op := "Repository.GetRolesByUserID"
-	var roles []domain.Role
+// GetRoleByUserID returns the role assigned to a user.
+// A user can only have one role at a time.
+func (r *Repository) GetRoleByUserID(ctx context.Context, userID uuid.UUID) (*domain.Role, error) {
+	op := "Repository.GetRoleByUserID"
+	var role domain.Role
 	query := `SELECT r.id, r.name, r.description
 		FROM roles r
 		INNER JOIN user_roles ur ON r.id = ur.role_id
 		WHERE ur.user_id = $1
-		ORDER BY r.name`
-	rows, err := r.DB.QueryContext(ctx, query, userID)
+		LIMIT 1`
+	err := r.DB.QueryRowContext(ctx, query, userID).
+		Scan(&role.ID, &role.Name, &role.Description)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var role domain.Role
-		if err := rows.Scan(&role.ID, &role.Name, &role.Description); err != nil {
-			return nil, fmt.Errorf("%s: scan: %w", op, err)
-		}
-		roles = append(roles, role)
-	}
-	return roles, nil
+	return &role, nil
 }
