@@ -133,6 +133,12 @@ func (bot *Bot) handleHelp(chatID int64, msg *tgbotapi.Message) error {
 // ─── /addteam ─────────────────────────────────────────────────────────────
 
 func (bot *Bot) handleAddTeam(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	op := "bot.handleAddTeam"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+		slog.String("username", msg.From.UserName),
+	)
 	if !bot.isAdmin(msg) {
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
@@ -143,6 +149,10 @@ func (bot *Bot) handleAddTeam(ctx context.Context, chatID int64, msg *tgbotapi.M
 
 	team, err := bot.repo.GetTeamByName(ctx, args)
 	if err != nil {
+		log.Error(
+			"error getting team by name",
+			sl.Err(err),
+		)
 		return bot.sendReply(chatID, "❌ Ошибка поиска команды.")
 	}
 	if team != nil {
@@ -151,6 +161,10 @@ func (bot *Bot) handleAddTeam(ctx context.Context, chatID int64, msg *tgbotapi.M
 
 	team, err = bot.repo.CreateTeam(ctx, args, "")
 	if err != nil {
+		log.Error(
+			"error creating team",
+			sl.Err(err),
+		)
 		return bot.sendReply(chatID, "❌ Ошибка создания команды.")
 	}
 	return bot.sendReply(chatID,
@@ -400,8 +414,18 @@ func (bot *Bot) showUserPicker(ctx context.Context, chatID int64, action string)
 
 // showTeamPicker sends an inline keyboard with all teams.
 func (bot *Bot) showTeamPicker(ctx context.Context, chatID int64, action string) error {
+	op := "bot.showTeamPicker"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+		slog.String("action", action),
+	)
 	teams, err := bot.repo.GetAllTeams(ctx)
 	if err != nil || len(teams) == 0 {
+		log.Error(
+			"error getting all teams",
+			sl.Err(err),
+		)
 		return bot.sendReply(chatID, "❌ Команды не найдены.")
 	}
 	var rows [][]tgbotapi.InlineKeyboardButton

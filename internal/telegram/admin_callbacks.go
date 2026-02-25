@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"EpicScoreBot/internal/models/domain"
+	"EpicScoreBot/internal/utils/logger/sl"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
@@ -118,8 +119,18 @@ func (bot *Bot) handleAdmUserSelected(ctx context.Context, chatID int64, callbac
 // user.ID is stored in the session; callback data carries only action + teamID
 // to stay within Telegram's 64-byte callback-data limit.
 func (bot *Bot) showTeamPickerForUser(ctx context.Context, chatID int64, action string, user *domain.User) error {
+	op := "bot.showTeamPickerForUser"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+		slog.String("action", action),
+	)
 	teams, err := bot.repo.GetAllTeams(ctx)
 	if err != nil || len(teams) == 0 {
+		log.Error(
+			"error getting all teams",
+			sl.Err(err),
+		)
 		return bot.sendReply(chatID, "❌ Команды не найдены.")
 	}
 	// Persist userID in session so the callback handler can retrieve it.
