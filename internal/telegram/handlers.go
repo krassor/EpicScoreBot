@@ -69,6 +69,8 @@ func (bot *Bot) commandHandler(ctx context.Context, update *tgbotapi.Update) err
 		return bot.handleAddAdmin(ctx, chatID, update.Message)
 	case "removeadmin":
 		return bot.handleRemoveAdmin(ctx, chatID, update.Message)
+	case "list":
+		return bot.handleList(ctx, chatID, update.Message)
 
 	default:
 		return bot.sendReply(chatID,
@@ -199,7 +201,7 @@ func (bot *Bot) handleAddUser(ctx context.Context, chatID int64, msg *tgbotapi.M
 		Step: StepAddUserUsername,
 		Data: make(map[string]string),
 	})
-	return bot.sendReply(chatID, "👤 Введите @username пользователя (без @):")
+	return bot.sendReply(chatID, "👤 Введите @username пользователя:")
 }
 
 // ─── /assignrole — inline keyboard ────────────────────────────────────────
@@ -320,6 +322,16 @@ func (bot *Bot) handleChangeRate(ctx context.Context, chatID int64, msg *tgbotap
 		return bot.sendReply(chatID, "⛔ Только для администраторов.")
 	}
 	return bot.showUserPicker(ctx, chatID, "changerate")
+}
+
+// ─── /list ──────────────────────────────────────────────────────────
+
+func (bot *Bot) handleList(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	if !bot.isAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	}
+
+	return bot.showTeamPicker(ctx, chatID, "list")
 }
 
 // ─── /score ───────────────────────────────────────────────────────────────
@@ -497,8 +509,8 @@ func (bot *Bot) showRolePicker(ctx context.Context, chatID int64, action, userID
 // showUserRolePicker sends roles currently assigned to a user.
 // userID is stored in the session; callback data carries only action + roleID.
 func (bot *Bot) showUserRolePicker(ctx context.Context, chatID int64, action string, userID uuid.UUID) error {
-	roles, err := bot.repo.GetRolesByUserID(ctx, userID)
-	if err != nil || len(roles) == 0 {
+	role, err := bot.repo.GetRoleByUserID(ctx, userID)
+	if err != nil {
 		return bot.sendReply(chatID, "❌ У пользователя нет назначенных ролей.")
 	}
 	// Persist userID in session so the callback handler can retrieve it.
@@ -510,12 +522,9 @@ func (bot *Bot) showUserRolePicker(ctx context.Context, chatID int64, action str
 	bot.sessions.set(chatID, sess)
 
 	var rows [][]tgbotapi.InlineKeyboardButton
-	for _, r := range roles {
-		// callback: adm_role_<action>_<roleID>  — fits well under 64 bytes
-		data := fmt.Sprintf("adm_role_%s_%s", action, r.ID.String())
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🎭 "+r.Name, data)))
-	}
+	data := fmt.Sprintf("adm_role_%s_%s", action, role.ID.String())
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🎭 "+role.Name, data)))
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
 	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
@@ -935,13 +944,13 @@ func (bot *Bot) handleSessionInput(update *tgbotapi.Update) {
 			return
 		}
 
-		roles, err := bot.repo.GetRolesByUserID(ctx, user.ID)
-		if err != nil || len(roles) == 0 {
+		role, err := bot.repo.GetRoleByUserID(ctx, user.ID)
+		if err != nil {
 			bot.sendReply(chatID, "❌ У вас нет назначенной роли.")
 			return
 		}
 
-		if err := bot.repo.CreateEpicScore(ctx, epicID, user.ID, roles[0].ID, score); err != nil {
+		if err := bot.repo.CreateEpicScore(ctx, epicID, user.ID, role.ID, score); err != nil {
 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка сохранения оценки: %v", err))
 			return
 		}
