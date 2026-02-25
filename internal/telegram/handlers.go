@@ -351,6 +351,11 @@ func (bot *Bot) handleList(ctx context.Context, chatID int64, msg *tgbotapi.Mess
 // ─── /score ───────────────────────────────────────────────────────────────
 
 func (bot *Bot) handleScoreMenu(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
+	op := "bot.handleScoreMenu"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+	)
 	username := msg.From.UserName
 	if username == "" {
 		return bot.sendReply(chatID,
@@ -368,6 +373,12 @@ func (bot *Bot) handleScoreMenu(ctx context.Context, chatID int64, msg *tgbotapi
 
 	teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, username)
 	if err != nil || len(teams) == 0 {
+		if err != nil {
+			log.Error(
+				"error getting teams by user telegram id",
+				sl.Err(err),
+			)
+		}
 		return bot.sendReply(chatID, "❌ Вы не состоите ни в одной команде.")
 	}
 
@@ -392,8 +403,20 @@ func (bot *Bot) handleScoreMenu(ctx context.Context, chatID int64, msg *tgbotapi
 // showUserPicker sends an inline keyboard with all registered users.
 // action is embedded in the callback data so the callback handler knows the flow.
 func (bot *Bot) showUserPicker(ctx context.Context, chatID int64, action string) error {
+	op := "bot.showUserPicker"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+		slog.String("action", action),
+	)
 	users, err := bot.repo.GetAllUsers(ctx)
 	if err != nil || len(users) == 0 {
+		if err != nil {
+			log.Error(
+				"error getting all users",
+				sl.Err(err),
+			)
+		}
 		return bot.sendReply(chatID, "❌ Пользователи не найдены.")
 	}
 	var rows [][]tgbotapi.InlineKeyboardButton
@@ -422,10 +445,12 @@ func (bot *Bot) showTeamPicker(ctx context.Context, chatID int64, action string)
 	)
 	teams, err := bot.repo.GetAllTeams(ctx)
 	if err != nil || len(teams) == 0 {
-		log.Error(
-			"error getting all teams",
-			sl.Err(err),
-		)
+		if err != nil {
+			log.Error(
+				"error getting all teams",
+				sl.Err(err),
+			)
+		}
 		return bot.sendReply(chatID, "❌ Команды не найдены.")
 	}
 	var rows [][]tgbotapi.InlineKeyboardButton
@@ -445,6 +470,13 @@ func (bot *Bot) showTeamPicker(ctx context.Context, chatID int64, action string)
 
 // showEpicPicker sends an inline keyboard with epics, optionally filtered by status.
 func (bot *Bot) showEpicPicker(ctx context.Context, chatID int64, action, statusFilter string) error {
+	op := "bot.showEpicPicker"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+		slog.String("action", action),
+		slog.String("status_filter", statusFilter),
+	)
 	var epics []domain.Epic
 	var err error
 	if statusFilter != "" {
@@ -453,6 +485,12 @@ func (bot *Bot) showEpicPicker(ctx context.Context, chatID int64, action, status
 		epics, err = bot.repo.GetAllEpics(ctx)
 	}
 	if err != nil || len(epics) == 0 {
+		if err != nil {
+			log.Error(
+				"error getting epics by status",
+				sl.Err(err),
+			)
+		}
 		return bot.sendReply(chatID, "❌ Эпики не найдены.")
 	}
 	var rows [][]tgbotapi.InlineKeyboardButton
@@ -488,6 +526,12 @@ func (bot *Bot) showRolePicker(ctx context.Context, chatID int64, action, userID
 	log.Debug("roles found", slog.Int("roles count", len(roles)))
 
 	if err != nil || len(roles) == 0 {
+		if err != nil {
+			log.Error(
+				"error getting roles",
+				sl.Err(err),
+			)
+		}
 		return bot.sendReply(chatID, "❌ Роли не найдены.")
 	}
 
@@ -561,8 +605,21 @@ func (bot *Bot) showUserRolePicker(ctx context.Context, chatID int64, action str
 // showUserTeamPicker sends teams to which the user belongs.
 // user.ID is stored in the session; callback data carries only action + teamID.
 func (bot *Bot) showUserTeamPicker(ctx context.Context, chatID int64, action string, user *domain.User) error {
+	op := "bot.showUserTeamPicker"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+		slog.String("action", action),
+		slog.String("user_id", user.ID.String()),
+	)
 	teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, user.TelegramID)
 	if err != nil || len(teams) == 0 {
+		if err != nil {
+			log.Error(
+				"error getting teams by user telegram id",
+				sl.Err(err),
+			)
+		}
 		return bot.sendReply(chatID, "❌ Пользователь не состоит ни в одной команде.")
 	}
 	// Persist userID in session so the callback handler can retrieve it.
@@ -591,8 +648,21 @@ func (bot *Bot) showUserTeamPicker(ctx context.Context, chatID int64, action str
 
 // showRiskPicker sends risks for an epic.
 func (bot *Bot) showRiskPicker(ctx context.Context, chatID int64, action string, epic *domain.Epic) error {
+	op := "bot.showRiskPicker"
+	log := bot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", chatID),
+		slog.String("action", action),
+		slog.String("epic_id", epic.ID.String()),
+	)
 	risks, err := bot.repo.GetRisksByEpicID(ctx, epic.ID)
 	if err != nil || len(risks) == 0 {
+		if err != nil {
+			log.Error(
+				"error getting risks by epic id",
+				sl.Err(err),
+			)
+		}
 		return bot.sendReply(chatID, "❌ Риски не найдены для выбранного эпика.")
 	}
 	var rows [][]tgbotapi.InlineKeyboardButton
