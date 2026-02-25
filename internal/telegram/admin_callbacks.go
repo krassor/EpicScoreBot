@@ -127,10 +127,12 @@ func (bot *Bot) showTeamPickerForUser(ctx context.Context, chatID int64, action 
 	)
 	teams, err := bot.repo.GetAllTeams(ctx)
 	if err != nil || len(teams) == 0 {
-		log.Error(
-			"error getting all teams",
-			sl.Err(err),
-		)
+		if err != nil {
+			log.Error(
+				"error getting all teams",
+				sl.Err(err),
+			)
+		}
 		return bot.sendReply(chatID, "❌ Команды не найдены.")
 	}
 	// Persist userID in session so the callback handler can retrieve it.
