@@ -147,19 +147,13 @@ func (bot *Bot) handleAddTeam(ctx context.Context, chatID int64, msg *tgbotapi.M
 		return bot.sendReply(chatID, "⚠️ Использование: /addteam <название команды>")
 	}
 
-	team, err := bot.repo.GetTeamByName(ctx, args)
-	if err != nil {
-		log.Error(
-			"error getting team by name",
-			sl.Err(err),
-		)
-		return bot.sendReply(chatID, "❌ Ошибка поиска команды.")
-	}
+	team, _ := bot.repo.GetTeamByName(ctx, args)
+
 	if team != nil {
 		return bot.sendReply(chatID, "❌ Команда с таким названием уже существует.")
 	}
 
-	team, err = bot.repo.CreateTeam(ctx, args, "")
+	team, err := bot.repo.CreateTeam(ctx, args, "")
 	if err != nil {
 		log.Error(
 			"error creating team",
@@ -193,10 +187,7 @@ func (bot *Bot) handleAddUser(ctx context.Context, chatID int64, msg *tgbotapi.M
 			return bot.sendReply(chatID, "❌ Вес должен быть числом от 0 до 100.")
 		}
 
-		user, err := bot.repo.FindUserByTelegramID(ctx, username)
-		if err != nil {
-			return bot.sendReply(chatID, "❌ Ошибка поиска пользователя.")
-		}
+		user, _ := bot.repo.FindUserByTelegramID(ctx, username)
 		if user != nil {
 			return bot.sendReply(chatID, "❌ Пользователь с таким @username уже существует.")
 		}
