@@ -92,39 +92,43 @@ func (bot *Bot) handleStart(chatID int64, msg *tgbotapi.Message) error {
 // ─── /help ────────────────────────────────────────────────────────────────
 
 func (bot *Bot) handleHelp(chatID int64, msg *tgbotapi.Message) error {
-	var text string
+	var sb strings.Builder
+	sb.WriteString("📋 *Команды бота*\n\n")
+	sb.WriteString("*👤 Для всех:*\n")
+	sb.WriteString("/score — меню оценки эпиков и рисков\n")
+	sb.WriteString("/epicstatus — статус оценки эпика\n")
+
 	if bot.isAdmin(msg) {
-		text = `📋 *Команды бота*
-
-*👤 Для всех:*
-/score — меню оценки эпиков и рисков
-/epicstatus — статус оценки эпика
-
-*🔧 Для администраторов:*
-/addteam <название> — создать команду
-/adduser [@username имя фамилия вес] — добавить пользователя
-/renameuser — переименовать пользователя
-/assignrole — назначить роль пользователю
-/assignteam — добавить пользователя в команду
-/addepic — создать эпик (интерактивно)
-/addrisk — добавить риск к эпику (интерактивно)
-/startscore — запустить оценку эпика
-/results — показать результаты эпика
-/unassignrole — снять роль у пользователя
-/removefromteam — удалить пользователя из команды
-/deleteepic — удалить эпик
-/deleterisk — удалить риск
-/deleteuser — удалить пользователя
-/changerate — изменить вес пользователя`
-	} else {
-		text = `📋 *Команды бота*
-
-/score — меню оценки эпиков и рисков
-/epicstatus — статус оценки эпика
-
-Для управления командой и эпиками — обратитесь к администратору.`
+		sb.WriteString("\n*🔧 Для администраторов:*\n")
+		sb.WriteString("/addteam <название> — создать команду\n")
+		sb.WriteString("/adduser — добавить пользователя\n")
+		sb.WriteString("/assignrole — назначить роль пользователю\n")
+		sb.WriteString("/addepic — создать эпик\n")
+		sb.WriteString("/addrisk — добавить риск к эпику\n")
+		sb.WriteString("/startscore — запустить оценку эпика\n")
+		sb.WriteString("/results — показать результаты эпика\n")
+		sb.WriteString("/list — список участников команды\n")
 	}
-	m := tgbotapi.NewMessage(chatID, text)
+
+	if bot.isSuperAdmin(msg) {
+		sb.WriteString("\n*⚡ Для супер-администраторов:*\n")
+		sb.WriteString("/assignteam — добавить пользователя в команду\n")
+		sb.WriteString("/renameuser — переименовать пользователя\n")
+		sb.WriteString("/changerate — изменить вес пользователя\n")
+		sb.WriteString("/unassignrole — снять роль у пользователя\n")
+		sb.WriteString("/removefromteam — удалить из команды\n")
+		sb.WriteString("/deleteepic — удалить эпик\n")
+		sb.WriteString("/deleterisk — удалить риск\n")
+		sb.WriteString("/deleteuser — удалить пользователя\n")
+		sb.WriteString("/addadmin — добавить администратора\n")
+		sb.WriteString("/removeadmin — удалить администратора\n")
+	}
+
+	if !bot.isAdmin(msg) {
+		sb.WriteString("\nДля управления — обратитесь к администратору.")
+	}
+
+	m := tgbotapi.NewMessage(chatID, sb.String())
 	m.ParseMode = tgbotapi.ModeMarkdown
 	_, err := bot.tgbot.Send(m)
 	return err
@@ -139,8 +143,8 @@ func (bot *Bot) handleAddTeam(ctx context.Context, chatID int64, msg *tgbotapi.M
 		slog.Int64("chat_id", chatID),
 		slog.String("username", msg.From.UserName),
 	)
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	args := strings.TrimSpace(msg.CommandArguments())
 	if args == "" {
@@ -221,8 +225,8 @@ func (bot *Bot) handleAssignRole(ctx context.Context, chatID int64, msg *tgbotap
 // ─── /assignteam — inline keyboard ────────────────────────────────────────
 
 func (bot *Bot) handleAssignTeam(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	return bot.showUserPicker(ctx, chatID, "assignteam")
 }
@@ -269,8 +273,8 @@ func (bot *Bot) handleEpicStatus(ctx context.Context, chatID int64, msg *tgbotap
 // ─── /unassignrole — inline keyboard ─────────────────────────────────────
 
 func (bot *Bot) handleUnassignRole(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	return bot.showUserPicker(ctx, chatID, "unassignrole")
 }
@@ -278,8 +282,8 @@ func (bot *Bot) handleUnassignRole(ctx context.Context, chatID int64, msg *tgbot
 // ─── /removefromteam — inline keyboard ───────────────────────────────────
 
 func (bot *Bot) handleRemoveFromTeam(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	return bot.showUserPicker(ctx, chatID, "removefromteam")
 }
@@ -287,8 +291,8 @@ func (bot *Bot) handleRemoveFromTeam(ctx context.Context, chatID int64, msg *tgb
 // ─── /deleteepic — inline keyboard ───────────────────────────────────────
 
 func (bot *Bot) handleDeleteEpic(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	return bot.showEpicPicker(ctx, chatID, "deleteepic", "")
 }
@@ -296,8 +300,8 @@ func (bot *Bot) handleDeleteEpic(ctx context.Context, chatID int64, msg *tgbotap
 // ─── /deleterisk — inline keyboard ───────────────────────────────────────
 
 func (bot *Bot) handleDeleteRisk(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	return bot.showEpicPicker(ctx, chatID, "deleterisk", "")
 }
@@ -305,8 +309,8 @@ func (bot *Bot) handleDeleteRisk(ctx context.Context, chatID int64, msg *tgbotap
 // ─── /deleteuser — inline keyboard ───────────────────────────────────────
 
 func (bot *Bot) handleDeleteUser(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для суперадминистраторов.")
 	}
 	return bot.showUserPicker(ctx, chatID, "deleteuser")
 }
@@ -314,8 +318,8 @@ func (bot *Bot) handleDeleteUser(ctx context.Context, chatID int64, msg *tgbotap
 // ─── /renameuser ──────────────────────────────────────────────────────────
 
 func (bot *Bot) handleRenameUser(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	return bot.showUserPicker(ctx, chatID, "renameuser")
 }
@@ -323,8 +327,8 @@ func (bot *Bot) handleRenameUser(ctx context.Context, chatID int64, msg *tgbotap
 // ─── /changerate ──────────────────────────────────────────────────────────
 
 func (bot *Bot) handleChangeRate(ctx context.Context, chatID int64, msg *tgbotapi.Message) error {
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	return bot.showUserPicker(ctx, chatID, "changerate")
 }
@@ -1099,8 +1103,8 @@ func (bot *Bot) handleAddAdmin(ctx context.Context, chatID int64, msg *tgbotapi.
 		slog.Int64("chatID", chatID),
 	)
 
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	args := strings.TrimSpace(msg.CommandArguments())
 	if args == "" {
@@ -1126,8 +1130,8 @@ func (bot *Bot) handleRemoveAdmin(ctx context.Context, chatID int64, msg *tgbota
 		slog.Int64("chatID", chatID),
 	)
 
-	if !bot.isAdmin(msg) {
-		return bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdmin(msg) {
+		return bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 	}
 	args := strings.TrimSpace(msg.CommandArguments())
 	if args == "" {

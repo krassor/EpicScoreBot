@@ -492,8 +492,8 @@ func (bot *Bot) handleAdmRiskSelected(ctx context.Context, chatID int64, callbac
 // handleAdmConfirm handles confirmed destructive actions.
 // data = "adm_confirm_<action>_<id>"
 func (bot *Bot) handleAdmConfirm(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
-	if !bot.isAdminCallback(callback) {
-		bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !bot.isSuperAdminCallback(callback) {
+		bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
 		return
 	}
 	rest := strings.TrimPrefix(data, "adm_confirm_")
