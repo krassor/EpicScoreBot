@@ -29,5 +29,6 @@ type DBConfig struct {
 
 type BotConfig struct {
 	Admins        []string `yaml:"admins" env-default:"admin"`
+	SuperAdmins   []string `yaml:"superadmins" env-default:"superadmin"`
 	TgbotApiToken string   `yaml:"tgbot_apitoken" env:"TGBOT_APITOKEN" env-required:"true"`
 }
