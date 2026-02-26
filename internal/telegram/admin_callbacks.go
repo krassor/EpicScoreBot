@@ -350,16 +350,20 @@ func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callbac
 			bot.sendReply(chatID, "❌ Ошибка получения пользователей команды.")
 			return
 		}
-		msg := ""
+		var msg strings.Builder
 		for _, user := range users {
 			role, err := bot.repo.GetRoleByUserID(ctx, user.ID)
 			roleName := "—"
 			if err == nil {
 				roleName = role.Name
 			}
-			msg += fmt.Sprintf("@%s %s %s - %s\n", user.TelegramID, user.FirstName, user.LastName, roleName)
+			fmt.Fprintf(&msg, "@%s %s %s - %s\n", user.TelegramID, user.FirstName, user.LastName, roleName)
 		}
-		bot.sendReply(chatID, msg)
+		if msg.Len() == 0 {
+			bot.sendReply(chatID, "❌ В команде нет пользователей.")
+			return
+		}
+		bot.sendReply(chatID, msg.String())
 	default:
 		bot.sendReply(chatID, "❌ Неизвестное действие.")
 	}
