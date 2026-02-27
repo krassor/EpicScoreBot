@@ -3,21 +3,21 @@ package telegram
 import (
 	"strings"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 )
 
 // isAdmin checks if the message sender is in the admins list.
-func (bot *Bot) isAdmin(msg *tgbotapi.Message) bool {
+func (epicBot *Bot) isAdmin(msg *models.Message) bool {
 	if msg == nil || msg.From == nil {
 		return false
 	}
-	for _, admin := range bot.cfg.BotConfig.Admins {
-		if strings.EqualFold(msg.From.UserName, admin) {
+	for _, admin := range epicBot.cfg.BotConfig.Admins {
+		if strings.EqualFold(msg.From.Username, admin) {
 			return true
 		}
 	}
-	for _, superadmin := range bot.cfg.BotConfig.SuperAdmins {
-		if strings.EqualFold(msg.From.UserName, superadmin) {
+	for _, superadmin := range epicBot.cfg.BotConfig.SuperAdmins {
+		if strings.EqualFold(msg.From.Username, superadmin) {
 			return true
 		}
 	}
@@ -25,12 +25,12 @@ func (bot *Bot) isAdmin(msg *tgbotapi.Message) bool {
 }
 
 // isSuperAdmin checks if the message sender is in the super admins list.
-func (bot *Bot) isSuperAdmin(msg *tgbotapi.Message) bool {
+func (epicBot *Bot) isSuperAdmin(msg *models.Message) bool {
 	if msg == nil || msg.From == nil {
 		return false
 	}
-	for _, superadmin := range bot.cfg.BotConfig.SuperAdmins {
-		if strings.EqualFold(msg.From.UserName, superadmin) {
+	for _, superadmin := range epicBot.cfg.BotConfig.SuperAdmins {
+		if strings.EqualFold(msg.From.Username, superadmin) {
 			return true
 		}
 	}
@@ -38,17 +38,17 @@ func (bot *Bot) isSuperAdmin(msg *tgbotapi.Message) bool {
 }
 
 // isAdminCallback checks if the callback sender is an admin.
-func (bot *Bot) isAdminCallback(callback *tgbotapi.CallbackQuery) bool {
-	if callback == nil || callback.From == nil {
+func (epicBot *Bot) isAdminCallback(callback *models.CallbackQuery) bool {
+	if callback == nil {
 		return false
 	}
-	for _, admin := range bot.cfg.BotConfig.Admins {
-		if strings.EqualFold(callback.From.UserName, admin) {
+	for _, admin := range epicBot.cfg.BotConfig.Admins {
+		if strings.EqualFold(callback.From.Username, admin) {
 			return true
 		}
 	}
-	for _, superadmin := range bot.cfg.BotConfig.SuperAdmins {
-		if strings.EqualFold(callback.From.UserName, superadmin) {
+	for _, superadmin := range epicBot.cfg.BotConfig.SuperAdmins {
+		if strings.EqualFold(callback.From.Username, superadmin) {
 			return true
 		}
 	}
@@ -56,12 +56,12 @@ func (bot *Bot) isAdminCallback(callback *tgbotapi.CallbackQuery) bool {
 }
 
 // isSuperAdminCallback checks if the callback sender is a super admin.
-func (bot *Bot) isSuperAdminCallback(callback *tgbotapi.CallbackQuery) bool {
-	if callback == nil || callback.From == nil {
+func (epicBot *Bot) isSuperAdminCallback(callback *models.CallbackQuery) bool {
+	if callback == nil {
 		return false
 	}
-	for _, superadmin := range bot.cfg.BotConfig.SuperAdmins {
-		if strings.EqualFold(callback.From.UserName, superadmin) {
+	for _, superadmin := range epicBot.cfg.BotConfig.SuperAdmins {
+		if strings.EqualFold(callback.From.Username, superadmin) {
 			return true
 		}
 	}

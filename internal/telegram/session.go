@@ -44,6 +44,7 @@ const sessionTTL = 5 * time.Minute
 // Session holds the state of a multi-step admin interaction for one chat.
 type Session struct {
 	Step      SessionStep
+	ThreadID  int               // Telegram forum topic ID
 	Data      map[string]string // accumulated key-value pairs
 	ExpiresAt time.Time
 }

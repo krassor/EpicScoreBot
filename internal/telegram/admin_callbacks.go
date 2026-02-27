@@ -9,7 +9,7 @@ import (
 	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/utils/logger/sl"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
 )
 
@@ -28,41 +28,43 @@ import (
 
 // handleAdmUserSelected handles when an admin picks a user from the user picker.
 // data = "adm_user_<action>_<userID>"
-func (bot *Bot) handleAdmUserSelected(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
+func (epicBot *Bot) handleAdmUserSelected(
+	ctx context.Context,
+	chatID int64,
+	threadID int,
+	callback *models.CallbackQuery,
+	data string,
+) {
 	op := "bot.handleAdmUserSelected"
-	log := bot.log.With(
+	log := epicBot.log.With(
 		slog.String("op", op),
 		slog.Int64("chat_id", chatID),
 		slog.String("data", data),
 	)
 
-	if !bot.isAdminCallback(callback) {
-		bot.sendReply(chatID, "⛔ Только для администраторов.")
+	if !epicBot.isAdminCallback(callback) {
+		epicBot.sendReply(ctx, chatID, threadID, "⛔ Только для администраторов.")
 		return
 	}
-	// strip prefix "adm_user_"
 	rest := strings.TrimPrefix(data, "adm_user_")
-	// rest = "<action>_<userID>"
-	// action may itself contain '_' so find the last segment (UUID is fixed length)
-	// UUID is always 36 chars; rest ends in "_<uuid>"
-	if len(rest) < 38 { // minimum: 1 char action + "_" + 36 char uuid
-		bot.sendReply(chatID, "❌ Некорректные данные.")
+	if len(rest) < 38 {
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Некорректные данные.")
 		return
 	}
 	userIDStr := rest[len(rest)-36:]
-	action := rest[:len(rest)-37] // cut trailing "_<uuid>"
+	action := rest[:len(rest)-37]
 
 	log.Debug("parsed", slog.String("user_id", userIDStr), slog.String("action", action))
 
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Ошибка парсинга ID пользователя.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID пользователя.")
 		return
 	}
 
-	user, err := bot.repo.GetUserByID(ctx, userID)
+	user, err := epicBot.repo.GetUserByID(ctx, userID)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Пользователь не найден.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Пользователь не найден.")
 		return
 	}
 
@@ -70,289 +72,281 @@ func (bot *Bot) handleAdmUserSelected(ctx context.Context, chatID int64, callbac
 
 	switch action {
 	case "assignrole":
-		bot.showRolePicker(ctx, chatID, "assignrole", userID.String())
+		epicBot.showRolePicker(ctx, chatID, threadID, "assignrole", userID.String())
 	case "unassignrole":
-		bot.showUserRolePicker(ctx, chatID, "unassignrole", userID)
+		epicBot.showUserRolePicker(ctx, chatID, threadID, "unassignrole", userID)
 	case "assignteam":
-		// show team picker; embed userID in callback
-		bot.showTeamPickerForUser(ctx, chatID, "assignteam", user)
+		epicBot.showTeamPickerForUser(ctx, chatID, threadID, "assignteam", user)
 	case "removefromteam":
-		bot.showUserTeamPicker(ctx, chatID, "removefromteam", user)
+		epicBot.showUserTeamPicker(ctx, chatID, threadID, "removefromteam", user)
 	case "deleteuser":
-		kb := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("✅ Да, удалить",
-					"adm_confirm_deleteuser_"+userID.String()),
-				tgbotapi.NewInlineKeyboardButtonData("❌ Отмена",
-					"adm_deny_deleteuser"),
-			),
-		)
-		m := tgbotapi.NewMessage(chatID,
+		kb := inlineKeyboard(inlineRow(
+			inlineBtn("✅ Да, удалить", "adm_confirm_deleteuser_"+userID.String()),
+			inlineBtn("❌ Отмена", "adm_deny_deleteuser"),
+		))
+		epicBot.sendWithKeyboard(ctx, chatID, threadID,
 			fmt.Sprintf("⚠️ Удалить пользователя %s %s (@%s)?\n"+
 				"Будут удалены все его роли, привязки к командам и оценки.\n"+
 				"Это действие необратимо.",
-				user.FirstName, user.LastName, user.TelegramID))
-		m.ReplyMarkup = kb
-		bot.tgbot.Send(m)
+				user.FirstName, user.LastName, user.TelegramID),
+			kb)
 	case "renameuser":
-		bot.sessions.set(chatID, &Session{
-			Step: StepRenameUserFirstName,
-			Data: map[string]string{"pendingUserID": userID.String()},
+		epicBot.sessions.set(chatID, &Session{
+			Step:     StepRenameUserFirstName,
+			ThreadID: threadID,
+			Data:     map[string]string{"pendingUserID": userID.String()},
 		})
-		bot.sendReply(chatID,
+		epicBot.sendReply(ctx, chatID, threadID,
 			fmt.Sprintf("✏️ Переименование пользователя %s %s (@%s).\n📝 Введите новое имя:",
 				user.FirstName, user.LastName, user.TelegramID))
 	case "changerate":
-		bot.sessions.set(chatID, &Session{
-			Step: StepChangeRateWeight,
-			Data: map[string]string{"pendingUserID": userID.String()},
+		epicBot.sessions.set(chatID, &Session{
+			Step:     StepChangeRateWeight,
+			ThreadID: threadID,
+			Data:     map[string]string{"pendingUserID": userID.String()},
 		})
-		bot.sendReply(chatID,
+		epicBot.sendReply(ctx, chatID, threadID,
 			fmt.Sprintf("⚖️ Изменение веса пользователя %s %s (@%s).\nТекущий вес: %d\n📝 Введите новый вес (0–100):",
 				user.FirstName, user.LastName, user.TelegramID, user.Weight))
 	default:
-		bot.sendReply(chatID, fmt.Sprintf("❌ Неизвестное действие: %s", action))
+		epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("❌ Неизвестное действие: %s", action))
 	}
 }
 
 // showTeamPickerForUser shows all teams for admin to assign a user to.
-// user.ID is stored in the session; callback data carries only action + teamID
-// to stay within Telegram's 64-byte callback-data limit.
-func (bot *Bot) showTeamPickerForUser(ctx context.Context, chatID int64, action string, user *domain.User) error {
+func (epicBot *Bot) showTeamPickerForUser(
+	ctx context.Context,
+	chatID int64,
+	threadID int,
+	action string,
+	user *domain.User,
+) error {
 	op := "bot.showTeamPickerForUser"
-	log := bot.log.With(
+	log := epicBot.log.With(
 		slog.String("op", op),
 		slog.Int64("chat_id", chatID),
 		slog.String("action", action),
 	)
-	teams, err := bot.repo.GetAllTeams(ctx)
+	teams, err := epicBot.repo.GetAllTeams(ctx)
 	if err != nil || len(teams) == 0 {
 		if err != nil {
-			log.Error(
-				"error getting all teams",
-				sl.Err(err),
-			)
+			log.Error("error getting all teams", sl.Err(err))
 		}
-		return bot.sendReply(chatID, "❌ Команды не найдены.")
+		return epicBot.sendReply(ctx, chatID, threadID, "❌ Команды не найдены.")
 	}
-	// Persist userID in session so the callback handler can retrieve it.
-	sess, _ := bot.sessions.get(chatID)
+	sess, _ := epicBot.sessions.get(chatID)
 	if sess == nil {
 		sess = &Session{Data: make(map[string]string)}
 	}
 	sess.Data["pendingUserID"] = user.ID.String()
-	bot.sessions.set(chatID, sess)
+	epicBot.sessions.set(chatID, sess)
 
-	var rows [][]tgbotapi.InlineKeyboardButton
+	var rows [][]models.InlineKeyboardButton
 	for _, t := range teams {
-		// adm_team_assignteam_<teamID> — fits well under 64 bytes
-		data := fmt.Sprintf("adm_team_%s_%s", action, t.ID.String())
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👥 "+t.Name, data)))
+		rows = append(rows, inlineRow(inlineBtn(
+			"👥 "+t.Name,
+			fmt.Sprintf("adm_team_%s_%s", action, t.ID.String()),
+		)))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_cancel")))
-	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
-	m := tgbotapi.NewMessage(chatID,
-		fmt.Sprintf("👥 Выберите команду для пользователя %s %s:", user.FirstName, user.LastName))
-	m.ReplyMarkup = kb
-	_, err = bot.tgbot.Send(m)
-	return err
+	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "adm_cancel")))
+	kb := inlineKeyboard(rows...)
+	return epicBot.sendWithKeyboard(ctx, chatID, threadID,
+		fmt.Sprintf("👥 Выберите команду для пользователя %s %s:", user.FirstName, user.LastName), kb)
 }
 
 // handleAdmRoleSelected handles role selection.
 // data = "adm_role_<action>_<roleID>"
-// userID is read from session key "pendingUserID" (set by the role picker).
-func (bot *Bot) handleAdmRoleSelected(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
-	if !bot.isAdminCallback(callback) {
-		bot.sendReply(chatID, "⛔ Только для администраторов.")
+func (epicBot *Bot) handleAdmRoleSelected(
+	ctx context.Context,
+	chatID int64,
+	threadID int,
+	callback *models.CallbackQuery,
+	data string,
+) {
+	if !epicBot.isAdminCallback(callback) {
+		epicBot.sendReply(ctx, chatID, threadID, "⛔ Только для администраторов.")
 		return
 	}
 	rest := strings.TrimPrefix(data, "adm_role_")
-	// rest = "<action>_<roleID 36>"
-	if len(rest) < 38 { // minimum: 1 char action + "_" + 36 char uuid
-		bot.sendReply(chatID, "❌ Некорректные данные.")
+	if len(rest) < 38 {
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Некорректные данные.")
 		return
 	}
 	roleIDStr := rest[len(rest)-36:]
-	action := rest[:len(rest)-37] // cut trailing "_<uuid>"
+	action := rest[:len(rest)-37]
 
-	// Retrieve the target userID stored by the picker in the session.
-	sess, ok := bot.sessions.get(chatID)
+	sess, ok := epicBot.sessions.get(chatID)
 	if !ok || sess == nil {
-		bot.sendReply(chatID, "❌ Сессия истекла. Повторите команду.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Сессия истекла. Повторите команду.")
 		return
 	}
 	userIDStr, hasPending := sess.Data["pendingUserID"]
 	if !hasPending || userIDStr == "" {
-		bot.sendReply(chatID, "❌ Сессия истекла. Повторите команду.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Сессия истекла. Повторите команду.")
 		return
 	}
 
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Ошибка парсинга ID пользователя.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID пользователя.")
 		return
 	}
 	roleID, err := uuid.Parse(roleIDStr)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Ошибка парсинга ID роли.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID роли.")
 		return
 	}
 
-	user, err := bot.repo.GetUserByID(ctx, userID)
+	user, err := epicBot.repo.GetUserByID(ctx, userID)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Пользователь не найден.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Пользователь не найден.")
 		return
 	}
-	role, err := bot.repo.GetRoleByID(ctx, roleID)
+	role, err := epicBot.repo.GetRoleByID(ctx, roleID)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Роль не найдена.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Роль не найдена.")
 		return
 	}
 
-	// Clean up session pendingUserID after successful lookup.
 	delete(sess.Data, "pendingUserID")
-	bot.sessions.set(chatID, sess)
+	epicBot.sessions.set(chatID, sess)
 
 	switch action {
 	case "assignrole":
-		if err := bot.repo.AssignUserRole(ctx, userID, roleID); err != nil {
-			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка назначения роли: %v", err))
+		if err := epicBot.repo.AssignUserRole(ctx, userID, roleID); err != nil {
+			epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("❌ Ошибка назначения роли: %v", err))
 			return
 		}
-		bot.sendReply(chatID,
-			fmt.Sprintf("✅ Роль «%s» назначена пользователю %s %s.",
-				role.Name, user.FirstName, user.LastName))
+		epicBot.sendReply(ctx, chatID, threadID,
+			fmt.Sprintf("✅ Роль «%s» назначена пользователю %s %s.", role.Name, user.FirstName, user.LastName))
 	case "unassignrole":
-		if err := bot.repo.RemoveUserRole(ctx, userID, roleID); err != nil {
-			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка снятия роли: %v", err))
+		if err := epicBot.repo.RemoveUserRole(ctx, userID, roleID); err != nil {
+			epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("❌ Ошибка снятия роли: %v", err))
 			return
 		}
-		bot.sendReply(chatID,
-			fmt.Sprintf("✅ Роль «%s» снята у пользователя %s %s.",
-				role.Name, user.FirstName, user.LastName))
+		epicBot.sendReply(ctx, chatID, threadID,
+			fmt.Sprintf("✅ Роль «%s» снята у пользователя %s %s.", role.Name, user.FirstName, user.LastName))
 	default:
-		bot.sendReply(chatID, fmt.Sprintf("❌ Неизвестное действие: %s", action))
+		epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("❌ Неизвестное действие: %s", action))
 	}
 }
 
 // handleAdmTeamSelected handles team selection.
-// data formats:
-//
-//	adm_team_addepic_<teamID>             — addepic: team picked, start session
-//	adm_team_assignteam_<teamID>          — assign user (ID in session) to team
-//	adm_team_removefromteam_<teamID>      — remove user (ID in session) from team
-func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
-	if !bot.isAdminCallback(callback) {
-		bot.sendReply(chatID, "⛔ Только для администраторов.")
+func (epicBot *Bot) handleAdmTeamSelected(
+	ctx context.Context,
+	chatID int64,
+	threadID int,
+	callback *models.CallbackQuery,
+	data string,
+) {
+	if !epicBot.isAdminCallback(callback) {
+		epicBot.sendReply(ctx, chatID, threadID, "⛔ Только для администраторов.")
 		return
 	}
 	rest := strings.TrimPrefix(data, "adm_team_")
-	// Last segment is always a UUID (36 chars)
 	if len(rest) < 37 {
-		bot.sendReply(chatID, "❌ Некорректные данные.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Некорректные данные.")
 		return
 	}
 	lastID := rest[len(rest)-36:]
-	action := rest[:len(rest)-37] // action name only (no embedded userID)
+	action := rest[:len(rest)-37]
 
 	switch action {
 	case "addepic":
-		// Start addepic session: teamID picked
 		teamID, err := uuid.Parse(lastID)
 		if err != nil {
-			bot.sendReply(chatID, "❌ Ошибка парсинга ID команды.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID команды.")
 			return
 		}
-		bot.sessions.set(chatID, &Session{
-			Step: StepAddEpicNumber,
-			Data: map[string]string{"teamID": teamID.String()},
+		epicBot.sessions.set(chatID, &Session{
+			Step:     StepAddEpicNumber,
+			ThreadID: threadID,
+			Data:     map[string]string{"teamID": teamID.String()},
 		})
-		bot.sendReply(chatID, "📝 Введите номер эпика (например, EP-1):")
+		epicBot.sendReply(ctx, chatID, threadID, "📝 Введите номер эпика (например, EP-1):")
 
 	case "assignteam", "removefromteam":
-		// Retrieve the target userID stored in the session by the team picker.
-		sess, ok := bot.sessions.get(chatID)
+		sess, ok := epicBot.sessions.get(chatID)
 		if !ok || sess == nil {
-			bot.sendReply(chatID, "❌ Сессия истекла. Повторите команду.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ Сессия истекла. Повторите команду.")
 			return
 		}
 		userIDStr, hasPending := sess.Data["pendingUserID"]
 		if !hasPending || userIDStr == "" {
-			bot.sendReply(chatID, "❌ Сессия истекла. Повторите команду.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ Сессия истекла. Повторите команду.")
 			return
 		}
 
 		teamID, err := uuid.Parse(lastID)
 		if err != nil {
-			bot.sendReply(chatID, "❌ Ошибка парсинга ID команды.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID команды.")
 			return
 		}
 		userID, err := uuid.Parse(userIDStr)
 		if err != nil {
-			bot.sendReply(chatID, "❌ Ошибка парсинга ID пользователя.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID пользователя.")
 			return
 		}
 
-		user, err := bot.repo.GetUserByID(ctx, userID)
+		user, err := epicBot.repo.GetUserByID(ctx, userID)
 		if err != nil {
-			bot.sendReply(chatID, "❌ Пользователь не найден.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ Пользователь не найден.")
 			return
 		}
-		team, err := bot.repo.GetTeamByID(ctx, teamID)
+		team, err := epicBot.repo.GetTeamByID(ctx, teamID)
 		if err != nil {
-			bot.sendReply(chatID, "❌ Команда не найдена.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ Команда не найдена.")
 			return
 		}
 
-		// Clean up session pendingUserID after successful lookup.
 		delete(sess.Data, "pendingUserID")
-		bot.sessions.set(chatID, sess)
+		epicBot.sessions.set(chatID, sess)
 
 		switch action {
 		case "assignteam":
-			teams, err := bot.repo.GetTeamsByUserTelegramID(ctx, user.TelegramID)
+			teams, err := epicBot.repo.GetTeamsByUserTelegramID(ctx, user.TelegramID)
 			if err != nil {
-				bot.sendReply(chatID, "❌ Ошибка получения команд пользователя.")
+				epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка получения команд пользователя.")
 				return
 			}
 			for _, t := range teams {
 				if t.ID == teamID {
-					bot.sendReply(chatID, "❌ Пользователь уже состоит в этой команде.")
+					epicBot.sendReply(ctx, chatID, threadID, "❌ Пользователь уже состоит в этой команде.")
 					return
 				}
 			}
-			if err := bot.repo.AssignUserTeam(ctx, userID, teamID); err != nil {
-				bot.sendReply(chatID, "❌ Ошибка добавления в команду.")
+			if err := epicBot.repo.AssignUserTeam(ctx, userID, teamID); err != nil {
+				epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка добавления в команду.")
 				return
 			}
-			bot.sendReply(chatID,
+			epicBot.sendReply(ctx, chatID, threadID,
 				fmt.Sprintf("✅ Пользователь %s %s добавлен в команду «%s».",
 					user.FirstName, user.LastName, team.Name))
 		case "removefromteam":
-			if err := bot.repo.RemoveUserTeam(ctx, userID, teamID); err != nil {
-				bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления из команды: %v", err))
+			if err := epicBot.repo.RemoveUserTeam(ctx, userID, teamID); err != nil {
+				epicBot.sendReply(ctx, chatID, threadID,
+					fmt.Sprintf("❌ Ошибка удаления из команды: %v", err))
 				return
 			}
-			bot.sendReply(chatID,
+			epicBot.sendReply(ctx, chatID, threadID,
 				fmt.Sprintf("✅ Пользователь %s %s удалён из команды «%s».",
 					user.FirstName, user.LastName, team.Name))
 		}
+
 	case "list":
 		teamID, err := uuid.Parse(lastID)
 		if err != nil {
-			bot.sendReply(chatID, "❌ Ошибка парсинга ID команды.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID команды.")
 			return
 		}
-		users, err := bot.repo.GetUsersByTeamID(ctx, teamID)
+		users, err := epicBot.repo.GetUsersByTeamID(ctx, teamID)
 		if err != nil {
-			bot.sendReply(chatID, "❌ Ошибка получения пользователей команды.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка получения пользователей команды.")
 			return
 		}
 		var msg strings.Builder
 		for _, user := range users {
-			role, err := bot.repo.GetRoleByUserID(ctx, user.ID)
+			role, err := epicBot.repo.GetRoleByUserID(ctx, user.ID)
 			roleName := "—"
 			if err == nil {
 				roleName = role.Name
@@ -360,25 +354,32 @@ func (bot *Bot) handleAdmTeamSelected(ctx context.Context, chatID int64, callbac
 			fmt.Fprintf(&msg, "@%s %s %s - %s\n", user.TelegramID, user.FirstName, user.LastName, roleName)
 		}
 		if msg.Len() == 0 {
-			bot.sendReply(chatID, "❌ В команде нет пользователей.")
+			epicBot.sendReply(ctx, chatID, threadID, "❌ В команде нет пользователей.")
 			return
 		}
-		bot.sendReply(chatID, msg.String())
+		epicBot.sendReply(ctx, chatID, threadID, msg.String())
+
 	default:
-		bot.sendReply(chatID, "❌ Неизвестное действие.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Неизвестное действие.")
 	}
 }
 
 // handleAdmEpicSelected handles epic selection.
 // data = "adm_epic_<action>_<epicID>"
-func (bot *Bot) handleAdmEpicSelected(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
-	if !bot.isAdminCallback(callback) {
-		bot.sendReply(chatID, "⛔ Только для администраторов.")
+func (epicBot *Bot) handleAdmEpicSelected(
+	ctx context.Context,
+	chatID int64,
+	threadID int,
+	callback *models.CallbackQuery,
+	data string,
+) {
+	if !epicBot.isAdminCallback(callback) {
+		epicBot.sendReply(ctx, chatID, threadID, "⛔ Только для администраторов.")
 		return
 	}
 	rest := strings.TrimPrefix(data, "adm_epic_")
 	if len(rest) < 37 {
-		bot.sendReply(chatID, "❌ Некорректные данные.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Некорректные данные.")
 		return
 	}
 	epicIDStr := rest[len(rest)-36:]
@@ -386,68 +387,69 @@ func (bot *Bot) handleAdmEpicSelected(ctx context.Context, chatID int64, callbac
 
 	epicID, err := uuid.Parse(epicIDStr)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Ошибка парсинга ID эпика.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID эпика.")
 		return
 	}
 
-	epic, err := bot.repo.GetEpicByID(ctx, epicID)
+	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Эпик не найден.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Эпик не найден.")
 		return
 	}
 
 	switch action {
 	case "startscore":
-		bot.execStartScore(ctx, chatID, epicID)
+		epicBot.execStartScore(ctx, chatID, threadID, epicID)
 
 	case "results":
-		bot.showEpicResults(ctx, chatID, epicID)
+		epicBot.showEpicResults(ctx, chatID, threadID, epicID)
 
 	case "epicstatus":
-		bot.showEpicStatusReport(ctx, chatID, epicID)
+		epicBot.showEpicStatusReport(ctx, chatID, threadID, epicID)
 
 	case "addrisk":
-		bot.sessions.set(chatID, &Session{
-			Step: StepAddRiskDesc,
-			Data: map[string]string{"epicID": epicID.String()},
+		epicBot.sessions.set(chatID, &Session{
+			Step:     StepAddRiskDesc,
+			ThreadID: threadID,
+			Data:     map[string]string{"epicID": epicID.String()},
 		})
-		bot.sendReply(chatID,
+		epicBot.sendReply(ctx, chatID, threadID,
 			fmt.Sprintf("📝 Введите описание риска для эпика #%s «%s»:", epic.Number, epic.Name))
 
 	case "deleteepic":
-		// Show confirmation
-		kb := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("✅ Да, удалить", "adm_confirm_deleteepic_"+epicID.String()),
-				tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_deny_deleteepic"),
-			),
-		)
-		m := tgbotapi.NewMessage(chatID,
+		kb := inlineKeyboard(inlineRow(
+			inlineBtn("✅ Да, удалить", "adm_confirm_deleteepic_"+epicID.String()),
+			inlineBtn("❌ Отмена", "adm_deny_deleteepic"),
+		))
+		epicBot.sendWithKeyboard(ctx, chatID, threadID,
 			fmt.Sprintf("⚠️ Удалить эпик #%s «%s» и все его риски и оценки?\nЭто действие необратимо.",
-				epic.Number, epic.Name))
-		m.ReplyMarkup = kb
-		bot.tgbot.Send(m)
+				epic.Number, epic.Name),
+			kb)
 
 	case "deleterisk":
-		// Need to pick a risk next
-		bot.showRiskPicker(ctx, chatID, "deleterisk", epic)
+		epicBot.showRiskPicker(ctx, chatID, threadID, "deleterisk", epic)
 
 	default:
-		bot.sendReply(chatID, fmt.Sprintf("❌ Неизвестное действие: %s", action))
+		epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("❌ Неизвестное действие: %s", action))
 	}
 }
 
 // handleAdmRiskSelected handles risk selection for deleterisk.
 // data = "adm_risk_<action>_<epicID>_<riskID>"
-func (bot *Bot) handleAdmRiskSelected(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
-	if !bot.isAdminCallback(callback) {
-		bot.sendReply(chatID, "⛔ Только для администраторов.")
+func (epicBot *Bot) handleAdmRiskSelected(
+	ctx context.Context,
+	chatID int64,
+	threadID int,
+	callback *models.CallbackQuery,
+	data string,
+) {
+	if !epicBot.isAdminCallback(callback) {
+		epicBot.sendReply(ctx, chatID, threadID, "⛔ Только для администраторов.")
 		return
 	}
 	rest := strings.TrimPrefix(data, "adm_risk_")
-	// rest = "<action>_<epicID 36>_<riskID 36>"
 	if len(rest) < 74 {
-		bot.sendReply(chatID, "❌ Некорректные данные.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Некорректные данные.")
 		return
 	}
 	riskIDStr := rest[len(rest)-36:]
@@ -455,55 +457,56 @@ func (bot *Bot) handleAdmRiskSelected(ctx context.Context, chatID int64, callbac
 	epicIDStr := rest2[len(rest2)-36:]
 	action := rest2[:len(rest2)-37]
 
-	_, err := uuid.Parse(epicIDStr)
-	if err != nil {
-		bot.sendReply(chatID, "❌ Ошибка парсинга ID эпика.")
+	if _, err := uuid.Parse(epicIDStr); err != nil {
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID эпика.")
 		return
 	}
 	riskID, err := uuid.Parse(riskIDStr)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Ошибка парсинга ID риска.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID риска.")
 		return
 	}
 
-	risk, err := bot.repo.GetRiskByID(ctx, riskID)
+	risk, err := epicBot.repo.GetRiskByID(ctx, riskID)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Риск не найден.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Риск не найден.")
 		return
 	}
 
 	switch action {
 	case "deleterisk":
 		desc := risk.Description
-		if len(desc) > 60 {
-			desc = desc[:57] + "..."
+		if len([]rune(desc)) > 60 {
+			desc = string([]rune(desc)[:57]) + "..."
 		}
-		kb := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("✅ Да, удалить", "adm_confirm_deleterisk_"+riskID.String()),
-				tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "adm_deny_deleterisk"),
-			),
-		)
-		m := tgbotapi.NewMessage(chatID,
-			fmt.Sprintf("⚠️ Удалить риск «%s»?\nЭто действие необратимо.", desc))
-		m.ReplyMarkup = kb
-		bot.tgbot.Send(m)
+		kb := inlineKeyboard(inlineRow(
+			inlineBtn("✅ Да, удалить", "adm_confirm_deleterisk_"+riskID.String()),
+			inlineBtn("❌ Отмена", "adm_deny_deleterisk"),
+		))
+		epicBot.sendWithKeyboard(ctx, chatID, threadID,
+			fmt.Sprintf("⚠️ Удалить риск «%s»?\nЭто действие необратимо.", desc),
+			kb)
 	default:
-		bot.sendReply(chatID, fmt.Sprintf("❌ Неизвестное действие: %s", action))
+		epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("❌ Неизвестное действие: %s", action))
 	}
 }
 
 // handleAdmConfirm handles confirmed destructive actions.
 // data = "adm_confirm_<action>_<id>"
-func (bot *Bot) handleAdmConfirm(ctx context.Context, chatID int64, callback *tgbotapi.CallbackQuery, data string) {
-	if !bot.isSuperAdminCallback(callback) {
-		bot.sendReply(chatID, "⛔ Только для супер-администраторов.")
+func (epicBot *Bot) handleAdmConfirm(
+	ctx context.Context,
+	chatID int64,
+	threadID int,
+	callback *models.CallbackQuery,
+	data string,
+) {
+	if !epicBot.isSuperAdminCallback(callback) {
+		epicBot.sendReply(ctx, chatID, threadID, "⛔ Только для супер-администраторов.")
 		return
 	}
 	rest := strings.TrimPrefix(data, "adm_confirm_")
-	// rest = "<action>_<uuid>"
 	if len(rest) < 37 {
-		bot.sendReply(chatID, "❌ Некорректные данные.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Некорректные данные.")
 		return
 	}
 	idStr := rest[len(rest)-36:]
@@ -511,103 +514,51 @@ func (bot *Bot) handleAdmConfirm(ctx context.Context, chatID int64, callback *tg
 
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		bot.sendReply(chatID, "❌ Ошибка парсинга ID.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Ошибка парсинга ID.")
 		return
 	}
 
 	switch action {
 	case "deleteepic":
-		epic, _ := bot.repo.GetEpicByID(ctx, id)
-
-		// risks, _ := bot.repo.GetRisksByEpicID(ctx, id)
-		// if len(risks) > 0 {
-		// 	for _, risk := range risks {
-		// 		risk_scores, _ := bot.repo.GetRiskScoresByRiskID(ctx, risk.ID)
-		// 		if len(risk_scores) > 0 {
-		// 			for _, risk_score := range risk_scores {
-		// 				if err := bot.repo.DeleteRiskScore(ctx, risk_score.ID); err != nil {
-		// 					bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления оценки риска: %v", err))
-		// 					return
-		// 				}
-		// 			}
-		// 		}
-		// 		if err := bot.repo.DeleteRisk(ctx, risk.ID); err != nil {
-		// 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления риска: %v", err))
-		// 			return
-		// 		}
-		// 	}
-		// }
-
-		// epic_scores, _ := bot.repo.GetEpicScoresByEpicID(ctx, id)
-		// if len(epic_scores) > 0 {
-		// 	for _, epic_score := range epic_scores {
-		// 		if err := bot.repo.DeleteEpicScore(ctx, epic_score.ID); err != nil {
-		// 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления оценки эпика: %v", err))
-		// 			return
-		// 		}
-		// 	}
-		// }
-
-		// epic_role_scores, _ := bot.repo.GetEpicRoleScoresByEpicID(ctx, id)
-		// if len(epic_role_scores) > 0 {
-		// 	for _, epic_role_score := range epic_role_scores {
-		// 		if err := bot.repo.DeleteEpicRoleScore(ctx, epic_role_score.ID); err != nil {
-		// 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления оценки роли эпика: %v", err))
-		// 			return
-		// 		}
-		// 	}
-		// }
-
-		if err := bot.repo.DeleteEpic(ctx, id); err != nil {
-			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления эпика: %v", err))
+		epic, _ := epicBot.repo.GetEpicByID(ctx, id)
+		if err := epicBot.repo.DeleteEpic(ctx, id); err != nil {
+			epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("❌ Ошибка удаления эпика: %v", err))
 			return
 		}
 		epicNum := id.String()
 		if epic != nil {
 			epicNum = epic.Number
 		}
-		bot.sendReply(chatID, fmt.Sprintf("🗑️ Эпик #%s удалён.", epicNum))
+		epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("🗑️ Эпик #%s удалён.", epicNum))
 
 	case "deleterisk":
-		risk, _ := bot.repo.GetRiskByID(ctx, id)
-
-		// risk_scores, _ := bot.repo.GetRiskScoresByRiskID(ctx, risk.ID)
-		// if len(risk_scores) > 0 {
-		// 	for _, risk_score := range risk_scores {
-		// 		if err := bot.repo.DeleteRiskScore(ctx, risk_score.ID); err != nil {
-		// 			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления оценки риска: %v", err))
-		// 			return
-		// 		}
-		// 	}
-		// }
-
-		if err := bot.repo.DeleteRisk(ctx, id); err != nil {
-			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления риска: %v", err))
+		risk, _ := epicBot.repo.GetRiskByID(ctx, id)
+		if err := epicBot.repo.DeleteRisk(ctx, id); err != nil {
+			epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("❌ Ошибка удаления риска: %v", err))
 			return
 		}
 		desc := id.String()
 		if risk != nil {
 			desc = risk.Description
-			if len(desc) > 60 {
-				desc = desc[:57] + "..."
+			if len([]rune(desc)) > 60 {
+				desc = string([]rune(desc)[:57]) + "..."
 			}
 		}
-		bot.sendReply(chatID, fmt.Sprintf("🗑️ Риск «%s» удалён.", desc))
+		epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("🗑️ Риск «%s» удалён.", desc))
 
 	case "deleteuser":
-		user, _ := bot.repo.GetUserByID(ctx, id)
-		if err := bot.repo.DeleteUser(ctx, id); err != nil {
-			bot.sendReply(chatID, fmt.Sprintf("❌ Ошибка удаления пользователя: %v", err))
+		user, _ := epicBot.repo.GetUserByID(ctx, id)
+		if err := epicBot.repo.DeleteUser(ctx, id); err != nil {
+			epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("❌ Ошибка удаления пользователя: %v", err))
 			return
 		}
 		userLabel := id.String()
 		if user != nil {
-			userLabel = fmt.Sprintf("%s %s (@%s)",
-				user.FirstName, user.LastName, user.TelegramID)
+			userLabel = fmt.Sprintf("%s %s (@%s)", user.FirstName, user.LastName, user.TelegramID)
 		}
-		bot.sendReply(chatID, fmt.Sprintf("🗑️ Пользователь %s удалён.", userLabel))
+		epicBot.sendReply(ctx, chatID, threadID, fmt.Sprintf("🗑️ Пользователь %s удалён.", userLabel))
 
 	default:
-		bot.sendReply(chatID, "❌ Неизвестное действие.")
+		epicBot.sendReply(ctx, chatID, threadID, "❌ Неизвестное действие.")
 	}
 }
