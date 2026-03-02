@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strconv"
 
+	"EpicScoreBot/internal/ai"
 	"EpicScoreBot/internal/config"
 	"EpicScoreBot/internal/repositories"
 	"EpicScoreBot/internal/scoring"
@@ -17,14 +18,16 @@ import (
 
 // Bot is the Telegram bot for EpicScoreBot.
 type Bot struct {
-	b        *bot.Bot
-	cfg      *config.Config
-	repo     *repositories.Repository
-	scoring  *scoring.Service
-	sessions *sessionStore
-	ctx      context.Context
-	cancel   context.CancelFunc
-	log      *slog.Logger
+	b           *bot.Bot
+	cfg         *config.Config
+	repo        *repositories.Repository
+	scoring     *scoring.Service
+	ai          *ai.Client
+	sessions    *sessionStore
+	botUsername string
+	ctx         context.Context
+	cancel      context.CancelFunc
+	log         *slog.Logger
 }
 
 // New creates a new Bot instance.
@@ -33,6 +36,7 @@ func New(
 	cfg *config.Config,
 	repo *repositories.Repository,
 	scoringSvc *scoring.Service,
+	aiClient *ai.Client,
 ) *Bot {
 	op := "telegram.New()"
 	log := logger.With(slog.String("op", op))
@@ -43,6 +47,7 @@ func New(
 		cfg:      cfg,
 		repo:     repo,
 		scoring:  scoringSvc,
+		ai:       aiClient,
 		sessions: newSessionStore(),
 		ctx:      ctx,
 		cancel:   cancel,
@@ -59,6 +64,15 @@ func New(
 	}
 
 	epicBot.b = b
+
+	// Fetch bot username for mention detection.
+	me, err := b.GetMe(ctx)
+	if err != nil {
+		log.Error("failed to get bot me", sl.Err(err))
+	} else {
+		epicBot.botUsername = me.Username
+		log.Info("bot username", slog.String("username", me.Username))
+	}
 
 	log.Info("telegram bot created")
 	return epicBot
@@ -91,6 +105,8 @@ func (epicBot *Bot) defaultHandler(ctx context.Context, b *bot.Bot, update *mode
 		}
 	case update.CallbackQuery != nil:
 		epicBot.handleCallbackQuery(ctx, update)
+	case update.Message != nil && isBotMentioned(update.Message, epicBot.botUsername):
+		epicBot.handleMention(ctx, update)
 	case update.Message != nil:
 		epicBot.handleSessionInput(update)
 	}

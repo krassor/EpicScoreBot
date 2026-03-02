@@ -31,4 +31,18 @@ type BotConfig struct {
 	Admins        []string `yaml:"admins" env-default:"admin"`
 	SuperAdmins   []string `yaml:"superadmins" env-default:"superadmin"`
 	TgbotApiToken string   `yaml:"tgbot_apitoken" env:"TGBOT_APITOKEN" env-required:"true"`
+	AI            AIConfig `yaml:"AI"`
+}
+
+// AIConfig holds configuration for the OpenRouter AI client.
+type AIConfig struct {
+	Timeout          int    `yaml:"timeout" env:"AI_TIMEOUT" env-default:"1200"`
+	ModelName        string `yaml:"modelName" env:"AI_MODEL_NAME" env-default:"anthropic/claude-haiku-4.5"`
+	AIApiToken       string `yaml:"aiapitoken" env:"AI_API_TOKEN"`
+	SystemRolePrompt string `yaml:"systemRolePrompt" env-default:""`
+}
+
+// GetTimeout returns the AI request timeout as a time.Duration.
+func (a AIConfig) GetTimeout() time.Duration {
+	return time.Duration(a.Timeout) * time.Second
 }
