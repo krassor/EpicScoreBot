@@ -181,78 +181,150 @@ func (epicBot *Bot) Start(_ int) {
 	epicBot.log.Info("telegram bot polling stopped")
 }
 
+// ─── Send methods (create new messages) ───────────────────────────────────
+
 // sendReply sends a plain-text reply to the given chat/topic.
-func (epicBot *Bot) sendReply(ctx context.Context, chatID int64, threadID int, text string) error {
+func (epicBot *Bot) sendReply(ctx context.Context, msg *models.Message, text string) (*models.Message, error) {
 	chunks := splitTextIntoChunks(text, 4096)
+	var lastMsg *models.Message
 	for _, chunk := range chunks {
 		p := &bot.SendMessageParams{
-			ChatID: chatID,
+			ChatID: msg.Chat.ID,
 			Text:   chunk,
 		}
-		if threadID != 0 {
-			p.MessageThreadID = threadID
+		if msg.MessageThreadID != 0 {
+			p.MessageThreadID = msg.MessageThreadID
 		}
-		if _, err := epicBot.b.SendMessage(ctx, p); err != nil {
-			return fmt.Errorf("sendReply: %w", err)
+
+		sent, err := epicBot.b.SendMessage(ctx, p)
+		if err != nil {
+			return nil, fmt.Errorf("sendReply: %w", err)
 		}
+		lastMsg = sent
 	}
-	return nil
+	return lastMsg, nil
 }
 
 // sendMarkdown sends a Markdown-formatted reply to the given chat/topic.
-func (epicBot *Bot) sendMarkdown(ctx context.Context, chatID int64, threadID int, text string) error {
+func (epicBot *Bot) sendMarkdown(ctx context.Context, msg *models.Message, text string) (*models.Message, error) {
 	p := &bot.SendMessageParams{
-		ChatID:    chatID,
+		ChatID:    msg.Chat.ID,
 		Text:      text,
 		ParseMode: models.ParseModeMarkdown,
 	}
-	if threadID != 0 {
-		p.MessageThreadID = threadID
+	if msg.MessageThreadID != 0 {
+		p.MessageThreadID = msg.MessageThreadID
 	}
-	_, err := epicBot.b.SendMessage(ctx, p)
-	return err
+	return epicBot.b.SendMessage(ctx, p)
 }
 
 // sendWithKeyboard sends a plain-text reply with an inline keyboard.
 func (epicBot *Bot) sendWithKeyboard(
 	ctx context.Context,
-	chatID int64,
-	threadID int,
+	msg *models.Message,
 	text string,
 	kb *models.InlineKeyboardMarkup,
-) error {
+) (*models.Message, error) {
 	p := &bot.SendMessageParams{
-		ChatID:      chatID,
+		ChatID:      msg.Chat.ID,
 		Text:        text,
 		ReplyMarkup: kb,
 	}
-	if threadID != 0 {
-		p.MessageThreadID = threadID
+	if msg.MessageThreadID != 0 {
+		p.MessageThreadID = msg.MessageThreadID
 	}
-	_, err := epicBot.b.SendMessage(ctx, p)
-	return err
+	return epicBot.b.SendMessage(ctx, p)
 }
 
 // sendMarkdownWithKeyboard sends a Markdown reply with an inline keyboard.
 func (epicBot *Bot) sendMarkdownWithKeyboard(
 	ctx context.Context,
-	chatID int64,
-	threadID int,
+	msg *models.Message,
 	text string,
 	kb *models.InlineKeyboardMarkup,
-) error {
+) (*models.Message, error) {
 	p := &bot.SendMessageParams{
-		ChatID:      chatID,
+		ChatID:      msg.Chat.ID,
 		Text:        text,
 		ParseMode:   models.ParseModeMarkdown,
 		ReplyMarkup: kb,
 	}
-	if threadID != 0 {
-		p.MessageThreadID = threadID
+	if msg.MessageThreadID != 0 {
+		p.MessageThreadID = msg.MessageThreadID
 	}
-	_, err := epicBot.b.SendMessage(ctx, p)
+	return epicBot.b.SendMessage(ctx, p)
+}
+
+// ─── Edit methods (modify existing bot messages in-place) ─────────────────
+
+// editReply edits the text of a previously sent bot message.
+func (epicBot *Bot) editReply(ctx context.Context, chatID int64, messageID int, text string) error {
+	_, err := epicBot.b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Text:      text,
+	})
 	return err
 }
+
+// editMarkdown edits a message with Markdown formatting.
+func (epicBot *Bot) editMarkdown(ctx context.Context, chatID int64, messageID int, text string) error {
+	_, err := epicBot.b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Text:      text,
+		ParseMode: models.ParseModeMarkdown,
+	})
+	return err
+}
+
+// editWithKeyboard edits a message and replaces its inline keyboard.
+func (epicBot *Bot) editWithKeyboard(
+	ctx context.Context,
+	chatID int64,
+	messageID int,
+	text string,
+	kb *models.InlineKeyboardMarkup,
+) error {
+	_, err := epicBot.b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:      chatID,
+		MessageID:   messageID,
+		Text:        text,
+		ReplyMarkup: kb,
+	})
+	return err
+}
+
+// editMarkdownWithKeyboard edits a message with Markdown and inline keyboard.
+func (epicBot *Bot) editMarkdownWithKeyboard(
+	ctx context.Context,
+	chatID int64,
+	messageID int,
+	text string,
+	kb *models.InlineKeyboardMarkup,
+) error {
+	_, err := epicBot.b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:      chatID,
+		MessageID:   messageID,
+		Text:        text,
+		ParseMode:   models.ParseModeMarkdown,
+		ReplyMarkup: kb,
+	})
+	return err
+}
+
+// ─── Delete method ────────────────────────────────────────────────────────
+
+// deleteMessage deletes a bot message from the chat.
+func (epicBot *Bot) deleteMessage(ctx context.Context, chatID int64, messageID int) error {
+	_, err := epicBot.b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+		ChatID:    chatID,
+		MessageID: messageID,
+	})
+	return err
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
 
 // inlineKeyboard builds an InlineKeyboardMarkup from rows of buttons.
 func inlineKeyboard(rows ...[]models.InlineKeyboardButton) *models.InlineKeyboardMarkup {
