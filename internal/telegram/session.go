@@ -45,47 +45,70 @@ const sessionTTL = 5 * time.Minute
 type Session struct {
 	Step      SessionStep
 	ThreadID  int               // Telegram forum topic ID
+	Username  string            // Telegram username of the session initiator
+	MessageID int               // ID of the bot message to edit in-place
 	Data      map[string]string // accumulated key-value pairs
 	ExpiresAt time.Time
 }
 
-// sessions stores active sessions keyed by chat ID.
+// sessionKey uniquely identifies a session by chat, thread and user.
+type sessionKey struct {
+	ChatID   int64
+	ThreadID int
+	Username string
+}
+
+// sessions stores active sessions keyed by (chatID, threadID, username).
 type sessionStore struct {
 	mu   sync.RWMutex
-	data map[int64]*Session
+	data map[sessionKey]*Session
 }
 
 func newSessionStore() *sessionStore {
-	return &sessionStore{data: make(map[int64]*Session)}
+	return &sessionStore{data: make(map[sessionKey]*Session)}
 }
 
-func (s *sessionStore) get(chatID int64) (*Session, bool) {
+func (s *sessionStore) get(key sessionKey) (*Session, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	sess, ok := s.data[chatID]
+	sess, ok := s.data[key]
 	if !ok || time.Now().After(sess.ExpiresAt) {
 		return nil, false
 	}
 	return sess, true
 }
 
-func (s *sessionStore) set(chatID int64, sess *Session) {
+func (s *sessionStore) set(key sessionKey, sess *Session) {
 	sess.ExpiresAt = time.Now().Add(sessionTTL)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[chatID] = sess
+	s.data[key] = sess
 }
 
-func (s *sessionStore) touch(chatID int64) {
+func (s *sessionStore) touch(key sessionKey) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sess, ok := s.data[chatID]; ok {
+	if sess, ok := s.data[key]; ok {
 		sess.ExpiresAt = time.Now().Add(sessionTTL)
 	}
 }
 
-func (s *sessionStore) clear(chatID int64) {
+func (s *sessionStore) clear(key sessionKey) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.data, chatID)
+	delete(s.data, key)
+}
+
+// findByChat returns the first active session for the given chatID, regardless of
+// threadID/username. This is used when we need to find a session from a text message
+// without knowing which user originally started it.
+func (s *sessionStore) findByChat(chatID int64, threadID int) (*Session, sessionKey, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for k, sess := range s.data {
+		if k.ChatID == chatID && k.ThreadID == threadID && !time.Now().After(sess.ExpiresAt) {
+			return sess, k, true
+		}
+	}
+	return nil, sessionKey{}, false
 }

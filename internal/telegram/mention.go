@@ -30,7 +30,7 @@ func (epicBot *Bot) handleMention(ctx context.Context, update *models.Update) {
 
 	question := extractQuestion(msg, epicBot.botUsername)
 	if strings.TrimSpace(question) == "" {
-		epicBot.sendReply(ctx, msg.Chat.ID, msg.MessageThreadID,
+		epicBot.sendReply(ctx, msg,
 			"❓ Задайте вопрос после упоминания, например:\n@BotName кто не оценил EP-1?")
 		return
 	}
@@ -52,9 +52,9 @@ func (epicBot *Bot) handleMention(ctx context.Context, update *models.Update) {
 		return
 	}
 
-	if err := epicBot.sendMarkdown(ctx, msg.Chat.ID, msg.MessageThreadID, answer); err != nil {
+	if _, err := epicBot.sendMarkdown(ctx, msg, answer); err != nil {
 		// Fallback: send as plain text if markdown fails.
-		epicBot.sendReply(ctx, msg.Chat.ID, msg.MessageThreadID, answer)
+		epicBot.sendReply(ctx, msg, answer)
 	}
 }
 
