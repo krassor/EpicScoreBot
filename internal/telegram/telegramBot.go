@@ -218,6 +218,21 @@ func (epicBot *Bot) sendMarkdown(ctx context.Context, msg *models.Message, text 
 	return epicBot.b.SendMessage(ctx, p)
 }
 
+// sendHTML sends an HTML-formatted reply to the given chat/topic.
+// HTML is more reliable than Markdown in Telegram because special characters
+// in usernames and text don't break the parser.
+func (epicBot *Bot) sendHTML(ctx context.Context, msg *models.Message, text string) (*models.Message, error) {
+	p := &bot.SendMessageParams{
+		ChatID:    msg.Chat.ID,
+		Text:      text,
+		ParseMode: models.ParseModeHTML,
+	}
+	if msg.MessageThreadID != 0 {
+		p.MessageThreadID = msg.MessageThreadID
+	}
+	return epicBot.b.SendMessage(ctx, p)
+}
+
 // sendWithKeyboard sends a plain-text reply with an inline keyboard.
 func (epicBot *Bot) sendWithKeyboard(
 	ctx context.Context,
