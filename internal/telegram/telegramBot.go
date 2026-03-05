@@ -87,14 +87,14 @@ func (epicBot *Bot) defaultHandler(ctx context.Context, b *bot.Bot, update *mode
 		log.Info("input message",
 			slog.String("user_id", strconv.FormatInt(update.Message.From.ID, 10)),
 			slog.String("user_name", update.Message.From.Username),
-			slog.String("text", update.Message.Text),
+			//slog.String("text", update.Message.Text),
 		)
 	}
 	if update.CallbackQuery != nil {
 		log.Info("input callback",
 			slog.String("user_id", strconv.FormatInt(update.CallbackQuery.From.ID, 10)),
 			slog.String("user_name", update.CallbackQuery.From.Username),
-			slog.String("data", update.CallbackQuery.Data),
+			//slog.String("data", update.CallbackQuery.Data),
 		)
 	}
 
