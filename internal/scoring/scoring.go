@@ -2,7 +2,6 @@ package scoring
 
 import (
 	"EpicScoreBot/internal/models/domain"
-	"EpicScoreBot/internal/repositories"
 	"context"
 	"fmt"
 	"log/slog"
@@ -13,12 +12,12 @@ import (
 
 // Service provides scoring business logic.
 type Service struct {
-	repo *repositories.Repository
+	repo Repository
 	log  *slog.Logger
 }
 
 // New creates a new scoring service.
-func New(logger *slog.Logger, repo *repositories.Repository) *Service {
+func New(logger *slog.Logger, repo Repository) *Service {
 	return &Service{
 		repo: repo,
 		log:  logger.With(slog.String("component", "scoring")),

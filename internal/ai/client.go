@@ -6,8 +6,6 @@ import (
 	"log/slog"
 
 	"EpicScoreBot/internal/config"
-	"EpicScoreBot/internal/repositories"
-	"EpicScoreBot/internal/scoring"
 	"EpicScoreBot/internal/utils/logger/sl"
 
 	openrouter "github.com/revrost/go-openrouter"
@@ -35,14 +33,13 @@ IMPORTANT — formatting rules (Telegram HTML):
 type Client struct {
 	log      *slog.Logger
 	cfg      *config.Config
-	repo     *repositories.Repository
-	scoring  *scoring.Service
+	repo     Repository
 	orClient *openrouter.Client
 	tools    []openrouter.Tool
 }
 
 // New creates an AI Client. Returns nil when AIApiToken is empty (AI disabled).
-func New(logger *slog.Logger, cfg *config.Config, repo *repositories.Repository, scoringSvc *scoring.Service) *Client {
+func New(logger *slog.Logger, cfg *config.Config, repo Repository) *Client {
 	op := "ai.New()"
 	log := logger.With(slog.String("op", op))
 
@@ -63,7 +60,6 @@ func New(logger *slog.Logger, cfg *config.Config, repo *repositories.Repository,
 		log:      log,
 		cfg:      cfg,
 		repo:     repo,
-		scoring:  scoringSvc,
 		orClient: openrouter.NewClient(cfg.BotConfig.AI.AIApiToken),
 		tools:    tools,
 	}
