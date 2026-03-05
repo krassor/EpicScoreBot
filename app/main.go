@@ -36,7 +36,14 @@ func main() {
 
 	repositoryService := repositories.New(log, cfg)
 	scoringService := scoring.New(log, repositoryService)
-	aiClient := ai.New(log, cfg, repositoryService, scoringService)
+
+	// ai.New may return nil when AI is disabled. We must pass a nil interface
+	// (not a typed-nil pointer) so that telegram's epicBot.ai == nil check works.
+	var aiClient telegram.AIClient
+	if c := ai.New(log, cfg, repositoryService); c != nil {
+		aiClient = c
+	}
+
 	tgBot := telegram.New(log, cfg, repositoryService, scoringService, aiClient)
 
 	maxSecond := 15 * time.Second

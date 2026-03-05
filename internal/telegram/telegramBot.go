@@ -6,10 +6,7 @@ import (
 	"log/slog"
 	"strconv"
 
-	"EpicScoreBot/internal/ai"
 	"EpicScoreBot/internal/config"
-	"EpicScoreBot/internal/repositories"
-	"EpicScoreBot/internal/scoring"
 	"EpicScoreBot/internal/utils/logger/sl"
 
 	"github.com/go-telegram/bot"
@@ -20,9 +17,9 @@ import (
 type Bot struct {
 	b           *bot.Bot
 	cfg         *config.Config
-	repo        *repositories.Repository
-	scoring     *scoring.Service
-	ai          *ai.Client
+	repo        Repository
+	scoring     ScoringService
+	ai          AIClient
 	sessions    *sessionStore
 	botUsername string
 	ctx         context.Context
@@ -34,9 +31,9 @@ type Bot struct {
 func New(
 	logger *slog.Logger,
 	cfg *config.Config,
-	repo *repositories.Repository,
-	scoringSvc *scoring.Service,
-	aiClient *ai.Client,
+	repo Repository,
+	scoringSvc ScoringService,
+	aiClient AIClient,
 ) *Bot {
 	op := "telegram.New()"
 	log := logger.With(slog.String("op", op))
