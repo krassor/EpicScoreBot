@@ -52,8 +52,8 @@ func (epicBot *Bot) handleMention(ctx context.Context, update *models.Update) {
 		return
 	}
 
-	if _, err := epicBot.sendMarkdown(ctx, msg, answer); err != nil {
-		// Fallback: send as plain text if markdown fails.
+	if _, err := epicBot.sendHTML(ctx, msg, answer); err != nil {
+		// Fallback: send as plain text if HTML fails.
 		epicBot.sendReply(ctx, msg, answer)
 	}
 }

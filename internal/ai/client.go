@@ -16,18 +16,19 @@ import (
 const maxToolRounds = 5
 
 // telegramFormatSuffix is appended to the system prompt so the LLM produces
-// text compatible with Telegram's Markdown parser.
+// text compatible with Telegram's HTML parser.
 const telegramFormatSuffix = `
 
-IMPORTANT — formatting rules (Telegram Markdown):
-- Use *bold* for emphasis (single asterisks, NOT double **).
-- Use _italic_ for secondary emphasis.
-- Use ` + "`" + `code` + "`" + ` for inline code.
+IMPORTANT — formatting rules (Telegram HTML):
+- Use <b>bold</b> for emphasis (NOT markdown **bold** or *bold*).
+- Use <i>italic</i> for secondary emphasis.
+- Use <code>code</code> for inline code.
 - NEVER use markdown tables (| ... |). Instead, format structured data as
   bullet-point lists, one item per line, for example:
   • Иванов Иван (@ivan) — Аналитик
   • Петров Пётр (@petr) — Разработчик
 - Use blank lines to separate sections.
+- Do NOT use any markdown formatting at all. Only use HTML tags listed above.
 - Keep the answer concise and readable in a mobile Telegram chat.`
 
 // Client wraps the OpenRouter API and provides Ask() for Q&A over project data.

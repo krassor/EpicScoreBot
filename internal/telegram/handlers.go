@@ -103,14 +103,14 @@ func (epicBot *Bot) handleStart(ctx context.Context, msg *models.Message) error 
 
 func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 	var sb strings.Builder
-	sb.WriteString("📋 *Команды бота*\n\n")
-	sb.WriteString("*👤 Для всех:*\n")
+	sb.WriteString("📋 <b>Команды бота</b>\n\n")
+	sb.WriteString("<b>👤 Для всех:</b>\n")
 	sb.WriteString("/score — меню оценки эпиков и рисков\n")
 	sb.WriteString("/epicstatus — статус оценки эпика\n")
 
 	if epicBot.isAdmin(msg) {
-		sb.WriteString("\n*🔧 Для администраторов:*\n")
-		sb.WriteString("/addteam <название> — создать команду\n")
+		sb.WriteString("\n<b>🔧 Для администраторов:</b>\n")
+		sb.WriteString("/addteam &lt;название&gt; — создать команду\n")
 		sb.WriteString("/adduser — добавить пользователя\n")
 		sb.WriteString("/assignrole — назначить роль пользователю\n")
 		sb.WriteString("/addepic — создать эпик\n")
@@ -121,7 +121,7 @@ func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 	}
 
 	if epicBot.isSuperAdmin(msg) {
-		sb.WriteString("\n*⚡ Для супер-администраторов:*\n")
+		sb.WriteString("\n<b>⚡ Для супер-администраторов:</b>\n")
 		sb.WriteString("/assignteam — добавить пользователя в команду\n")
 		sb.WriteString("/renameuser — переименовать пользователя\n")
 		sb.WriteString("/changerate — изменить вес пользователя\n")
@@ -138,7 +138,7 @@ func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 		sb.WriteString("\nДля управления — обратитесь к администратору.")
 	}
 
-	_, err := epicBot.sendMarkdown(ctx, msg, sb.String())
+	_, err := epicBot.sendHTML(ctx, msg, sb.String())
 	return err
 }
 
