@@ -15,6 +15,21 @@ import (
 
 const maxToolRounds = 5
 
+// telegramFormatSuffix is appended to the system prompt so the LLM produces
+// text compatible with Telegram's Markdown parser.
+const telegramFormatSuffix = `
+
+IMPORTANT — formatting rules (Telegram Markdown):
+- Use *bold* for emphasis (single asterisks, NOT double **).
+- Use _italic_ for secondary emphasis.
+- Use ` + "`" + `code` + "`" + ` for inline code.
+- NEVER use markdown tables (| ... |). Instead, format structured data as
+  bullet-point lists, one item per line, for example:
+  • Иванов Иван (@ivan) — Аналитик
+  • Петров Пётр (@petr) — Разработчик
+- Use blank lines to separate sections.
+- Keep the answer concise and readable in a mobile Telegram chat.`
+
 // Client wraps the OpenRouter API and provides Ask() for Q&A over project data.
 type Client struct {
 	log      *slog.Logger
@@ -62,7 +77,7 @@ func (c *Client) Ask(ctx context.Context, question string) (string, error) {
 	requestCtx, cancel := context.WithTimeout(ctx, c.cfg.BotConfig.AI.GetTimeout())
 	defer cancel()
 
-	systemPrompt := c.cfg.BotConfig.AI.SystemRolePrompt
+	systemPrompt := c.cfg.BotConfig.AI.SystemRolePrompt + telegramFormatSuffix
 
 	messages := []openrouter.ChatCompletionMessage{
 		openrouter.SystemMessage(systemPrompt),
