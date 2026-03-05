@@ -185,7 +185,6 @@ func executeTool(ctx context.Context, repo *repositories.Repository, name, argsJ
 			Name     string `json:"name"`
 			Username string `json:"username"`
 			Role     string `json:"role"`
-			Weight   int    `json:"weight"`
 		}
 		var rows []memberRow
 		for _, u := range members {
@@ -197,7 +196,6 @@ func executeTool(ctx context.Context, repo *repositories.Repository, name, argsJ
 				Name:     fmt.Sprintf("%s %s", u.FirstName, u.LastName),
 				Username: u.TelegramID,
 				Role:     roleName,
-				Weight:   u.Weight,
 			})
 		}
 		result := map[string]any{"team": team.Name, "members": rows}
