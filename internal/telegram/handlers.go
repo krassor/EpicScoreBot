@@ -242,7 +242,58 @@ func (epicBot *Bot) handleAssignRole(ctx context.Context, msg *models.Message) e
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
-	return epicBot.showUserPickerInitial(ctx, msg, "assignrole")
+	return epicBot.showUserPickerWithoutRole(ctx, msg)
+}
+
+// showUserPickerWithoutRole sends an inline keyboard with users who have no role assigned.
+func (epicBot *Bot) showUserPickerWithoutRole(ctx context.Context, msg *models.Message) error {
+	op := "bot.showUserPickerWithoutRole"
+	log := epicBot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", msg.Chat.ID),
+	)
+	users, err := epicBot.repo.GetAllUsers(ctx)
+	if err != nil {
+		log.Error("error getting all users", sl.Err(err))
+		_, retErr := epicBot.sendReply(ctx, msg, "❌ Ошибка получения пользователей.")
+		return retErr
+	}
+
+	var rows [][]models.InlineKeyboardButton
+	for _, u := range users {
+		// Skip users who already have a role.
+		if _, err := epicBot.repo.GetRoleByUserID(ctx, u.ID); err == nil {
+			continue
+		}
+		label := fmt.Sprintf("👤 %s %s (@%s)", u.FirstName, u.LastName, u.TelegramID)
+		data := fmt.Sprintf("adm_user_assignrole_%s", u.ID.String())
+		rows = append(rows, inlineRow(inlineBtn(label, data)))
+	}
+
+	if len(rows) == 0 {
+		_, retErr := epicBot.sendReply(ctx, msg, "✅ У всех пользователей уже назначена роль.")
+		return retErr
+	}
+
+	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "adm_cancel")))
+	kb := inlineKeyboard(rows...)
+
+	sent, err := epicBot.sendWithKeyboard(ctx, msg, "👤 Выберите пользователя:", kb)
+	if err != nil {
+		return err
+	}
+	// Save session with the message ID for future editing.
+	sk := sessionKey{ChatID: msg.Chat.ID, ThreadID: msg.MessageThreadID, Username: msg.From.Username}
+	sess := &Session{
+		ThreadID: msg.MessageThreadID,
+		Username: msg.From.Username,
+		Data:     make(map[string]string),
+	}
+	if sent != nil {
+		sess.MessageID = sent.ID
+	}
+	epicBot.sessions.set(sk, sess)
+	return nil
 }
 
 // ─── /assignteam — inline keyboard ────────────────────────────────────────
