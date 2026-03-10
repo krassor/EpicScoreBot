@@ -1002,11 +1002,11 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 	// ── /addepic interactive steps ─────────────────────────────────────
 
 	case StepAddEpicNumber:
-		epic, err := epicBot.repo.GetEpicByNumber(ctx, sess.Data["number"])
-		if err != nil {
-			epicBot.editOrSend(ctx, msg, msgID, "❌ Ошибка поиска эпика.")
-			return
-		}
+		epic, _ := epicBot.repo.GetEpicByNumber(ctx, sess.Data["number"])
+		// if err != nil {
+		// 	epicBot.editOrSend(ctx, msg, msgID, "❌ Ошибка поиска эпика.")
+		// 	return
+		// }
 		if epic != nil {
 			epicBot.editOrSend(ctx, msg, msgID, "❌ Эпик с таким номером уже существует.")
 			return
@@ -1036,10 +1036,10 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 		}
 
 		epic, err := epicBot.repo.GetEpicByNumber(ctx, sess.Data["number"])
-		if err != nil {
-			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка поиска эпика.")
-			return
-		}
+		// if err != nil {
+		// 	epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка поиска эпика.")
+		// 	return
+		// }
 		if epic != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Эпик с таким номером уже существует.")
 			return
