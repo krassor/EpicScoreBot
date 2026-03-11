@@ -866,12 +866,15 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 
 // handleSessionInput handles plain-text messages that continue a multi-step flow.
 func (epicBot *Bot) handleSessionInput(update *models.Update) {
+	op := "bot.handleSessionInput"
+	log := epicBot.log.With(slog.String("op", op))
+
 	if update.Message == nil {
 		return
 	}
 	msg := update.Message
 	chatID := msg.Chat.ID
-	text := strings.TrimSpace(msg.Text)
+	text := msg.Text
 
 	// Find session by chatID + threadID (username is checked inside).
 	sess, sk, ok := epicBot.sessions.findByChat(chatID, msg.MessageThreadID)
@@ -882,7 +885,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 
 	// Verify the message sender is the session owner.
 	if sess.Username != "" && !strings.EqualFold(sess.Username, msg.From.Username) {
-		epicBot.log.Debug("text input from non-owner, ignoring",
+		log.Debug("text input from non-owner, ignoring",
 			slog.String("session_owner", sess.Username),
 			slog.String("sender", msg.From.Username),
 		)
@@ -1002,6 +1005,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 	// ── /addepic interactive steps ─────────────────────────────────────
 
 	case StepAddEpicNumber:
+		sess.Data["number"] = text
 		epic, _ := epicBot.repo.GetEpicByNumber(ctx, sess.Data["number"])
 		// if err != nil {
 		// 	epicBot.editOrSend(ctx, msg, msgID, "❌ Ошибка поиска эпика.")
@@ -1011,7 +1015,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			epicBot.editOrSend(ctx, msg, msgID, "❌ Эпик с таким номером уже существует.")
 			return
 		}
-		sess.Data["number"] = text
+
 		sess.Step = StepAddEpicName
 		epicBot.sessions.set(sk, sess)
 		epicBot.editOrSend(ctx, msg, msgID, "📝 Введите название эпика:")
@@ -1035,7 +1039,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			return
 		}
 
-		epic, err := epicBot.repo.GetEpicByNumber(ctx, sess.Data["number"])
+		epic, _ := epicBot.repo.GetEpicByNumber(ctx, sess.Data["number"])
 		// if err != nil {
 		// 	epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка поиска эпика.")
 		// 	return
