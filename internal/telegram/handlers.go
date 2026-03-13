@@ -801,11 +801,21 @@ func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, ep
 // ─── /epicstatus logic (called by callback) ───────────────────────────────
 
 func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Message, epicID uuid.UUID) {
+	op := "bot.showEpicStatusReport"
+	log := epicBot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", msg.Chat.ID),
+		slog.String("epic_id", epicID.String()),
+	)
 	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Эпик не найден.")
 		return
 	}
+	log.Debug(
+		"epic found",
+		slog.String("epic", epic.Number),
+	)
 
 	teamMembers, err := epicBot.repo.GetUsersByTeamID(ctx, epic.TeamID)
 	if err != nil {
@@ -813,20 +823,32 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 		return
 	}
 
+	log.Debug(
+		"team members found",
+		slog.Int("count", len(teamMembers)),
+	)
+
 	scoredEpic, _ := epicBot.repo.GetUsersWhoScoredEpic(ctx, epic.ID)
 	scoredSet := make(map[uuid.UUID]bool)
 	for _, u := range scoredEpic {
 		scoredSet[u.ID] = true
 	}
 
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "📊 *Статус оценки эпика #%s «%s»*\n\n", epic.Number, epic.Name)
+	log.Debug(
+		"scored epic",
+		slog.Int("count", len(scoredEpic)),
+	)
 
-	sb.WriteString("📋 *Трудоёмкость — не оценили:*\n")
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "📊 *Статус оценки эпика \\#%s «%s»*\n\n",
+		escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name))
+
+	sb.WriteString("📋 *Трудоёмкость \\— не оценили:*\n")
 	missing := 0
 	for _, u := range teamMembers {
 		if !scoredSet[u.ID] {
-			fmt.Fprintf(&sb, "  • %s %s (@%s)\n", u.FirstName, u.LastName, u.TelegramID)
+			fmt.Fprintf(&sb, "  • %s %s \\(@%s\\)\n",
+				escapeMarkdownV2(u.FirstName), escapeMarkdownV2(u.LastName), escapeMarkdownV2(u.TelegramID))
 			missing++
 		}
 	}
@@ -845,13 +867,15 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 			}
 			desc := risk.Description
 			if len([]rune(desc)) > 40 {
-				desc = string([]rune(desc)[:37]) + "..."
+				desc = string([]rune(desc)[:37]) + "\\.\\.\\."
 			}
-			fmt.Fprintf(&sb, "\n*%s* [%s] — не оценили:\n", desc, string(risk.Status))
+			fmt.Fprintf(&sb, "\n*%s* \\[%s\\] \\— не оценили:\n",
+				escapeMarkdownV2(desc), escapeMarkdownV2(string(risk.Status)))
 			riskMissing := 0
 			for _, u := range teamMembers {
 				if !riskScoredSet[u.ID] {
-					fmt.Fprintf(&sb, "  • %s %s (@%s)\n", u.FirstName, u.LastName, u.TelegramID)
+					fmt.Fprintf(&sb, "  • %s %s \\(@%s\\)\n",
+						escapeMarkdownV2(u.FirstName), escapeMarkdownV2(u.LastName), escapeMarkdownV2(u.TelegramID))
 					riskMissing++
 				}
 			}
@@ -860,6 +884,11 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 			}
 		}
 	}
+
+	log.Debug(
+		"status report",
+		slog.String("report", sb.String()),
+	)
 
 	epicBot.sendMarkdown(ctx, msg, sb.String())
 }
@@ -1145,6 +1174,9 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			epicBot.log.Error("failed to try complete epic scoring",
 				slog.String("epicID", epicID.String()), sl.Err(err))
 		}
+
+		// Show unscored risks if any remain.
+		epicBot.showEpicRisks(ctx, msg, username, epicID)
 
 	default:
 		epicBot.sessions.clear(sk)
