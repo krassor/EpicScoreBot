@@ -737,7 +737,7 @@ func (epicBot *Bot) deleteAndSendStartScore(ctx context.Context, msg *models.Mes
 // showEpicResultsAndClean deletes picker message and shows results.
 func (epicBot *Bot) showEpicResultsAndClean(ctx context.Context, msg *models.Message, epicID uuid.UUID, msgID int) {
 	if msgID > 0 {
-		epicBot.deleteMessage(ctx, msg.Chat.ID, msgID)
+		_ = epicBot.deleteMessage(ctx, msg.Chat.ID, msgID)
 	}
 	epicBot.showEpicResults(ctx, msg, epicID)
 }
@@ -745,7 +745,7 @@ func (epicBot *Bot) showEpicResultsAndClean(ctx context.Context, msg *models.Mes
 // showEpicStatusReportAndClean deletes picker message and shows status.
 func (epicBot *Bot) showEpicStatusReportAndClean(ctx context.Context, msg *models.Message, epicID uuid.UUID, msgID int) {
 	if msgID > 0 {
-		epicBot.deleteMessage(ctx, msg.Chat.ID, msgID)
+		_ = epicBot.deleteMessage(ctx, msg.Chat.ID, msgID)
 	}
 	epicBot.showEpicStatusReport(ctx, msg, epicID)
 }

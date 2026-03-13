@@ -188,7 +188,7 @@ func (epicBot *Bot) showTeamEpics(ctx context.Context, msg *models.Message, user
 	}
 
 	team, _ := epicBot.repo.GetTeamByID(ctx, teamID)
-	teamName := "команда"
+	teamName := ""
 	if team != nil {
 		teamName = team.Name
 	}
@@ -359,6 +359,10 @@ func (epicBot *Bot) handleEpicScoreSubmit(ctx context.Context, msg *models.Messa
 		epicBot.log.Error("failed to try complete epic scoring",
 			slog.String("epicID", epicID.String()), sl.Err(err))
 	}
+
+	// Show unscored risks if any remain.
+	epicBot.showEpicRisks(ctx, msg, username, epicID)
+
 }
 
 // showEpicRisks shows unscored risks for an epic.
