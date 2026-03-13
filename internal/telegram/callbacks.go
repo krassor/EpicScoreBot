@@ -434,10 +434,10 @@ func (epicBot *Bot) showRiskScoreForm(ctx context.Context, msg *models.Message, 
 	}
 	kb := inlineKeyboard(inlineRow(probBtns...))
 
-	if _, botErr := epicBot.sendMarkdownWithKeyboard(ctx, msg,
+	if err := epicBot.editMarkdownWithKeyboard(ctx, msg.Chat.ID, msg.ID,
 		fmt.Sprintf("⚠️ Риск: %s\n\nВыберите *вероятность* риска \\(1–4\\):", escapeMarkdownV2(risk.Description)),
-		kb); botErr != nil {
-		log.Error("failed to send message", sl.Err(botErr))
+		kb); err != nil {
+		log.Error("failed to edit message", sl.Err(err))
 	}
 }
 
@@ -490,10 +490,10 @@ func (epicBot *Bot) handleRiskProbability(ctx context.Context, msg *models.Messa
 		desc = risk.Description
 	}
 
-	if _, botErr := epicBot.sendMarkdownWithKeyboard(ctx, msg,
+	if err := epicBot.editMarkdownWithKeyboard(ctx, msg.Chat.ID, msg.ID,
 		fmt.Sprintf("⚠️ Риск: %s\nВероятность: *%d*\n\nВыберите *влияние* риска \\(1–4\\):", escapeMarkdownV2(desc), prob),
-		kb); botErr != nil {
-		log.Error("failed to send message", sl.Err(botErr))
+		kb); err != nil {
+		log.Error("failed to edit message", sl.Err(err))
 	}
 }
 
@@ -562,10 +562,10 @@ func (epicBot *Bot) handleRiskImpact(ctx context.Context, msg *models.Message, u
 	riskScore := prob * impact
 	coeff := scoring.RiskCoefficient(float64(riskScore))
 
-	if _, botErr := epicBot.sendReply(ctx, msg,
+	if err := epicBot.editReply(ctx, msg.Chat.ID, msg.ID,
 		fmt.Sprintf("✅ Оценка риска сохранена!\nВероятность: %d, Влияние: %d\nРезультат: %d (коэфф: %.2f)",
-			prob, impact, riskScore, coeff)); botErr != nil {
-		log.Error("failed to send reply", sl.Err(botErr))
+			prob, impact, riskScore, coeff)); err != nil {
+		log.Error("failed to edit message", sl.Err(err))
 	}
 
 	if err := epicBot.scoring.TryCompleteRiskScoring(ctx, riskID); err != nil {
