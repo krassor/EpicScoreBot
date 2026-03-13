@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"EpicScoreBot/internal/config"
 	"EpicScoreBot/internal/utils/logger/sl"
@@ -351,6 +352,33 @@ func inlineRow(btns ...models.InlineKeyboardButton) []models.InlineKeyboardButto
 // inlineBtn creates an inline keyboard button with callback data.
 func inlineBtn(text, data string) models.InlineKeyboardButton {
 	return models.InlineKeyboardButton{Text: text, CallbackData: data}
+}
+
+// escapeMarkdownV2 escapes all MarkdownV2 reserved characters in a string
+// so it can be safely embedded in a MarkdownV2-formatted message.
+func escapeMarkdownV2(s string) string {
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`_`, `\_`,
+		`*`, `\*`,
+		`[`, `\[`,
+		`]`, `\]`,
+		`(`, `\(`,
+		`)`, `\)`,
+		`~`, `\~`,
+		"`", "\\`",
+		`>`, `\>`,
+		`#`, `\#`,
+		`+`, `\+`,
+		`-`, `\-`,
+		`=`, `\=`,
+		`|`, `\|`,
+		`{`, `\{`,
+		`}`, `\}`,
+		`.`, `\.`,
+		`!`, `\!`,
+	)
+	return replacer.Replace(s)
 }
 
 // splitTextIntoChunks splits text into chunks of the specified size.

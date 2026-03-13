@@ -756,8 +756,8 @@ func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, ep
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "📊 *Результаты эпика #%s «%s»*\n", epic.Number, epic.Name)
-	fmt.Fprintf(&sb, "Статус: %s\n\n", string(epic.Status))
+	fmt.Fprintf(&sb, "📊 *Результаты эпика \\#%s «%s»*\n", escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name))
+	fmt.Fprintf(&sb, "Статус: %s\n\n", escapeMarkdownV2(string(epic.Status)))
 
 	roleScores, err := epicBot.repo.GetEpicRoleScoresByEpicID(ctx, epic.ID)
 	if err == nil && len(roleScores) > 0 {
@@ -768,7 +768,7 @@ func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, ep
 			if err == nil {
 				roleName = role.Name
 			}
-			fmt.Fprintf(&sb, "  • %s: %.2f\n", roleName, rs.WeightedAvg)
+			fmt.Fprintf(&sb, "  • %s: %s\n", escapeMarkdownV2(roleName), escapeMarkdownV2(fmt.Sprintf("%.2f", rs.WeightedAvg)))
 		}
 		sb.WriteString("\n")
 	}
@@ -780,17 +780,19 @@ func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, ep
 			coeff := ""
 			if risk.WeightedScore != nil {
 				c := scoring.RiskCoefficient(*risk.WeightedScore)
-				coeff = fmt.Sprintf(" (оценка: %.2f, коэфф: %.2f)", *risk.WeightedScore, c)
+				coeff = fmt.Sprintf(" \\(оценка: %s, коэфф: %s\\)",
+					escapeMarkdownV2(fmt.Sprintf("%.2f", *risk.WeightedScore)),
+					escapeMarkdownV2(fmt.Sprintf("%.2f", c)))
 			}
-			fmt.Fprintf(&sb, "  • %s [%s]%s\n", risk.Description, string(risk.Status), coeff)
+			fmt.Fprintf(&sb, "  • %s \\[%s\\]%s\n", escapeMarkdownV2(risk.Description), escapeMarkdownV2(string(risk.Status)), coeff)
 		}
 		sb.WriteString("\n")
 	}
 
 	if epic.FinalScore != nil {
-		fmt.Fprintf(&sb, "🏆 *Итоговая оценка: %.0f*\n", *epic.FinalScore)
+		fmt.Fprintf(&sb, "🏆 *Итоговая оценка: %s*\n", escapeMarkdownV2(fmt.Sprintf("%.0f", *epic.FinalScore)))
 	} else {
-		sb.WriteString("⏳ Итоговая оценка ещё не рассчитана.\n")
+		sb.WriteString("⏳ Итоговая оценка ещё не рассчитана\\.\n")
 	}
 
 	epicBot.sendMarkdown(ctx, msg, sb.String())
@@ -876,10 +878,19 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 	chatID := msg.Chat.ID
 	text := msg.Text
 
+	log.Debug(
+		"text input",
+		slog.String("text", text),
+		slog.String("username", msg.From.Username),
+		slog.Int64("chat_id", chatID),
+		slog.Int("message_thread_id", msg.MessageThreadID),
+	)
+
 	// Find session by chatID + threadID (username is checked inside).
 	sess, sk, ok := epicBot.sessions.findByChat(chatID, msg.MessageThreadID)
 	if !ok {
 		// No active session — ignore silently.
+		log.Debug("no active session")
 		return
 	}
 
@@ -896,6 +907,11 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 
 	ctx := epicBot.ctx
 	msgID := sess.MessageID
+
+	log.Debug(
+		"session found",
+		slog.String("step", string(sess.Step)),
+	)
 
 	switch sess.Step {
 
