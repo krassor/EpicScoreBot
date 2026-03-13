@@ -274,8 +274,8 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 	}
 
 	sent, botErr := epicBot.sendMarkdown(ctx, msg,
-		fmt.Sprintf("📝 Эпик #%s «%s»\n\n%s\n\nВаша роль: *%s*\n\nВведите оценку трудоёмкости (число от 0 до 500):",
-			epic.Number, epic.Name, epic.Description, role.Name))
+		fmt.Sprintf("📝 Эпик \\#%s «%s»\n\n%s\n\nВаша роль: *%s*\n\nВведите оценку трудоёмкости \\(число от 0 до 500\\):",
+			escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name), escapeMarkdownV2(epic.Description), escapeMarkdownV2(role.Name)))
 	if botErr != nil {
 		log.Error("failed to send reply", sl.Err(botErr))
 		return
@@ -431,7 +431,7 @@ func (epicBot *Bot) showRiskScoreForm(ctx context.Context, msg *models.Message, 
 	kb := inlineKeyboard(inlineRow(probBtns...))
 
 	if _, botErr := epicBot.sendMarkdownWithKeyboard(ctx, msg,
-		fmt.Sprintf("⚠️ Риск: %s\n\nВыберите *вероятность* риска (1–4):", risk.Description),
+		fmt.Sprintf("⚠️ Риск: %s\n\nВыберите *вероятность* риска \\(1–4\\):", escapeMarkdownV2(risk.Description)),
 		kb); botErr != nil {
 		log.Error("failed to send message", sl.Err(botErr))
 	}
@@ -487,7 +487,7 @@ func (epicBot *Bot) handleRiskProbability(ctx context.Context, msg *models.Messa
 	}
 
 	if _, botErr := epicBot.sendMarkdownWithKeyboard(ctx, msg,
-		fmt.Sprintf("⚠️ Риск: %s\nВероятность: *%d*\n\nВыберите *влияние* риска (1–4):", desc, prob),
+		fmt.Sprintf("⚠️ Риск: %s\nВероятность: *%d*\n\nВыберите *влияние* риска \\(1–4\\):", escapeMarkdownV2(desc), prob),
 		kb); botErr != nil {
 		log.Error("failed to send message", sl.Err(botErr))
 	}
