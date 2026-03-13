@@ -843,7 +843,7 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 	fmt.Fprintf(&sb, "📊 *Статус оценки эпика \\#%s «%s»*\n\n",
 		escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name))
 
-	sb.WriteString("📋 *Трудоёмкость \\— не оценили:*\n")
+	sb.WriteString("📋 *Трудоёмкость — не оценили:*\n")
 	missing := 0
 	for _, u := range teamMembers {
 		if !scoredSet[u.ID] {
@@ -867,9 +867,9 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 			}
 			desc := risk.Description
 			if len([]rune(desc)) > 40 {
-				desc = string([]rune(desc)[:37]) + "\\.\\.\\."
+				desc = string([]rune(desc)[:37]) + "..."
 			}
-			fmt.Fprintf(&sb, "\n*%s* \\[%s\\] \\— не оценили:\n",
+			fmt.Fprintf(&sb, "\n*%s* \\[%s\\] — не оценили:\n",
 				escapeMarkdownV2(desc), escapeMarkdownV2(string(risk.Status)))
 			riskMissing := 0
 			for _, u := range teamMembers {
