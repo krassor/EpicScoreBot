@@ -885,6 +885,8 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 		}
 	}
 
+	sb.WriteString("\nДля оценки трудоёмкости и рисков используйте команду /score\n")
+
 	log.Debug(
 		"status report",
 		slog.String("report", sb.String()),
