@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"EpicScoreBot/internal/models/domain"
+	"EpicScoreBot/internal/report"
 
 	"github.com/google/uuid"
 )
@@ -45,6 +46,7 @@ type Repository interface {
 	GetUnscoredEpicsByUser(ctx context.Context, userID, teamID uuid.UUID) ([]domain.Epic, error)
 	UpdateEpicStatus(ctx context.Context, epicID uuid.UUID, status domain.Status) error
 	DeleteEpic(ctx context.Context, epicID uuid.UUID) error
+	GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
 
 	// Risks
 	CreateRisk(ctx context.Context, description string, epicID uuid.UUID) (*domain.Risk, error)
@@ -61,6 +63,12 @@ type Repository interface {
 	GetUsersWhoScoredRisk(ctx context.Context, riskID uuid.UUID) ([]domain.User, error)
 	GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
 	CreateRiskScore(ctx context.Context, riskID, userID uuid.UUID, probability, impact int) error
+	GetRiskScoresByRiskID(ctx context.Context, riskID uuid.UUID) ([]domain.RiskScore, error)
+}
+
+// ReportService defines the contract for generating PDF reports.
+type ReportService interface {
+	GenerateReport(ctx context.Context, data report.ReportData) (string, error)
 }
 
 // ScoringService defines the scoring business-logic contract.

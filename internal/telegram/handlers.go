@@ -78,6 +78,8 @@ func (epicBot *Bot) commandHandler(ctx context.Context, update *models.Update) e
 		return epicBot.handleAddAdmin(ctx, msg)
 	case "removeadmin":
 		return epicBot.handleRemoveAdmin(ctx, msg)
+	case "report":
+		return epicBot.handleReport(ctx, msg)
 	case "list":
 		return epicBot.handleList(ctx, msg)
 	default:
@@ -346,6 +348,16 @@ func (epicBot *Bot) handleResults(ctx context.Context, msg *models.Message) erro
 
 func (epicBot *Bot) handleEpicStatus(ctx context.Context, msg *models.Message) error {
 	return epicBot.showEpicPickerInitial(ctx, msg, "epicstatus", "")
+}
+
+// ─── /report — inline keyboard ───────────────────────────────────────────
+
+func (epicBot *Bot) handleReport(ctx context.Context, msg *models.Message) error {
+	if !epicBot.isAdmin(msg) {
+		_, err := epicBot.sendReply(ctx, msg, "⛔ Эта команда доступна только администраторам.")
+		return err
+	}
+	return epicBot.showTeamPickerInitial(ctx, msg, "report")
 }
 
 // ─── /unassignrole — inline keyboard ─────────────────────────────────────
