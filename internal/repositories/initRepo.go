@@ -38,7 +38,11 @@ func New(logger *slog.Logger, cfg *config.Config) *Repository {
 
 	conn, err := sqlx.Connect("postgres", dsn)
 	if err != nil {
-		log.Error("error connecting to database", sl.Err(err))
+		log.Error(
+			"error connecting to database",
+			sl.Err(err),
+			slog.String("dsn", dsn),
+		)
 		panic("error connecting to database")
 	}
 
