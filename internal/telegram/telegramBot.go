@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -20,6 +22,7 @@ type Bot struct {
 	cfg         *config.Config
 	repo        Repository
 	scoring     ScoringService
+	report      ReportService
 	ai          AIClient
 	sessions    *sessionStore
 	botUsername string
@@ -34,6 +37,7 @@ func New(
 	cfg *config.Config,
 	repo Repository,
 	scoringSvc ScoringService,
+	reportSvc ReportService,
 	aiClient AIClient,
 ) *Bot {
 	op := "telegram.New()"
@@ -45,6 +49,7 @@ func New(
 		cfg:      cfg,
 		repo:     repo,
 		scoring:  scoringSvc,
+		report:   reportSvc,
 		ai:       aiClient,
 		sessions: newSessionStore(),
 		ctx:      ctx,
@@ -335,6 +340,35 @@ func (epicBot *Bot) deleteMessage(ctx context.Context, chatID int64, messageID i
 		MessageID: messageID,
 	})
 	return err
+}
+
+// ─── Send document ────────────────────────────────────────────────────────
+
+// sendDocument sends a file as a Telegram document.
+func (epicBot *Bot) sendDocument(ctx context.Context, msg *models.Message, filePath, caption string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("sendDocument: open file: %w", err)
+	}
+	defer f.Close()
+
+	p := &bot.SendDocumentParams{
+		ChatID:  msg.Chat.ID,
+		Document: &models.InputFileUpload{
+			Filename: filepath.Base(filePath),
+			Data:     f,
+		},
+		Caption: caption,
+	}
+	if msg.MessageThreadID != 0 {
+		p.MessageThreadID = msg.MessageThreadID
+	}
+
+	_, err = epicBot.b.SendDocument(ctx, p)
+	if err != nil {
+		return fmt.Errorf("sendDocument: %w", err)
+	}
+	return nil
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ type Config struct {
 	HttpServer     HttpServerConfig `yaml:"httpServer"`
 	DBConfig       DBConfig         `yaml:"db" env-required:"true"`
 	BotConfig      BotConfig        `yaml:"bot" env-required:"true"`
+	PdfConfig      PdfConfig        `yaml:"pdf" env-required:"false"`
 	ConfigFilePath string           `yaml:"configFilePath" env:"CONFIG_FILEPATH" env-default:""`
 	ConfigFileName string           `yaml:"configFileName" env:"CONFIG_FILENAME" env-default:""`
 	configPath     string
@@ -40,6 +41,18 @@ type AIConfig struct {
 	ModelName        string `yaml:"modelName" env:"AI_MODEL_NAME" env-default:"anthropic/claude-haiku-4.5"`
 	AIApiToken       string `yaml:"aiapitoken" env:"AI_API_TOKEN"`
 	SystemRolePrompt string `yaml:"systemRolePrompt" env-default:""`
+}
+
+type PdfConfig struct {
+	PdfHost string `yaml:"pdfHost" env:"PDF_HOST" env-required:"true" env-default:"localhost"`
+	PdfPort int    `yaml:"pdfPort" env:"PDF_PORT" env-required:"true" env-default:"3000"`
+	// Username      string `yaml:"username" env:"MAIL_USERNAME" env-required:"true" env-default:"proffreport@rambler.ru"`
+	// Password      string `yaml:"password" env:"MAIL_PASSWORD" env-required:"true" env-default:""`
+	HtmlTemplateFilePath string `yaml:"htmlTemplateFilePath" env:"HTML_TEMPLATE_FILEPATH" env-required:"true" env-default:""`
+	HtmlTemplateFileName string `yaml:"htmlTemplateFileName" env:"HTML_TEMPLATE_FILENAME" env-required:"true" env-default:""`
+	PdfFilePath          string `yaml:"pdfFilePath" env:"PDF_FILEPATH" env-required:"true" env-default:""`
+	JobBufferSize        int    `yaml:"jobBufferSize" env:"PDF_JOB_BUFFER_SIZE" env-default:"10"`
+	WorkersCount         int    `yaml:"workersCount" env:"PDF_WORKERS_COUNT" env-default:"3"`
 }
 
 // GetTimeout returns the AI request timeout as a time.Duration.

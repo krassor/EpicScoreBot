@@ -9,6 +9,7 @@ import (
 	"EpicScoreBot/internal/ai"
 	"EpicScoreBot/internal/config"
 	"EpicScoreBot/internal/graceful"
+	"EpicScoreBot/internal/report"
 	"EpicScoreBot/internal/repositories"
 	"EpicScoreBot/internal/scoring"
 	"EpicScoreBot/internal/telegram"
@@ -44,7 +45,9 @@ func main() {
 		aiClient = c
 	}
 
-	tgBot := telegram.New(log, cfg, repositoryService, scoringService, aiClient)
+	reportService := report.NewGenerator(log, cfg)
+
+	tgBot := telegram.New(log, cfg, repositoryService, scoringService, reportService, aiClient)
 
 	maxSecond := 15 * time.Second
 	waitShutdown := graceful.GracefulShutdown(

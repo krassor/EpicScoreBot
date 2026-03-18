@@ -22,3 +22,6 @@ main
 
 # Env
 docker-compose.yml
+
+# HTML
+*.HTML

@@ -7,7 +7,10 @@ import (
 	"strings"
 
 	"EpicScoreBot/internal/models/domain"
+	"EpicScoreBot/internal/report"
+	"EpicScoreBot/internal/scoring"
 	"EpicScoreBot/internal/utils/logger/sl"
+	"time"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
@@ -459,8 +462,144 @@ func (epicBot *Bot) handleAdmTeamSelected(
 		}
 		epicBot.deleteAndSend(ctx, msg, msgID, sb.String())
 
+	case "report":
+		teamID, err := uuid.Parse(lastID)
+		if err != nil {
+			epicBot.sendReply(ctx, msg, "❌ Ошибка парсинга ID команды.")
+			return
+		}
+		sess, _ := epicBot.sessions.get(sk)
+		msgID := 0
+		if sess != nil {
+			msgID = sess.MessageID
+		}
+		epicBot.sessions.clear(sk)
+
+		epicBot.generateAndSendReport(ctx, msg, teamID, msgID)
+
 	default:
 		epicBot.sendReply(ctx, msg, "❌ Неизвестное действие.")
+	}
+}
+
+// generateAndSendReport fetches scored epics for the team and generates a PDF report.
+func (epicBot *Bot) generateAndSendReport(ctx context.Context, msg *models.Message, teamID uuid.UUID, msgID int) {
+	op := "bot.generateAndSendReport"
+	log := epicBot.log.With(slog.String("op", op), slog.String("team_id", teamID.String()))
+
+	epicBot.editOrSend(ctx, msg, msgID, "🔄 Формирование отчета...")
+
+	team, err := epicBot.repo.GetTeamByID(ctx, teamID)
+	if err != nil {
+		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Команда не найдена.")
+		return
+	}
+
+	epics, err := epicBot.repo.GetEpicsByTeamIDAndStatus(ctx, teamID, domain.StatusScored)
+	if err != nil {
+		log.Error("failed to get epics", sl.Err(err))
+		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка получения эпиков.")
+		return
+	}
+
+	if len(epics) == 0 {
+		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Нет оцененных эпиков для формирования отчета.")
+		return
+	}
+
+	reportData := report.ReportData{
+		TeamName:  team.Name,
+		Generated: time.Now(),
+		Epics:     make([]report.EpicReportData, 0, len(epics)),
+	}
+
+	for _, e := range epics {
+		epicData := report.EpicReportData{
+			Number:     e.Number,
+			Name:       e.Name,
+			RoleScores: []report.RoleScoreData{},
+			Risks:      []report.RiskReportData{},
+		}
+
+		if e.FinalScore != nil {
+			epicData.FinalScore = *e.FinalScore
+		}
+
+		// Role scores
+		roleScores, err := epicBot.repo.GetEpicRoleScoresByEpicID(ctx, e.ID)
+		if err == nil {
+			var totalScore float64
+			for _, rs := range roleScores {
+				roleName := rs.RoleID.String()
+				if r, err := epicBot.repo.GetRoleByID(ctx, rs.RoleID); err == nil {
+					roleName = r.Name
+				}
+				epicData.RoleScores = append(epicData.RoleScores, report.RoleScoreData{
+					RoleName:    roleName,
+					WeightedAvg: rs.WeightedAvg,
+				})
+				totalScore += rs.WeightedAvg
+			}
+			epicData.TotalScore = totalScore
+		} else {
+			log.Error("failed to get role scores", sl.Err(err), slog.String("epic_id", e.ID.String()))
+		}
+
+		// Risks
+		risks, err := epicBot.repo.GetRisksByEpicID(ctx, e.ID)
+		if err == nil {
+			for _, r := range risks {
+				riskScores, err := epicBot.repo.GetRiskScoresByRiskID(ctx, r.ID)
+
+				var probs []int
+				var impacts []int
+				if err == nil {
+					for _, rs := range riskScores {
+						probs = append(probs, rs.Probability)
+						impacts = append(impacts, rs.Impact)
+					}
+				}
+
+				var wScore float64
+				var coeff float64
+				if r.WeightedScore != nil {
+					wScore = *r.WeightedScore
+					coeff = scoring.RiskCoefficient(wScore)
+				} else {
+					coeff = 1.0 // default multiplier
+				}
+
+				epicData.Risks = append(epicData.Risks, report.RiskReportData{
+					Description:   r.Description,
+					Probabilities: probs,
+					Impacts:       impacts,
+					WeightedScore: wScore,
+					Coefficient:   coeff,
+				})
+			}
+		} else {
+			log.Error("failed to get risks", sl.Err(err), slog.String("epic_id", e.ID.String()))
+		}
+
+		reportData.Epics = append(reportData.Epics, epicData)
+	}
+
+	pdfPath, err := epicBot.report.GenerateReport(ctx, reportData)
+	if err != nil {
+		log.Error("failed to generate report pdf", sl.Err(err))
+		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка при генерации PDF отчета.")
+		return
+	}
+
+	if msgID > 0 {
+		_ = epicBot.deleteMessage(ctx, msg.Chat.ID, msgID)
+	}
+
+	caption := fmt.Sprintf("📊 Отчет по команде «%s»", team.Name)
+	if err := epicBot.sendDocument(ctx, msg, pdfPath, caption); err != nil {
+		log.Error("failed to send pdf document", sl.Err(err))
+		epicBot.sendReply(ctx, msg, "❌ Ошибка отправки PDF файла.")
+		return
 	}
 }
 
