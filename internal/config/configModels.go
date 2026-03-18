@@ -51,8 +51,8 @@ type PdfConfig struct {
 	HtmlTemplateFilePath string `yaml:"htmlTemplateFilePath" env:"HTML_TEMPLATE_FILEPATH" env-required:"true" env-default:""`
 	HtmlTemplateFileName string `yaml:"htmlTemplateFileName" env:"HTML_TEMPLATE_FILENAME" env-required:"true" env-default:""`
 	PdfFilePath          string `yaml:"pdfFilePath" env:"PDF_FILEPATH" env-required:"true" env-default:""`
-	JobBufferSize        int    `yaml:"jobBufferSize" env:"PDF_JOB_BUFFER_SIZE" env-default:"10"`
-	WorkersCount         int    `yaml:"workersCount" env:"PDF_WORKERS_COUNT" env-default:"3"`
+	//JobBufferSize        int    `yaml:"jobBufferSize" env:"PDF_JOB_BUFFER_SIZE" env-default:"10"`
+	//WorkersCount         int    `yaml:"workersCount" env:"PDF_WORKERS_COUNT" env-default:"3"`
 }
 
 // GetTimeout returns the AI request timeout as a time.Duration.
