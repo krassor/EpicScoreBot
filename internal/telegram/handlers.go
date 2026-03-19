@@ -784,6 +784,23 @@ func (epicBot *Bot) showUserTeamPicker(
 // ─── /results logic (called by callback) ──────────────────────────────────
 
 func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, epicID uuid.UUID) {
+	// Attempt to compute risk scores first
+	risks, err := epicBot.repo.GetRisksByEpicID(ctx, epicID)
+	if err == nil {
+		for _, risk := range risks {
+			if risk.Status != domain.StatusScored {
+				_ = epicBot.scoring.TryCompleteRiskScoring(ctx, risk.ID)
+			}
+		}
+	}
+
+	// Attempt to compute epic score
+	epicInit, errInit := epicBot.repo.GetEpicByID(ctx, epicID)
+	if errInit == nil && epicInit != nil && epicInit.Status != domain.StatusScored {
+		_ = epicBot.scoring.TryCompleteEpicScoring(ctx, epicID)
+	}
+
+	// Now reload the epic to get the fresh status and scores
 	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Эпик не найден.")
@@ -808,7 +825,7 @@ func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, ep
 		sb.WriteString("\n")
 	}
 
-	risks, err := epicBot.repo.GetRisksByEpicID(ctx, epic.ID)
+	risks, err = epicBot.repo.GetRisksByEpicID(ctx, epic.ID)
 	if err == nil && len(risks) > 0 {
 		sb.WriteString("⚠️ *Риски:*\n")
 		for _, risk := range risks {
