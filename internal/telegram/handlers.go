@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/scoring"
@@ -448,6 +449,21 @@ func (epicBot *Bot) handleScoreMenu(ctx context.Context, msg *models.Message) er
 		slog.String("op", op),
 		slog.Int64("chat_id", msg.Chat.ID),
 	)
+
+	if msg.Chat.Type != models.ChatTypePrivate {
+		botName := "EpicScoreBot"
+		if epicBot.botUsername != "" {
+			botName = epicBot.botUsername
+		}
+		sentMsg, err := epicBot.sendReply(ctx, msg, "Оценка проводится в личном чате @"+botName)
+		if err == nil && sentMsg != nil {
+			go func(chatID int64, messageID int) {
+				time.Sleep(5 * time.Second)
+				_ = epicBot.deleteMessage(context.Background(), chatID, messageID)
+			}(msg.Chat.ID, sentMsg.ID)
+		}
+	}
+
 	username := msg.From.Username
 	if username == "" {
 		_, err := epicBot.sendReply(ctx, msg,
@@ -483,8 +499,15 @@ func (epicBot *Bot) handleScoreMenu(ctx context.Context, msg *models.Message) er
 		)))
 	}
 	kb := inlineKeyboard(rows...)
-	_, retErr := epicBot.sendWithKeyboard(ctx, msg,
-		fmt.Sprintf("👤 %s %s, выберите команду:", user.FirstName, user.LastName), kb)
+
+	var retErr error
+	if msg.Chat.Type != models.ChatTypePrivate {
+		_, retErr = epicBot.sendWithKeyboardToUser(ctx, msg,
+			fmt.Sprintf("👤 %s %s, выберите команду:", user.FirstName, user.LastName), kb)
+	} else {
+		_, retErr = epicBot.sendWithKeyboard(ctx, msg,
+			fmt.Sprintf("👤 %s %s, выберите команду:", user.FirstName, user.LastName), kb)
+	}
 	return retErr
 }
 
@@ -855,7 +878,8 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 	fmt.Fprintf(&sb, "📊 *Статус оценки эпика \\#%s «%s»*\n\n",
 		escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name))
 
-	sb.WriteString("📋 *Трудоёмкость — не оценили:*\n")
+	sb.WriteString("📋 *Трудоёмкость*\n")
+	sb.WriteString("👉 Ждём оценку от: ")
 	missing := 0
 	for _, u := range teamMembers {
 		if !scoredSet[u.ID] {
@@ -878,11 +902,12 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 				riskScoredSet[u.ID] = true
 			}
 			desc := risk.Description
-			if len([]rune(desc)) > 40 {
-				desc = string([]rune(desc)[:37]) + "..."
-			}
-			fmt.Fprintf(&sb, "\n*%s* \\[%s\\] — не оценили:\n",
-				escapeMarkdownV2(desc), escapeMarkdownV2(string(risk.Status)))
+			// if len([]rune(desc)) > 40 {
+			// 	desc = string([]rune(desc)[:37]) + "..."
+			// }
+			fmt.Fprintf(&sb, "\n*%s*\n",
+				escapeMarkdownV2(desc))
+			sb.WriteString("👉 *Ждём оценку от:* ")
 			riskMissing := 0
 			for _, u := range teamMembers {
 				if !riskScoredSet[u.ID] {
