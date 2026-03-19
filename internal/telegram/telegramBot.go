@@ -236,6 +236,21 @@ func (epicBot *Bot) sendHTML(ctx context.Context, msg *models.Message, text stri
 	return epicBot.b.SendMessage(ctx, p)
 }
 
+// sendWithKeyboardToUser sends an inline keyboard directly to a user's private chat.
+func (epicBot *Bot) sendWithKeyboardToUser(
+	ctx context.Context,
+	msg *models.Message,
+	text string,
+	kb *models.InlineKeyboardMarkup,
+) (*models.Message, error) {
+	p := &bot.SendMessageParams{
+		ChatID:      msg.From.ID,
+		Text:        text,
+		ReplyMarkup: kb,
+	}
+	return epicBot.b.SendMessage(ctx, p)
+}
+
 // sendWithKeyboard sends a plain-text reply with an inline keyboard.
 func (epicBot *Bot) sendWithKeyboard(
 	ctx context.Context,
@@ -353,7 +368,7 @@ func (epicBot *Bot) sendDocument(ctx context.Context, msg *models.Message, fileP
 	defer f.Close()
 
 	p := &bot.SendDocumentParams{
-		ChatID:  msg.Chat.ID,
+		ChatID: msg.Chat.ID,
 		Document: &models.InputFileUpload{
 			Filename: filepath.Base(filePath),
 			Data:     f,
