@@ -572,6 +572,13 @@ func (epicBot *Bot) handleRiskImpact(ctx context.Context, msg *models.Message, u
 		log.Error("failed to try complete risk scoring",
 			slog.String("riskID", riskID.String()), sl.Err(err))
 	}
+
+	// Show remaining unscored risks for the epic
+	if risk, err := epicBot.repo.GetRiskByID(ctx, riskID); err == nil && risk != nil {
+		epicBot.showEpicRisks(ctx, msg, username, risk.EpicID)
+	} else {
+		log.Error("failed to get risk for epic ID", sl.Err(err))
+	}
 }
 
 // sendCallbackAlert sends a popup alert to a callback query.
