@@ -96,6 +96,18 @@ func (epicBot *Bot) commandHandler(ctx context.Context, update *models.Update) e
 // ─── /start ───────────────────────────────────────────────────────────────
 
 func (epicBot *Bot) handleStart(ctx context.Context, msg *models.Message) error {
+	username := msg.From.Username
+	if username != "" {
+		user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+		if err == nil && user != nil {
+			if user.ChatID != msg.From.ID {
+				if updateErr := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.From.ID); updateErr != nil {
+					epicBot.log.Error("failed to update user ChatID on /start", sl.Err(updateErr))
+				}
+			}
+		}
+	}
+
 	text := fmt.Sprintf("👋 Привет, %s!\n\n"+
 		"Я бот для оценки трудоёмкости эпиков и рисков.\n"+
 		"Используйте /help для списка команд.",

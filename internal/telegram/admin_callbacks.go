@@ -928,7 +928,7 @@ func (epicBot *Bot) sendEpicNotifications(ctx context.Context, msg *models.Messa
 		}
 
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "👋 Привет, %s! У тебя есть незаконченные оценки для эпика #%s «%s».\n\nЧто осталось оценить:\n", user.FirstName, epic.Number, epic.Name)
+		fmt.Fprintf(&sb, "👋 Привет, %s! У тебя есть незаконченные оценки для эпика #%s «%s».\n\nЧто осталось оценить:\n", user.LastName, epic.Number, epic.Name)
 
 		if !effortScored {
 			sb.WriteString("  • Трудоемкость эпика\n")
