@@ -123,7 +123,6 @@ func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 	sb.WriteString("📋 <b>Команды бота</b>\n\n")
 	sb.WriteString("<b>👤 Для всех:</b>\n")
 	sb.WriteString("/score — меню оценки эпиков и рисков\n")
-	sb.WriteString("/epicstatus — статус оценки эпика\n")
 
 	if epicBot.isAdmin(msg) {
 		sb.WriteString("\n<b>🔧 Для администраторов:</b>\n")
@@ -133,6 +132,7 @@ func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 		sb.WriteString("/addepic — создать эпик\n")
 		sb.WriteString("/addrisk — добавить риск к эпику\n")
 		sb.WriteString("/startscore — запустить оценку эпика\n")
+		sb.WriteString("/epicstatus — статус оценки эпика\n")
 		sb.WriteString("/results — показать результаты эпика\n")
 		sb.WriteString("/list — список участников команды\n")
 		sb.WriteString("/epicnotify — отправить напоминания об оценке\n")
@@ -363,6 +363,10 @@ func (epicBot *Bot) handleResults(ctx context.Context, msg *models.Message) erro
 // ─── /epicstatus — inline keyboard ───────────────────────────────────────
 
 func (epicBot *Bot) handleEpicStatus(ctx context.Context, msg *models.Message) error {
+	if !epicBot.isAdmin(msg) {
+		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для супер-администраторов.")
+		return err
+	}
 	return epicBot.showEpicPickerInitial(ctx, msg, "epicstatus", "")
 }
 
@@ -1219,7 +1223,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 	case StepScoreEpicEffort:
 		promptMsgID := sess.MessageID
 		epicBot.deleteMessage(ctx, msg.Chat.ID, msg.ID) // Delete user message
-		
+
 		score, err := strconv.Atoi(text)
 		if err != nil || score < 0 || score > 500 {
 			if sent, _ := epicBot.sendReply(ctx, msg, "❌ Некорректный ввод. Укажите число от 0 до 500:"); sent != nil {
@@ -1263,7 +1267,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 		if epic != nil {
 			epicNum = epic.Number
 		}
-		
+
 		successText := fmt.Sprintf("✅ Оценка %d для эпика #%s сохранена!", score, epicNum)
 
 		if err := epicBot.scoring.TryCompleteEpicScoring(ctx, epicID); err != nil {
