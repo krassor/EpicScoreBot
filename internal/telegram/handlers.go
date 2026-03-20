@@ -518,6 +518,7 @@ func (epicBot *Bot) handleScoreMenu(ctx context.Context, msg *models.Message) er
 			fmt.Sprintf("team_%s", team.ID.String()),
 		)))
 	}
+	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
 	kb := inlineKeyboard(rows...)
 
 	var retErr error
@@ -1204,10 +1205,17 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 	// ── /score epic effort text-input step ────────────────────────────
 
 	case StepScoreEpicEffort:
+		promptMsgID := sess.MessageID
+		epicBot.deleteMessage(ctx, msg.Chat.ID, msg.ID) // Delete user message
+		
 		score, err := strconv.Atoi(text)
 		if err != nil || score < 0 || score > 500 {
-			epicBot.editOrSend(ctx, msg, msgID,
-				"❌ Некорректный ввод. Введите целое число от 0 до 500:")
+			if sent, _ := epicBot.sendReply(ctx, msg, "❌ Некорректный ввод. Укажите число от 0 до 500:"); sent != nil {
+				go func() {
+					time.Sleep(3 * time.Second)
+					epicBot.deleteMessage(context.Background(), sent.Chat.ID, sent.ID)
+				}()
+			}
 			return
 		}
 
@@ -1217,24 +1225,24 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 
 		epicID, err := uuid.Parse(epicIDStr)
 		if err != nil {
-			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка: неверный ID эпика.")
+			epicBot.editReply(ctx, msg.Chat.ID, promptMsgID, "❌ Ошибка: неверный ID эпика.")
 			return
 		}
 
 		user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
 		if err != nil {
-			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Пользователь не найден.")
+			epicBot.editReply(ctx, msg.Chat.ID, promptMsgID, "❌ Пользователь не найден.")
 			return
 		}
 
 		role, err := epicBot.repo.GetRoleByUserID(ctx, user.ID)
 		if err != nil {
-			epicBot.deleteAndSend(ctx, msg, msgID, "❌ У вас нет назначенной роли.")
+			epicBot.editReply(ctx, msg.Chat.ID, promptMsgID, "❌ У вас нет назначенной роли.")
 			return
 		}
 
 		if err := epicBot.repo.CreateEpicScore(ctx, epicID, user.ID, role.ID, score); err != nil {
-			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка сохранения оценки: %v", err))
+			epicBot.editReply(ctx, msg.Chat.ID, promptMsgID, fmt.Sprintf("❌ Ошибка сохранения оценки: %v", err))
 			return
 		}
 
@@ -1243,16 +1251,16 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 		if epic != nil {
 			epicNum = epic.Number
 		}
-		epicBot.deleteAndSend(ctx, msg, msgID,
-			fmt.Sprintf("✅ Оценка %d для эпика #%s сохранена!", score, epicNum))
+		
+		successText := fmt.Sprintf("✅ Оценка %d для эпика #%s сохранена!", score, epicNum)
 
 		if err := epicBot.scoring.TryCompleteEpicScoring(ctx, epicID); err != nil {
 			epicBot.log.Error("failed to try complete epic scoring",
 				slog.String("epicID", epicID.String()), sl.Err(err))
 		}
 
-		// Show unscored risks if any remain.
-		epicBot.showEpicRisks(ctx, msg, username, epicID)
+		msg.ID = promptMsgID
+		epicBot.showEpicRisks(ctx, msg, username, epicID, successText)
 
 	default:
 		epicBot.sessions.clear(sk)
