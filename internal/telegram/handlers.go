@@ -83,6 +83,8 @@ func (epicBot *Bot) commandHandler(ctx context.Context, update *models.Update) e
 		return epicBot.handleReport(ctx, msg)
 	case "list":
 		return epicBot.handleList(ctx, msg)
+	case "epicnotify":
+		return epicBot.handleEpicNotify(ctx, msg)
 	default:
 		_, err := epicBot.sendReply(ctx, msg,
 			fmt.Sprintf("❓ Неизвестная команда: /%s\nИспользуйте /help для списка команд.",
@@ -439,6 +441,17 @@ func (epicBot *Bot) handleList(ctx context.Context, msg *models.Message) error {
 		return err
 	}
 	return epicBot.showTeamPickerInitial(ctx, msg, "list")
+}
+
+// ─── /epicnotify ──────────────────────────────────────────────────────────
+
+func (epicBot *Bot) handleEpicNotify(ctx context.Context, msg *models.Message) error {
+	if !epicBot.isAdmin(msg) {
+		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
+		return err
+	}
+	// The user requested standard flow like "/epicresult". /results uses showEpicPickerInitial directly.
+	return epicBot.showEpicPickerInitial(ctx, msg, "epicnotify", string(domain.StatusScoring))
 }
 
 // ─── /score ───────────────────────────────────────────────────────────────
