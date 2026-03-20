@@ -123,6 +123,7 @@ func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 		sb.WriteString("/startscore — запустить оценку эпика\n")
 		sb.WriteString("/results — показать результаты эпика\n")
 		sb.WriteString("/list — список участников команды\n")
+		sb.WriteString("/epicnotify — отправить напоминания об оценке\n")
 	}
 
 	if epicBot.isSuperAdmin(msg) {
