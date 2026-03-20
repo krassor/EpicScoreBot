@@ -12,6 +12,7 @@ import (
 	"EpicScoreBot/internal/utils/logger/sl"
 	"time"
 
+	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
 )
@@ -655,6 +656,10 @@ func (epicBot *Bot) handleAdmEpicSelected(
 		epicBot.sessions.clear(sk)
 		epicBot.showEpicStatusReportAndClean(ctx, msg, epicID, msgID)
 
+	case "epicnotify":
+		epicBot.sessions.clear(sk)
+		epicBot.sendEpicNotifications(ctx, msg, epicID, msgID)
+
 	case "addrisk":
 		epicBot.sessions.set(sk, &Session{
 			Step:      StepAddRiskDesc,
@@ -887,4 +892,74 @@ func (epicBot *Bot) showEpicStatusReportAndClean(ctx context.Context, msg *model
 		_ = epicBot.deleteMessage(ctx, msg.Chat.ID, msgID)
 	}
 	epicBot.showEpicStatusReport(ctx, msg, epicID)
+}
+
+// sendEpicNotifications sends DMs to users who have not completed scoring an epic.
+func (epicBot *Bot) sendEpicNotifications(ctx context.Context, msg *models.Message, epicID uuid.UUID, msgID int) {
+	op := "bot.sendEpicNotifications"
+	log := epicBot.log.With(slog.String("op", op), slog.String("epic_id", epicID.String()))
+
+	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Эпик не найден.")
+		return
+	}
+
+	users, err := epicBot.repo.GetUsersByTeamID(ctx, epic.TeamID)
+	if err != nil {
+		log.Error("failed to get users by team", sl.Err(err))
+		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка получения пользователей команды.")
+		return
+	}
+
+	sentCount := 0
+	var failedUsers []string
+
+	for _, user := range users {
+		effortScored, err1 := epicBot.repo.HasUserScoredEpic(ctx, epicID, user.ID)
+		unscoredRisks, err2 := epicBot.repo.GetUnscoredRisksByUser(ctx, user.ID, epicID)
+
+		if err1 != nil || err2 != nil {
+			continue // skip on db error
+		}
+
+		if effortScored && len(unscoredRisks) == 0 {
+			continue // all done
+		}
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "👋 Привет, %s! У тебя есть незаконченные оценки для эпика #%s «%s».\n\nЧто осталось оценить:\n", user.FirstName, epic.Number, epic.Name)
+
+		if !effortScored {
+			sb.WriteString("  • Трудоемкость эпика\n")
+		}
+
+		for _, risk := range unscoredRisks {
+			fmt.Fprintf(&sb, "  • Риск: %s\n", risk.Description)
+		}
+
+		sb.WriteString("\nДля оценки используй команду /score")
+
+		// Try to send to the user's PM
+		p := &bot.SendMessageParams{
+			ChatID: "@" + user.TelegramID,
+			Text:   sb.String(),
+		}
+		_, err := epicBot.b.SendMessage(ctx, p)
+		if err != nil {
+			log.Error("failed to send notification PM to user", slog.String("username", user.TelegramID), sl.Err(err))
+			failedUsers = append(failedUsers, "@"+user.TelegramID)
+		} else {
+			sentCount++
+		}
+	}
+
+	var adminResp strings.Builder
+	fmt.Fprintf(&adminResp, "✅ Уведомления по эпику %s разосланы.\n", epic.Number)
+	fmt.Fprintf(&adminResp, "Успешно отправлено: %d.\n", sentCount)
+	if len(failedUsers) > 0 {
+		fmt.Fprintf(&adminResp, "Не удалось отправить (возможно не начали диалог с ботом): %s", strings.Join(failedUsers, ", "))
+	}
+
+	epicBot.deleteAndSend(ctx, msg, msgID, adminResp.String())
 }
