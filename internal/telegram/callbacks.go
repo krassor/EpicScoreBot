@@ -94,7 +94,7 @@ func (epicBot *Bot) handleCallbackQuery(ctx context.Context, update *models.Upda
 			epicBot.sendCallbackAlert(rctx, callback, "❌ Ошибка парсинга ID эпика")
 			return
 		}
-		epicBot.showEpicRisks(rctx, msg, username, epicID)
+		epicBot.showEpicRisks(rctx, msg, username, epicID, "")
 
 	// risk_<riskID> — show risk scoring form
 	case strings.HasPrefix(data, "risk_") &&
@@ -126,6 +126,12 @@ func (epicBot *Bot) handleCallbackQuery(ctx context.Context, update *models.Upda
 			epicBot.deleteMessage(rctx, msg.Chat.ID, sess.MessageID)
 		}
 		epicBot.sendReply(rctx, msg, "❌ Действие отменено.")
+
+	// score_cancel — user cancelled scoring
+	case data == "score_cancel":
+		sk := sessionKey{ChatID: msg.Chat.ID, ThreadID: msg.MessageThreadID, Username: username}
+		epicBot.sessions.clear(sk)
+		epicBot.editReply(rctx, msg.Chat.ID, msg.ID, "❌ Оценка отменена.")
 
 	// adm_user_<action>_<userID> — user selected in picker
 	case strings.HasPrefix(data, "adm_user_"):
@@ -214,11 +220,12 @@ func (epicBot *Bot) showTeamEpics(ctx context.Context, msg *models.Message, user
 			fmt.Sprintf("epic_%s", epic.ID.String()),
 		)))
 	}
+	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
 	kb := inlineKeyboard(rows...)
 
-	if _, botErr := epicBot.sendWithKeyboard(ctx, msg,
-		fmt.Sprintf("📋 Неоценённые эпики в команде «%s»:", teamName), kb); botErr != nil {
-		log.Error("failed to send message", sl.Err(botErr))
+	if err := epicBot.editWithKeyboard(ctx, msg.Chat.ID, msg.ID,
+		fmt.Sprintf("📋 Неоценённые эпики в команде «%s»:", teamName), kb); err != nil {
+		log.Error("failed to edit message", sl.Err(err))
 	}
 }
 
@@ -269,7 +276,7 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 	}
 
 	if effortScored {
-		epicBot.showEpicRisks(ctx, msg, username, epicID)
+		epicBot.showEpicRisks(ctx, msg, username, epicID, "")
 		return
 	}
 
@@ -285,16 +292,15 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 		},
 	}
 
-	sent, botErr := epicBot.sendMarkdown(ctx, msg,
+	kb := inlineKeyboard(inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
+
+	if err := epicBot.editMarkdownWithKeyboard(ctx, msg.Chat.ID, msg.ID,
 		fmt.Sprintf("📝 Эпик \\#%s «%s»\n\n%s\n\nВаша роль: *%s*\n\nВведите оценку трудоёмкости \\(число от 0 до 500\\):",
-			escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name), escapeMarkdownV2(epic.Description), escapeMarkdownV2(role.Name)))
-	if botErr != nil {
-		log.Error("failed to send reply", sl.Err(botErr))
+			escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name), escapeMarkdownV2(epic.Description), escapeMarkdownV2(role.Name)), kb); err != nil {
+		log.Error("failed to edit message", sl.Err(err))
 		return
 	}
-	if sent != nil {
-		sess.MessageID = sent.ID
-	}
+	sess.MessageID = msg.ID
 	epicBot.sessions.set(sk, sess)
 }
 
@@ -368,23 +374,18 @@ func (epicBot *Bot) handleEpicScoreSubmit(ctx context.Context, msg *models.Messa
 		epicNum = epic.Number
 	}
 
-	if _, botErr := epicBot.sendReply(ctx, msg,
-		fmt.Sprintf("✅ Оценка %d для эпика #%s сохранена!", score, epicNum)); botErr != nil {
-		log.Error("failed to send reply", sl.Err(botErr))
-	}
-
 	if err := epicBot.scoring.TryCompleteEpicScoring(ctx, epicID); err != nil {
 		epicBot.log.Error("failed to try complete epic scoring",
 			slog.String("epicID", epicID.String()), sl.Err(err))
 	}
 
 	// Show unscored risks if any remain.
-	epicBot.showEpicRisks(ctx, msg, username, epicID)
+	epicBot.showEpicRisks(ctx, msg, username, epicID, fmt.Sprintf("✅ Оценка %d для эпика #%s сохранена!", score, epicNum))
 
 }
 
 // showEpicRisks shows unscored risks for an epic.
-func (epicBot *Bot) showEpicRisks(ctx context.Context, msg *models.Message, username string, epicID uuid.UUID) {
+func (epicBot *Bot) showEpicRisks(ctx context.Context, msg *models.Message, username string, epicID uuid.UUID, successText string) {
 	op := "bot.showEpicRisks()"
 	log := epicBot.log.With(slog.String("op", op))
 
@@ -414,6 +415,8 @@ func (epicBot *Bot) showEpicRisks(ctx context.Context, msg *models.Message, user
 		if _, botErr := epicBot.sendReply(ctx, msg, "✅ Все риски этого эпика уже оценены."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
 		}
+		// Try to delete the prompt message if it was a text input resolution
+		epicBot.deleteMessage(ctx, msg.Chat.ID, msg.ID)
 		return
 	}
 
@@ -428,11 +431,16 @@ func (epicBot *Bot) showEpicRisks(ctx context.Context, msg *models.Message, user
 			fmt.Sprintf("risk_%s", risk.ID.String()),
 		)))
 	}
+	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
 	kb := inlineKeyboard(rows...)
 
-	if _, botErr := epicBot.sendWithKeyboard(ctx, msg,
-		"⚠️ Неоценённые риски:\nВыберите риск для оценки:", kb); botErr != nil {
-		log.Error("failed to send message", sl.Err(botErr))
+	text := "⚠️ Неоценённые риски:\nВыберите риск для оценки:"
+	if successText != "" {
+		text = successText + "\n\n" + text
+	}
+
+	if err := epicBot.editWithKeyboard(ctx, msg.Chat.ID, msg.ID, text, kb); err != nil {
+		log.Error("failed to edit message", sl.Err(err))
 	}
 }
 
@@ -456,7 +464,7 @@ func (epicBot *Bot) showRiskScoreForm(ctx context.Context, msg *models.Message, 
 			fmt.Sprintf("riskprob_%s_%d", riskID.String(), i),
 		))
 	}
-	kb := inlineKeyboard(inlineRow(probBtns...))
+	kb := inlineKeyboard(inlineRow(probBtns...), inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
 
 	if err := epicBot.editMarkdownWithKeyboard(ctx, msg.Chat.ID, msg.ID,
 		fmt.Sprintf("⚠️ Риск: %s\n\nВыберите *вероятность* риска \\(1–4\\):", escapeMarkdownV2(risk.Description)),
@@ -506,7 +514,7 @@ func (epicBot *Bot) handleRiskProbability(ctx context.Context, msg *models.Messa
 			fmt.Sprintf("riskimp_%s_%d_%d", riskID.String(), prob, i),
 		))
 	}
-	kb := inlineKeyboard(inlineRow(impBtns...))
+	kb := inlineKeyboard(inlineRow(impBtns...), inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
 
 	risk, _ := epicBot.repo.GetRiskByID(ctx, riskID)
 	desc := riskID.String()
@@ -592,11 +600,8 @@ func (epicBot *Bot) handleRiskImpact(ctx context.Context, msg *models.Message, u
 	riskScore := prob * impact
 	coeff := scoring.RiskCoefficient(float64(riskScore))
 
-	if err := epicBot.editReply(ctx, msg.Chat.ID, msg.ID,
-		fmt.Sprintf("✅ Оценка риска сохранена!\nВероятность: %d, Влияние: %d\nРезультат: %d (коэфф: %.2f)",
-			prob, impact, riskScore, coeff)); err != nil {
-		log.Error("failed to edit message", sl.Err(err))
-	}
+	successText := fmt.Sprintf("✅ Оценка риска сохранена!\nВероятность: %d, Влияние: %d\nРезультат: %d (коэфф: %.2f)",
+		prob, impact, riskScore, coeff)
 
 	if err := epicBot.scoring.TryCompleteRiskScoring(ctx, riskID); err != nil {
 		log.Error("failed to try complete risk scoring",
@@ -605,7 +610,7 @@ func (epicBot *Bot) handleRiskImpact(ctx context.Context, msg *models.Message, u
 
 	// Show remaining unscored risks for the epic
 	if risk, err := epicBot.repo.GetRiskByID(ctx, riskID); err == nil && risk != nil {
-		epicBot.showEpicRisks(ctx, msg, username, risk.EpicID)
+		epicBot.showEpicRisks(ctx, msg, username, risk.EpicID, successText)
 	} else {
 		log.Error("failed to get risk for epic ID", sl.Err(err))
 	}
