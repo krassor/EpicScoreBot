@@ -20,6 +20,7 @@ type Repository interface {
 	DeleteUser(ctx context.Context, userID uuid.UUID) error
 	UpdateUserName(ctx context.Context, userID uuid.UUID, firstName, lastName string) error
 	UpdateUserWeight(ctx context.Context, userID uuid.UUID, weight int) error
+	UpdateUserChatID(ctx context.Context, userID uuid.UUID, chatID int64) error
 
 	// Roles
 	GetAllRoles(ctx context.Context) ([]domain.Role, error)

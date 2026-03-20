@@ -179,6 +179,12 @@ func (epicBot *Bot) showTeamEpics(ctx context.Context, msg *models.Message, user
 		return
 	}
 
+	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
+		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+			log.Error("failed to update user ChatID", sl.Err(err))
+		}
+	}
+
 	epics, err := epicBot.repo.GetUnscoredEpicsByUser(ctx, user.ID, teamID)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка: %v", err)); botErr != nil {
@@ -235,6 +241,12 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 			log.Error("failed to send reply", sl.Err(botErr))
 		}
 		return
+	}
+
+	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
+		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+			log.Error("failed to update user ChatID", sl.Err(err))
+		}
 	}
 
 	role, err := epicBot.repo.GetRoleByUserID(ctx, user.ID)
@@ -328,6 +340,12 @@ func (epicBot *Bot) handleEpicScoreSubmit(ctx context.Context, msg *models.Messa
 		return
 	}
 
+	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
+		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+			log.Error("failed to update user ChatID", sl.Err(err))
+		}
+	}
+
 	role, err := epicBot.repo.GetRoleByUserID(ctx, user.ID)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ У вас нет назначенной роли."); botErr != nil {
@@ -376,6 +394,12 @@ func (epicBot *Bot) showEpicRisks(ctx context.Context, msg *models.Message, user
 			log.Error("failed to send reply", sl.Err(botErr))
 		}
 		return
+	}
+
+	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
+		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+			log.Error("failed to update user ChatID", sl.Err(err))
+		}
 	}
 
 	risks, err := epicBot.repo.GetUnscoredRisksByUser(ctx, user.ID, epicID)
@@ -548,6 +572,12 @@ func (epicBot *Bot) handleRiskImpact(ctx context.Context, msg *models.Message, u
 			log.Error("failed to send reply", sl.Err(botErr))
 		}
 		return
+	}
+
+	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
+		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+			log.Error("failed to update user ChatID", sl.Err(err))
+		}
 	}
 
 	if err := epicBot.repo.CreateRiskScore(ctx, riskID, user.ID, prob, impact); err != nil {
