@@ -364,7 +364,7 @@ func (epicBot *Bot) handleResults(ctx context.Context, msg *models.Message) erro
 
 func (epicBot *Bot) handleEpicStatus(ctx context.Context, msg *models.Message) error {
 	if !epicBot.isAdmin(msg) {
-		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для супер-администраторов.")
+		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
 	return epicBot.showEpicPickerInitial(ctx, msg, "epicstatus", "")
