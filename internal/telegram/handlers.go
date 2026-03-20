@@ -496,6 +496,12 @@ func (epicBot *Bot) handleScoreMenu(ctx context.Context, msg *models.Message) er
 		return retErr
 	}
 
+	if user.ChatID != msg.From.ID {
+		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.From.ID); err != nil {
+			log.Error("failed to update user ChatID", sl.Err(err))
+		}
+	}
+
 	teams, err := epicBot.repo.GetTeamsByUserTelegramID(ctx, username)
 	if err != nil || len(teams) == 0 {
 		if err != nil {

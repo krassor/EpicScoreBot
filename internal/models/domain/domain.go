@@ -37,6 +37,7 @@ type User struct {
 	FirstName  string
 	LastName   string
 	TelegramID string
+	ChatID     int64
 	Weight     int // 0–100 percent
 	CreatedAt  time.Time
 	UpdatedAt  time.Time

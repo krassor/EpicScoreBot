@@ -19,8 +19,8 @@ func (r *Repository) CreateUser(ctx context.Context, firstName, lastName string,
 		Weight:     weight,
 	}
 
-	query := `INSERT INTO users (id, first_name, last_name, telegram_id, weight)
-		VALUES ($1, $2, $3, $4, $5)
+	query := `INSERT INTO users (id, first_name, last_name, telegram_id, chat_id, weight)
+		VALUES ($1, $2, $3, $4, 0, $5)
 		RETURNING created_at, updated_at`
 	err := r.DB.QueryRowContext(ctx, query,
 		user.ID, user.FirstName, user.LastName, user.TelegramID, user.Weight).
@@ -35,12 +35,12 @@ func (r *Repository) CreateUser(ctx context.Context, firstName, lastName string,
 func (r *Repository) FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error) {
 	op := "Repository.FindUserByTelegramID"
 	var user domain.User
-	query := `SELECT id, first_name, last_name, telegram_id, weight,
+	query := `SELECT id, first_name, last_name, telegram_id, chat_id, weight,
 		created_at, updated_at
 		FROM users WHERE telegram_id = $1`
 	err := r.DB.QueryRowContext(ctx, query, telegramID).
 		Scan(&user.ID, &user.FirstName, &user.LastName,
-			&user.TelegramID, &user.Weight,
+			&user.TelegramID, &user.ChatID, &user.Weight,
 			&user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
@@ -52,7 +52,7 @@ func (r *Repository) FindUserByTelegramID(ctx context.Context, telegramID string
 func (r *Repository) GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error) {
 	op := "Repository.GetUsersByTeamID"
 	var users []domain.User
-	query := `SELECT u.id, u.first_name, u.last_name, u.telegram_id,
+	query := `SELECT u.id, u.first_name, u.last_name, u.telegram_id, u.chat_id,
 		u.weight, u.created_at, u.updated_at
 		FROM users u
 		INNER JOIN user_teams ut ON u.id = ut.user_id
@@ -67,7 +67,7 @@ func (r *Repository) GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]
 	for rows.Next() {
 		var u domain.User
 		if err := rows.Scan(&u.ID, &u.FirstName, &u.LastName,
-			&u.TelegramID, &u.Weight,
+			&u.TelegramID, &u.ChatID, &u.Weight,
 			&u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
 		}
@@ -80,7 +80,7 @@ func (r *Repository) GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]
 func (r *Repository) GetUsersByTeamIDAndRoleID(ctx context.Context, teamID, roleID uuid.UUID) ([]domain.User, error) {
 	op := "Repository.GetUsersByTeamIDAndRoleID"
 	var users []domain.User
-	query := `SELECT u.id, u.first_name, u.last_name, u.telegram_id,
+	query := `SELECT u.id, u.first_name, u.last_name, u.telegram_id, u.chat_id,
 		u.weight, u.created_at, u.updated_at
 		FROM users u
 		INNER JOIN user_teams ut ON u.id = ut.user_id
@@ -96,7 +96,7 @@ func (r *Repository) GetUsersByTeamIDAndRoleID(ctx context.Context, teamID, role
 	for rows.Next() {
 		var u domain.User
 		if err := rows.Scan(&u.ID, &u.FirstName, &u.LastName,
-			&u.TelegramID, &u.Weight,
+			&u.TelegramID, &u.ChatID, &u.Weight,
 			&u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
 		}
@@ -133,12 +133,12 @@ func (r *Repository) AssignUserTeam(ctx context.Context, userID, teamID uuid.UUI
 func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (*domain.User, error) {
 	op := "Repository.GetUserByID"
 	var user domain.User
-	query := `SELECT id, first_name, last_name, telegram_id, weight,
+	query := `SELECT id, first_name, last_name, telegram_id, chat_id, weight,
 		created_at, updated_at
 		FROM users WHERE id = $1`
 	err := r.DB.QueryRowContext(ctx, query, userID).
 		Scan(&user.ID, &user.FirstName, &user.LastName,
-			&user.TelegramID, &user.Weight,
+			&user.TelegramID, &user.ChatID, &user.Weight,
 			&user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
@@ -150,7 +150,7 @@ func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (*domain
 func (r *Repository) GetAllUsers(ctx context.Context) ([]domain.User, error) {
 	op := "Repository.GetAllUsers"
 	var users []domain.User
-	query := `SELECT id, first_name, last_name, telegram_id, weight,
+	query := `SELECT id, first_name, last_name, telegram_id, chat_id, weight,
 		created_at, updated_at
 		FROM users ORDER BY last_name, first_name`
 	rows, err := r.DB.QueryContext(ctx, query)
@@ -162,7 +162,7 @@ func (r *Repository) GetAllUsers(ctx context.Context) ([]domain.User, error) {
 	for rows.Next() {
 		var u domain.User
 		if err := rows.Scan(&u.ID, &u.FirstName, &u.LastName,
-			&u.TelegramID, &u.Weight,
+			&u.TelegramID, &u.ChatID, &u.Weight,
 			&u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
 		}
@@ -222,6 +222,17 @@ func (r *Repository) UpdateUserWeight(ctx context.Context, userID uuid.UUID, wei
 	op := "Repository.UpdateUserWeight"
 	query := `UPDATE users SET weight = $2, updated_at = NOW() WHERE id = $1`
 	_, err := r.DB.ExecContext(ctx, query, userID, weight)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// UpdateUserChatID updates the telegram ChatID for a user.
+func (r *Repository) UpdateUserChatID(ctx context.Context, userID uuid.UUID, chatID int64) error {
+	op := "Repository.UpdateUserChatID"
+	query := `UPDATE users SET chat_id = $2, updated_at = NOW() WHERE id = $1`
+	_, err := r.DB.ExecContext(ctx, query, userID, chatID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}

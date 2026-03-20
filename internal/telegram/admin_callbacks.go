@@ -941,13 +941,19 @@ func (epicBot *Bot) sendEpicNotifications(ctx context.Context, msg *models.Messa
 		sb.WriteString("\nДля оценки используй команду /score")
 
 		// Try to send to the user's PM
+		if user.ChatID == 0 {
+			log.Warn("user has no ChatID", slog.String("username", user.TelegramID))
+			failedUsers = append(failedUsers, "@"+user.TelegramID)
+			continue
+		}
+
 		p := &bot.SendMessageParams{
-			ChatID: "@" + user.TelegramID,
+			ChatID: user.ChatID,
 			Text:   sb.String(),
 		}
 		_, err := epicBot.b.SendMessage(ctx, p)
 		if err != nil {
-			log.Error("failed to send notification PM to user", slog.String("username", user.TelegramID), sl.Err(err))
+			log.Error("failed to send notification PM to user", slog.Int64("chat_id", user.ChatID), slog.String("username", user.TelegramID), sl.Err(err))
 			failedUsers = append(failedUsers, "@"+user.TelegramID)
 		} else {
 			sentCount++
