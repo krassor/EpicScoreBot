@@ -2,7 +2,9 @@ package report
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +20,18 @@ var palette = []string{
 	"#4e79a7", "#f28e2b", "#e15759", "#76b7b2",
 	"#59a14f", "#edc948", "#b07aa1", "#ff9da7",
 	"#9c755f", "#bab0ac",
+}
+
+const Radius = 100
+
+type Point struct {
+	Label string
+	Value int
+}
+
+type CircleDiagram struct {
+	Name   string
+	Points []Point
 }
 
 // svgPieChart generates an inline SVG pie chart from the given slices.
@@ -83,73 +97,170 @@ func svgPieChart(title string, slices []PieSlice, width, height int) string {
 	return sb.String()
 }
 
-// countDistribution groups values and returns slices for a pie chart.
-func countDistribution(values []int, labels map[int]string) []PieSlice {
-	counts := make(map[int]int)
-	for _, v := range values {
-		counts[v]++
+// BuildRiskProbabilityDiagram creates a CircleDiagram radar chart for risk
+// probability averages. Each axis is "Риск N".
+func BuildRiskProbabilityDiagram(risks []RiskReportData) string {
+	if len(risks) < 3 {
+		return ""
 	}
-	var slices []PieSlice
-	for val := 1; val <= 4; val++ {
-		if c, ok := counts[val]; ok && c > 0 {
-			label := fmt.Sprintf("%d", val)
-			if l, ok := labels[val]; ok {
-				label = l
-			}
-			slices = append(slices, PieSlice{
-				Label: label,
-				Value: float64(c),
-			})
-		}
+	d := CircleDiagram{Name: "Вероятности рисков"}
+	for i, r := range risks {
+		avg := avgInts(r.Probabilities)
+		d.Points = append(d.Points, Point{
+			Label: fmt.Sprintf("Риск %d", i+1),
+			Value: int(math.Round(avg * 100)), // scale for better visibility
+		})
 	}
-	return slices
+	return d.Render()
 }
 
-// BuildProbabilityChart creates an SVG pie chart for risk probability distribution.
-func BuildProbabilityChart(probabilities []int) string {
-	labels := map[int]string{1: "Низкая (1)", 2: "Средняя (2)", 3: "Высокая (3)", 4: "Критическая (4)"}
-	slices := countDistribution(probabilities, labels)
-	return svgPieChart("Вероятности рисков", slices, 300, 250)
+// BuildRiskImpactDiagram creates a CircleDiagram radar chart for risk
+// impact averages. Each axis is "Риск N".
+func BuildRiskImpactDiagram(risks []RiskReportData) string {
+	if len(risks) < 3 {
+		return ""
+	}
+	d := CircleDiagram{Name: "Влияние рисков"}
+	for i, r := range risks {
+		avg := avgInts(r.Impacts)
+		d.Points = append(d.Points, Point{
+			Label: fmt.Sprintf("Риск %d", i+1),
+			Value: int(math.Round(avg * 100)),
+		})
+	}
+	return d.Render()
 }
 
-// BuildImpactChart creates an SVG pie chart for risk impact distribution.
-func BuildImpactChart(impacts []int) string {
-	labels := map[int]string{1: "Минимальное (1)", 2: "Умеренное (2)", 3: "Значительное (3)", 4: "Критическое (4)"}
-	slices := countDistribution(impacts, labels)
-	return svgPieChart("Влияние рисков", slices, 300, 250)
+// BuildRiskCoefficientDiagram creates a CircleDiagram radar chart for risk
+// coefficients expressed as percentages (e.g. ×1.10 → 10%).
+func BuildRiskCoefficientDiagram(risks []RiskReportData) string {
+	if len(risks) < 3 {
+		return ""
+	}
+	d := CircleDiagram{Name: "Коэффициенты рисков"}
+	for i, r := range risks {
+		pct := int(math.Round((r.Coefficient - 1) * 100))
+		d.Points = append(d.Points, Point{
+			Label: fmt.Sprintf("Риск %d", i+1),
+			Value: pct,
+		})
+	}
+	return d.Render()
 }
 
-// BuildCoefficientChart creates an SVG pie chart for risk coefficient distribution.
-func BuildCoefficientChart(coefficients []float64) string {
-	// Group coefficients into buckets.
-	buckets := map[string]int{}
-	order := []string{"1.05", "1.10", "1.20", "1.30"}
-	for _, c := range coefficients {
-		switch {
-		case c >= 1.30:
-			buckets["1.30"]++
-		case c >= 1.20:
-			buckets["1.20"]++
-		case c >= 1.10:
-			buckets["1.10"]++
-		default:
-			buckets["1.05"]++
+// avgInts returns the arithmetic mean of an int slice.
+func avgInts(vals []int) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	sum := 0
+	for _, v := range vals {
+		sum += v
+	}
+	return float64(sum) / float64(len(vals))
+}
+
+func (c *CircleDiagram) Render() string {
+	res :=
+		fmt.Sprintf("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"500\" height=\"500\" viewBox=\"-250 -250 500 500\" role=\"img\" aria-label=%s>\n", c.Name) +
+			fmt.Sprintf("<circle r=\"%s\" fill=\"none\" stroke=\"#ddd\" stroke-width=\"0.8\"/>\n", strconv.Itoa(Radius*0.25)) +
+			fmt.Sprintf("<circle r=\"%s\" fill=\"none\" stroke=\"#ddd\" stroke-width=\"0.8\"/>\n", strconv.Itoa(Radius*0.5)) +
+			fmt.Sprintf("<circle r=\"%s\" fill=\"none\" stroke=\"#ddd\" stroke-width=\"0.8\"/>\n", strconv.Itoa(Radius*0.75)) +
+			fmt.Sprintf("<circle r=\"%s\" fill=\"none\" stroke=\"#ddd\" stroke-width=\"0.8\"/>\n", strconv.Itoa(Radius)) +
+			c.renderAxis()
+
+	return res
+}
+
+func (c *CircleDiagram) renderAxis() string {
+
+	n := len(c.Points)
+	if n < 3 {
+		return ""
+	}
+
+	maxValue := c.maxValue()
+	k := float64(Radius) / float64(maxValue)
+
+	phi0 := -math.Pi / 2
+
+	log := slog.With("func", "renderAxis")
+
+	log.Info(
+		"render info",
+		slog.Int("n", n),
+	)
+
+	type xy struct {
+		x, y int
+	}
+
+	xyArray := make([]xy, n)
+
+	res := "<g stroke=\"#999\" stroke-width=\"1\">\n"
+
+	for i := range n {
+		i := i
+		log.Info(
+			"render info",
+			slog.Int("i", i),
+		)
+
+		rad := phi0 + ((float64(i*(360/n)) * math.Pi) / 180)
+
+		res += fmt.Sprintf(
+			"<line x1=\"0\" y1=\"0\" x2=\"%s\" y2=\"%s\"/>\n",
+			strconv.Itoa(int(math.Round((Radius * math.Cos(rad))))),
+			strconv.Itoa(int(math.Round((Radius * math.Sin(rad))))),
+		)
+
+		xyArray[i] = xy{
+			x: int(math.Round((k * float64(c.Points[i].Value) * math.Cos(rad)))),
+			y: int(math.Round((k * float64(c.Points[i].Value) * math.Sin(rad)))),
 		}
 	}
-	var slices []PieSlice
-	labels := map[string]string{
-		"1.05": "×1.05 (низкий)",
-		"1.10": "×1.10 (средний)",
-		"1.20": "×1.20 (высокий)",
-		"1.30": "×1.30 (критический)",
+
+	res += "</g>\n"
+	res += "<g font-family=\"Inter, sans-serif\" font-size=\"12\" fill=\"#333\" text-anchor=\"middle\">\n"
+
+	for i := range n {
+
+		rad := phi0 + ((float64(i*(360/n)) * math.Pi) / 180)
+
+		res += fmt.Sprintf(
+			"<text x=\"%s\" y=\"%s\">%s</text>\n",
+			strconv.Itoa(int(math.Round((1.1 * Radius * math.Cos(rad))))),
+			strconv.Itoa(int(math.Round((1.1 * Radius * math.Sin(rad))))),
+			c.Points[i].Label,
+		)
 	}
-	for _, key := range order {
-		if c := buckets[key]; c > 0 {
-			slices = append(slices, PieSlice{
-				Label: labels[key],
-				Value: float64(c),
-			})
+
+	res += "</g>\n"
+	res += "<polygon points=\"\n"
+
+	for i := range n {
+		res += fmt.Sprintf(
+			"%s,%s ",
+			strconv.Itoa(xyArray[i].x),
+			strconv.Itoa(xyArray[i].y),
+		)
+	}
+
+	res += "\" fill=\"#1f77b4\" fill-opacity=\"0.10\" stroke=\"#1f77b4\" stroke-width=\"2\"/>\n"
+	res += "</svg>"
+	return res
+}
+
+func (c *CircleDiagram) maxValue() int {
+	if len(c.Points) == 0 {
+		return 0
+	}
+
+	max := c.Points[0].Value
+	for _, p := range c.Points[1:] {
+		if p.Value > max {
+			max = p.Value
 		}
 	}
-	return svgPieChart("Коэффициенты рисков", slices, 300, 250)
+	return max
 }

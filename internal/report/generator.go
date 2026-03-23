@@ -23,6 +23,13 @@ type epicTemplateData struct {
 	ProbabilityChartSVG template.HTML
 	ImpactChartSVG      template.HTML
 	CoefficientChartSVG template.HTML
+	RiskLegend          []riskLegendItem
+}
+
+// riskLegendItem maps "Риск N" label to the risk description.
+type riskLegendItem struct {
+	Label       string
+	Description string
 }
 
 // templateData is passed to the HTML template.
@@ -55,19 +62,20 @@ func (g *Generator) GenerateReport(ctx context.Context, data ReportData) (string
 	// Prepare template data with SVG charts.
 	var epics []epicTemplateData
 	for _, e := range data.Epics {
-		var allProbs, allImpacts []int
-		var allCoeffs []float64
-		for _, r := range e.Risks {
-			allProbs = append(allProbs, r.Probabilities...)
-			allImpacts = append(allImpacts, r.Impacts...)
-			allCoeffs = append(allCoeffs, r.Coefficient)
+		var legend []riskLegendItem
+		for i, r := range e.Risks {
+			legend = append(legend, riskLegendItem{
+				Label:       fmt.Sprintf("Риск %d", i+1),
+				Description: r.Description,
+			})
 		}
 
 		epics = append(epics, epicTemplateData{
 			EpicReportData:      e,
-			ProbabilityChartSVG: template.HTML(BuildProbabilityChart(allProbs)),
-			ImpactChartSVG:      template.HTML(BuildImpactChart(allImpacts)),
-			CoefficientChartSVG: template.HTML(BuildCoefficientChart(allCoeffs)),
+			ProbabilityChartSVG: template.HTML(BuildRiskProbabilityDiagram(e.Risks)),
+			ImpactChartSVG:      template.HTML(BuildRiskImpactDiagram(e.Risks)),
+			CoefficientChartSVG: template.HTML(BuildRiskCoefficientDiagram(e.Risks)),
+			RiskLegend:          legend,
 		})
 	}
 
