@@ -110,7 +110,7 @@ func (epicBot *Bot) handleStart(ctx context.Context, msg *models.Message) error 
 
 	text := fmt.Sprintf("👋 Привет, %s!\n\n"+
 		"Я бот для оценки трудоёмкости эпиков и рисков.\n"+
-		"Используйте /help для списка команд.",
+		"Используйте /help для получения списка команд.",
 		msg.From.FirstName)
 	_, err := epicBot.sendReply(ctx, msg, text)
 	return err
@@ -120,6 +120,7 @@ func (epicBot *Bot) handleStart(ctx context.Context, msg *models.Message) error 
 
 func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 	var sb strings.Builder
+	sb.WriteString("<b>Для получения уведомлений необходимо в личном чате с ботом @EpicScoreBot pзапустить команду /start</b>\n\n")
 	sb.WriteString("📋 <b>Команды бота</b>\n\n")
 	sb.WriteString("<b>👤 Для всех:</b>\n")
 	sb.WriteString("/score — меню оценки эпиков и рисков\n")
