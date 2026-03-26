@@ -656,9 +656,9 @@ func (epicBot *Bot) showEpicInfo(ctx context.Context, msg *models.Message, epicI
 		sb.WriteString("\nРисков нет.\n")
 	}
 
-	kb := inlineKeyboard(inlineRow(inlineBtn("❌ Закрыть", "score_cancel")))
+	//kb := inlineKeyboard(inlineRow(inlineBtn("❌ Закрыть", "score_cancel")))
 
-	if err := epicBot.editWithKeyboard(ctx, msg.Chat.ID, msg.ID, sb.String(), kb); err != nil {
+	if err := epicBot.editWithKeyboard(ctx, msg.Chat.ID, msg.ID, sb.String(), nil); err != nil {
 		log.Error("failed to edit message", sl.Err(err))
 	}
 }
