@@ -72,6 +72,16 @@ func (epicBot *Bot) handleCallbackQuery(ctx context.Context, update *models.Upda
 		}
 		epicBot.showTeamEpics(rctx, msg, username, teamID)
 
+	// epicinfo_<epicID> — show epic details
+	case strings.HasPrefix(data, "epicinfo_"):
+		epicIDStr := strings.TrimPrefix(data, "epicinfo_")
+		epicID, err := uuid.Parse(epicIDStr)
+		if err != nil {
+			epicBot.sendCallbackAlert(rctx, callback, "❌ Ошибка парсинга ID эпика")
+			return
+		}
+		epicBot.showEpicInfo(rctx, msg, epicID)
+
 	// epic_<epicID> — show scoring options for an epic
 	case strings.HasPrefix(data, "epic_"):
 		epicIDStr := strings.TrimPrefix(data, "epic_")
@@ -613,6 +623,43 @@ func (epicBot *Bot) handleRiskImpact(ctx context.Context, msg *models.Message, u
 		epicBot.showEpicRisks(ctx, msg, username, risk.EpicID, successText)
 	} else {
 		log.Error("failed to get risk for epic ID", sl.Err(err))
+	}
+}
+
+// showEpicInfo edits the message to display detailed epic information.
+func (epicBot *Bot) showEpicInfo(ctx context.Context, msg *models.Message, epicID uuid.UUID) {
+	op := "bot.showEpicInfo()"
+	log := epicBot.log.With(slog.String("op", op))
+
+	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Эпик не найден."); botErr != nil {
+			log.Error("failed to send reply", sl.Err(botErr))
+		}
+		return
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "📋 Эпик #%s\n", epic.Number)
+	fmt.Fprintf(&sb, "📝 Название: %s\n", epic.Name)
+	if epic.Description != "" {
+		fmt.Fprintf(&sb, "📄 Описание: %s\n", epic.Description)
+	}
+
+	risks, err := epicBot.repo.GetRisksByEpicID(ctx, epicID)
+	if err == nil && len(risks) > 0 {
+		sb.WriteString("\n⚠️ Риски:\n")
+		for i, risk := range risks {
+			fmt.Fprintf(&sb, "%d. %s\n", i+1, risk.Description)
+		}
+	} else if len(risks) == 0 {
+		sb.WriteString("\nРисков нет.\n")
+	}
+
+	kb := inlineKeyboard(inlineRow(inlineBtn("❌ Закрыть", "score_cancel")))
+
+	if err := epicBot.editWithKeyboard(ctx, msg.Chat.ID, msg.ID, sb.String(), kb); err != nil {
+		log.Error("failed to edit message", sl.Err(err))
 	}
 }
 
