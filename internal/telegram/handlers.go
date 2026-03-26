@@ -85,6 +85,8 @@ func (epicBot *Bot) commandHandler(ctx context.Context, update *models.Update) e
 		return epicBot.handleList(ctx, msg)
 	case "epicnotify":
 		return epicBot.handleEpicNotify(ctx, msg)
+	case "epicinfo":
+		return epicBot.handleEpicInfo(ctx, msg)
 	default:
 		_, err := epicBot.sendReply(ctx, msg,
 			fmt.Sprintf("❓ Неизвестная команда: /%s\nИспользуйте /help для списка команд.",
@@ -124,6 +126,7 @@ func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 	sb.WriteString("📋 <b>Команды бота</b>\n\n")
 	sb.WriteString("<b>👤 Для всех:</b>\n")
 	sb.WriteString("/score — меню оценки эпиков и рисков\n")
+	sb.WriteString("/epicinfo — информация по неоценённым эпикам\n")
 
 	if epicBot.isAdmin(msg) {
 		sb.WriteString("\n<b>🔧 Для администраторов:</b>\n")
@@ -470,6 +473,102 @@ func (epicBot *Bot) handleEpicNotify(ctx context.Context, msg *models.Message) e
 	}
 	// The user requested standard flow like "/epicresult". /results uses showEpicPickerInitial directly.
 	return epicBot.showEpicPickerInitial(ctx, msg, "epicnotify", string(domain.StatusScoring))
+}
+
+// ─── /epicinfo ────────────────────────────────────────────────────────────
+
+func (epicBot *Bot) handleEpicInfo(ctx context.Context, msg *models.Message) error {
+	op := "bot.handleEpicInfo"
+	log := epicBot.log.With(
+		slog.String("op", op),
+		slog.Int64("chat_id", msg.Chat.ID),
+	)
+
+	if msg.Chat.Type != models.ChatTypePrivate {
+		botName := "EpicScoreBot"
+		if epicBot.botUsername != "" {
+			botName = epicBot.botUsername
+		}
+		sentMsg, err := epicBot.sendReply(ctx, msg, "Информация по эпикам доступна в личном чате @"+botName)
+		if err == nil && sentMsg != nil {
+			go func(chatID int64, messageID int) {
+				time.Sleep(5 * time.Second)
+				_ = epicBot.deleteMessage(context.Background(), chatID, messageID)
+			}(msg.Chat.ID, sentMsg.ID)
+		}
+	}
+
+	username := msg.From.Username
+	if username == "" {
+		_, err := epicBot.sendReply(ctx, msg,
+			"❌ У вас не задан @username в Telegram. Установите его в настройках профиля.")
+		return err
+	}
+
+	user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+	if err != nil {
+		_, retErr := epicBot.sendReply(ctx, msg,
+			"❌ Вы не зарегистрированы в системе. Обратитесь к администратору.")
+		return retErr
+	}
+
+	if user.ChatID != msg.From.ID {
+		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.From.ID); err != nil {
+			log.Error("failed to update user ChatID", sl.Err(err))
+		}
+	}
+
+	teams, err := epicBot.repo.GetTeamsByUserTelegramID(ctx, username)
+	if err != nil || len(teams) == 0 {
+		if err != nil {
+			log.Error("error getting teams by user telegram id", sl.Err(err))
+		}
+		_, retErr := epicBot.sendReply(ctx, msg, "❌ Вы не состоите ни в одной команде.")
+		return retErr
+	}
+
+	// Collect unscored epics from all user's teams, dedup by epic ID.
+	seen := make(map[uuid.UUID]bool)
+	var allEpics []domain.Epic
+	for _, team := range teams {
+		epics, err := epicBot.repo.GetUnscoredEpicsByUser(ctx, user.ID, team.ID)
+		if err != nil {
+			log.Error("error getting unscored epics", sl.Err(err),
+				slog.String("team_id", team.ID.String()))
+			continue
+		}
+		for _, e := range epics {
+			if !seen[e.ID] {
+				seen[e.ID] = true
+				allEpics = append(allEpics, e)
+			}
+		}
+	}
+
+	if len(allEpics) == 0 {
+		_, retErr := epicBot.sendReply(ctx, msg, "✅ У вас нет неоценённых эпиков.")
+		return retErr
+	}
+
+	var rows [][]models.InlineKeyboardButton
+	for _, epic := range allEpics {
+		rows = append(rows, inlineRow(inlineBtn(
+			fmt.Sprintf("📝 #%s %s", epic.Number, epic.Name),
+			fmt.Sprintf("epicinfo_%s", epic.ID.String()),
+		)))
+	}
+	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
+	kb := inlineKeyboard(rows...)
+
+	var retErr error
+	if msg.Chat.Type != models.ChatTypePrivate {
+		_, retErr = epicBot.sendWithKeyboardToUser(ctx, msg,
+			fmt.Sprintf("📋 %s %s, ваши неоценённые эпики:", user.FirstName, user.LastName), kb)
+	} else {
+		_, retErr = epicBot.sendWithKeyboard(ctx, msg,
+			fmt.Sprintf("📋 %s %s, ваши неоценённые эпики:", user.FirstName, user.LastName), kb)
+	}
+	return retErr
 }
 
 // ─── /score ───────────────────────────────────────────────────────────────
