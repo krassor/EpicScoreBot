@@ -1033,7 +1033,7 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 		escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name))
 
 	sb.WriteString("📋 *Трудоёмкость*\n")
-	sb.WriteString("👉 Ждём оценку от: ")
+	sb.WriteString("👉 Ждём оценку от:\n")
 	missing := 0
 	for _, u := range teamMembers {
 		if !scoredSet[u.ID] {
