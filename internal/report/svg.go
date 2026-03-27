@@ -100,7 +100,7 @@ func svgPieChart(title string, slices []PieSlice, width, height int) string {
 // BuildRiskProbabilityDiagram creates a CircleDiagram radar chart for risk
 // probability averages. Each axis is "Риск N".
 func BuildRiskProbabilityDiagram(risks []RiskReportData) string {
-	if len(risks) < 3 {
+	if len(risks) < 1 {
 		return ""
 	}
 	d := CircleDiagram{Name: "Вероятности рисков"}
@@ -117,7 +117,7 @@ func BuildRiskProbabilityDiagram(risks []RiskReportData) string {
 // BuildRiskImpactDiagram creates a CircleDiagram radar chart for risk
 // impact averages. Each axis is "Риск N".
 func BuildRiskImpactDiagram(risks []RiskReportData) string {
-	if len(risks) < 3 {
+	if len(risks) < 1 {
 		return ""
 	}
 	d := CircleDiagram{Name: "Влияние рисков"}
@@ -134,7 +134,7 @@ func BuildRiskImpactDiagram(risks []RiskReportData) string {
 // BuildRiskCoefficientDiagram creates a CircleDiagram radar chart for risk
 // coefficients expressed as percentages (e.g. ×1.10 → 10%).
 func BuildRiskCoefficientDiagram(risks []RiskReportData) string {
-	if len(risks) < 3 {
+	if len(risks) < 1 {
 		return ""
 	}
 	d := CircleDiagram{Name: "Коэффициенты рисков"}
