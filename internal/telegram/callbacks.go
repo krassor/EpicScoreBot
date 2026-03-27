@@ -209,6 +209,18 @@ func (epicBot *Bot) showTeamEpics(ctx context.Context, msg *models.Message, user
 		return
 	}
 
+	log.Debug("unscored epics query result",
+		slog.String("user_id", user.ID.String()),
+		slog.String("username", username),
+		slog.String("team_id", teamID.String()),
+		slog.Int("epic_count", len(epics)))
+	for _, e := range epics {
+		log.Debug("unscored epic",
+			slog.String("epic_id", e.ID.String()),
+			slog.String("epic_number", e.Number),
+			slog.String("status", string(e.Status)))
+	}
+
 	team, _ := epicBot.repo.GetTeamByID(ctx, teamID)
 	teamName := ""
 	if team != nil {
@@ -276,6 +288,13 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 
 	effortScored, _ := epicBot.repo.HasUserScoredEpic(ctx, epicID, user.ID)
 	unscoredRisks, _ := epicBot.repo.GetUnscoredRisksByUser(ctx, user.ID, epicID)
+
+	log.Debug("epic score check",
+		slog.String("user_id", user.ID.String()),
+		slog.String("username", username),
+		slog.String("epic_id", epicID.String()),
+		slog.Bool("effort_scored", effortScored),
+		slog.Int("unscored_risks", len(unscoredRisks)))
 
 	if effortScored && len(unscoredRisks) == 0 {
 		if _, botErr := epicBot.sendReply(ctx, msg,
