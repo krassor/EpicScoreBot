@@ -175,7 +175,7 @@ func (c *CircleDiagram) Render() string {
 func (c *CircleDiagram) renderAxis() string {
 
 	n := len(c.Points)
-	if n < 3 {
+	if n < 1 {
 		return ""
 	}
 
@@ -195,24 +195,23 @@ func (c *CircleDiagram) renderAxis() string {
 		x, y int
 	}
 
-	xyArray := make([]xy, n)
+	var xyArray []xy
+	if n < 3 {
+		xyArray = make([]xy, n+1)
+		xyArray[n] = xy{x: 0, y: 0}
+	} else {
+		xyArray = make([]xy, n)
+	}
 
-	res := "<g stroke=\"#999\" stroke-width=\"1\">\n"
+	var res strings.Builder
+	res.WriteString("<g stroke=\"#999\" stroke-width=\"1\">\n")
 
 	for i := range n {
-		i := i
-		log.Info(
-			"render info",
-			slog.Int("i", i),
-		)
-
 		rad := phi0 + ((float64(i*(360/n)) * math.Pi) / 180)
 
-		res += fmt.Sprintf(
-			"<line x1=\"0\" y1=\"0\" x2=\"%s\" y2=\"%s\"/>\n",
+		fmt.Fprintf(&res, "<line x1=\"0\" y1=\"0\" x2=\"%s\" y2=\"%s\"/>\n",
 			strconv.Itoa(int(math.Round((Radius * math.Cos(rad))))),
-			strconv.Itoa(int(math.Round((Radius * math.Sin(rad))))),
-		)
+			strconv.Itoa(int(math.Round((Radius * math.Sin(rad))))))
 
 		xyArray[i] = xy{
 			x: int(math.Round((k * float64(c.Points[i].Value) * math.Cos(rad)))),
@@ -220,35 +219,33 @@ func (c *CircleDiagram) renderAxis() string {
 		}
 	}
 
-	res += "</g>\n"
-	res += "<g font-family=\"Inter, sans-serif\" font-size=\"12\" fill=\"#333\" text-anchor=\"middle\">\n"
+	res.WriteString("</g>\n")
+	res.WriteString("<g font-family=\"Inter, sans-serif\" font-size=\"12\" fill=\"#333\" text-anchor=\"middle\">\n")
 
 	for i := range n {
 
 		rad := phi0 + ((float64(i*(360/n)) * math.Pi) / 180)
 
-		res += fmt.Sprintf(
-			"<text x=\"%s\" y=\"%s\">%s</text>\n",
+		fmt.Fprintf(&res, "<text x=\"%s\" y=\"%s\">%s</text>\n",
 			strconv.Itoa(int(math.Round((1.1 * Radius * math.Cos(rad))))),
 			strconv.Itoa(int(math.Round((1.1 * Radius * math.Sin(rad))))),
-			c.Points[i].Label,
-		)
+			c.Points[i].Label)
 	}
 
-	res += "</g>\n"
-	res += "<polygon points=\"\n"
+	res.WriteString("</g>\n")
+	res.WriteString("<polygon points=\"\n")
 
 	for i := range n {
-		res += fmt.Sprintf(
+		res.WriteString(fmt.Sprintf(
 			"%s,%s ",
 			strconv.Itoa(xyArray[i].x),
 			strconv.Itoa(xyArray[i].y),
-		)
+		))
 	}
 
-	res += "\" fill=\"#1f77b4\" fill-opacity=\"0.10\" stroke=\"#1f77b4\" stroke-width=\"2\"/>\n"
-	res += "</svg>"
-	return res
+	res.WriteString("\" fill=\"#1f77b4\" fill-opacity=\"0.10\" stroke=\"#1f77b4\" stroke-width=\"2\"/>\n")
+	res.WriteString("</svg>")
+	return res.String()
 }
 
 func (c *CircleDiagram) maxValue() int {
