@@ -11,10 +11,10 @@ type RoleScoreData struct {
 // RiskReportData holds aggregated data for one risk.
 type RiskReportData struct {
 	Description   string
-	Probabilities []int     // individual user probability scores (1–4)
-	Impacts       []int     // individual user impact scores (1–4)
-	WeightedScore float64   // weighted average of prob*impact
-	Coefficient   float64   // risk multiplier coefficient
+	Probabilities []int   // individual user probability scores (1–4)
+	Impacts       []int   // individual user impact scores (1–4)
+	WeightedScore float64 // weighted average of prob*impact
+	Coefficient   float64 // risk multiplier coefficient
 }
 
 // EpicReportData holds all report data for a single epic.
