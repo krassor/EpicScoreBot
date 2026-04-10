@@ -24,4 +24,4 @@ main
 docker-compose.yml
 
 # HTML
-*.HTML
+template.html

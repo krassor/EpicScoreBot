@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EpicScoreBot — Диаграмма Ганта</title>
+    <meta name="description" content="Интерактивная диаграмма Ганта для планирования задач по эпикам">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@1.2.2/dist/frappe-gantt.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Auth overlay -->
+    <div id="auth-overlay" class="auth-overlay">
+        <div class="auth-card">
+            <div class="auth-logo">📊</div>
+            <h1>EpicScoreBot</h1>
+            <p>Диаграмма Ганта</p>
+            <div id="telegram-login"></div>
+            <script async src="https://telegram.org/js/telegram-widget.js?22"
+                    data-telegram-login="EpicScoreBot"
+                    data-size="large"
+                    data-radius="12"
+                    data-auth-url="http://85.239.57.254:8080/api/gantt/auth"
+                    data-request-access="write"
+                    id="tg-widget-script">
+            </script>
+        </div>
+    </div>
+
+    <!-- Main app -->
+    <div id="app" class="app hidden">
+        <header class="header">
+            <div class="header-left">
+                <span class="logo">📊</span>
+                <h1 id="page-title">EpicScoreBot — Ганта</h1>
+            </div>
+            <div class="header-controls">
+                <select id="team-select" class="select">
+                    <option value="">Выберите команду...</option>
+                </select>
+                <div class="view-modes">
+                    <button class="btn btn-view active" data-mode="Day">День</button>
+                    <button class="btn btn-view" data-mode="Week">Неделя</button>
+                    <button class="btn btn-view" data-mode="Month">Месяц</button>
+                </div>
+            </div>
+        </header>
+
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <select id="epic-select" class="select" disabled>
+                    <option value="">Выберите эпик для генерации...</option>
+                </select>
+                <input type="date" id="start-date" class="input-date"
+                       title="Дата начала">
+                <button id="btn-generate" class="btn btn-primary" disabled>
+                    ⚡ Сгенерировать задачи
+                </button>
+            </div>
+            <div class="toolbar-right">
+                <span id="task-count" class="badge">0 задач</span>
+            </div>
+        </div>
+
+        <div id="gantt-container" class="gantt-container">
+            <div id="gantt-empty" class="empty-state">
+                <div class="empty-icon">📋</div>
+                <h2>Нет задач</h2>
+                <p>Выберите команду и сгенерируйте задачи для эпиков</p>
+            </div>
+            <div id="gantt-chart"></div>
+        </div>
+
+        <!-- Reorder modal -->
+        <div id="reorder-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="modal-title">Порядок ролей</h2>
+                    <button id="modal-close" class="btn-icon">✕</button>
+                </div>
+                <div id="modal-body" class="modal-body">
+                    <!-- Role items will be injected here -->
+                </div>
+                <div class="modal-footer">
+                    <button id="modal-save" class="btn btn-primary">
+                        💾 Сохранить порядок
+                    </button>
+                    <button id="modal-cancel" class="btn btn-secondary">
+                        Отмена
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast notifications -->
+        <div id="toast-container" class="toast-container"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@1.2.2/dist/frappe-gantt.umd.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
