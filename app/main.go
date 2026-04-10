@@ -52,6 +52,10 @@ func main() {
 	reportService := report.NewGenerator(log, cfg)
 
 	tgBot := telegram.New(log, cfg, repositoryService, scoringService, reportService, aiClient)
+	if tgBot == nil {
+		log.Error("failed to initialize telegram bot, exiting")
+		os.Exit(1)
+	}
 
 	// Gantt chart service and HTTP server.
 	ganttService := gantt.New(log, repositoryService)
