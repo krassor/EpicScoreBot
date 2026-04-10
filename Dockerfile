@@ -17,6 +17,7 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 COPY --from=builder /build/bin/epicScoreBot /bin/epicScoreBot 
+COPY --from=builder /build/web /web
 
 ENV HTTP_SERVER_PORT=8080
 ENV HTTP_SERVER_ADDRESS_LISTEN=0.0.0.0
