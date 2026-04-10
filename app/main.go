@@ -8,11 +8,15 @@ import (
 
 	"EpicScoreBot/internal/ai"
 	"EpicScoreBot/internal/config"
+	"EpicScoreBot/internal/gantt"
 	"EpicScoreBot/internal/graceful"
 	"EpicScoreBot/internal/report"
 	"EpicScoreBot/internal/repositories"
 	"EpicScoreBot/internal/scoring"
 	"EpicScoreBot/internal/telegram"
+	httpServer "EpicScoreBot/internal/transport/httpServer"
+	"EpicScoreBot/internal/transport/httpServer/handlers"
+	"EpicScoreBot/internal/transport/httpServer/routers"
 	"EpicScoreBot/internal/utils/logger/handlers/slogpretty"
 )
 
@@ -49,6 +53,12 @@ func main() {
 
 	tgBot := telegram.New(log, cfg, repositoryService, scoringService, reportService, aiClient)
 
+	// Gantt chart service and HTTP server.
+	ganttService := gantt.New(log, repositoryService)
+	ganttHandler := handlers.NewGanttHandler(log, ganttService, repositoryService)
+	router := routers.NewRouter(ganttHandler, cfg.BotConfig.TgbotApiToken)
+	server := httpServer.NewHttpServer(log, router, cfg)
+
 	maxSecond := 15 * time.Second
 	waitShutdown := graceful.GracefulShutdown(
 		context.Background(),
@@ -60,11 +70,15 @@ func main() {
 			"Telegram bot": func(ctx context.Context) error {
 				return tgBot.Shutdown(ctx)
 			},
+			"HTTP server": func(ctx context.Context) error {
+				return server.Shutdown(ctx)
+			},
 		},
 		log,
 	)
 
 	go tgBot.Start(30)
+	go server.Listen()
 
 	<-waitShutdown
 }

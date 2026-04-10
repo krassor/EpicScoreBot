@@ -8,6 +8,7 @@ type Config struct {
 	DBConfig       DBConfig         `yaml:"db" env-required:"true"`
 	BotConfig      BotConfig        `yaml:"bot" env-required:"true"`
 	PdfConfig      PdfConfig        `yaml:"pdf" env-required:"false"`
+	GanttHost      string           `yaml:"ganttHost" env:"GANTT_HOST" env-default:""`
 	ConfigFilePath string           `yaml:"configFilePath" env:"CONFIG_FILEPATH" env-default:""`
 	ConfigFileName string           `yaml:"configFileName" env:"CONFIG_FILENAME" env-default:""`
 	configPath     string

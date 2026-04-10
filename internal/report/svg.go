@@ -236,11 +236,9 @@ func (c *CircleDiagram) renderAxis() string {
 	res.WriteString("<polygon points=\"\n")
 
 	for i := range n {
-		res.WriteString(fmt.Sprintf(
-			"%s,%s ",
-			strconv.Itoa(xyArray[i].x),
-			strconv.Itoa(xyArray[i].y),
-		))
+		fmt.Fprintf(&res, "%s,%s ",
+	strconv.Itoa(xyArray[i].x),
+	strconv.Itoa(xyArray[i].y))
 	}
 
 	res.WriteString("\" fill=\"#1f77b4\" fill-opacity=\"0.10\" stroke=\"#1f77b4\" stroke-width=\"2\"/>\n")
