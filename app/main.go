@@ -53,8 +53,7 @@ func main() {
 
 	tgBot := telegram.New(log, cfg, repositoryService, scoringService, reportService, aiClient)
 	if tgBot == nil {
-		log.Error("failed to initialize telegram bot, exiting")
-		os.Exit(1)
+		log.Error("failed to initialize telegram bot. the app will continue running without telegram features.")
 	}
 
 	// Gantt chart service and HTTP server.
@@ -63,25 +62,31 @@ func main() {
 	router := routers.NewRouter(ganttHandler, cfg.BotConfig.TgbotApiToken)
 	server := httpServer.NewHttpServer(log, router, cfg)
 
+	operations := map[string]graceful.Operation{
+		"Repository service": func(ctx context.Context) error {
+			return repositoryService.Shutdown(ctx)
+		},
+		"HTTP server": func(ctx context.Context) error {
+			return server.Shutdown(ctx)
+		},
+	}
+	if tgBot != nil {
+		operations["Telegram bot"] = func(ctx context.Context) error {
+			return tgBot.Shutdown(ctx)
+		}
+	}
+
 	maxSecond := 15 * time.Second
 	waitShutdown := graceful.GracefulShutdown(
 		context.Background(),
 		maxSecond,
-		map[string]graceful.Operation{
-			"Repository service": func(ctx context.Context) error {
-				return repositoryService.Shutdown(ctx)
-			},
-			"Telegram bot": func(ctx context.Context) error {
-				return tgBot.Shutdown(ctx)
-			},
-			"HTTP server": func(ctx context.Context) error {
-				return server.Shutdown(ctx)
-			},
-		},
+		operations,
 		log,
 	)
 
-	go tgBot.Start(30)
+	if tgBot != nil {
+		go tgBot.Start(30)
+	}
 	go server.Listen()
 
 	<-waitShutdown
