@@ -33,7 +33,6 @@ func (r *Router) Mount(mux *chi.Mux) {
 
 	// Serve static files for the Gantt web UI.
 	fs := http.FileServer(http.Dir("web/gantt"))
-	mux.Get("/gantt", http.RedirectHandler("/gantt/", http.StatusMovedPermanently).ServeHTTP)
 	mux.Handle("/gantt/*", http.StripPrefix("/gantt/", fs))
 
 	mux.Route("/api", func(mux chi.Router) {

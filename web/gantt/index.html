@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ru">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,6 +12,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <!-- Auth overlay -->
     <div id="auth-overlay" class="auth-overlay">
@@ -19,14 +21,10 @@
             <h1>EpicScoreBot</h1>
             <p>Диаграмма Ганта</p>
             <div id="telegram-login"></div>
-            <script async src="https://telegram.org/js/telegram-widget.js?22"
-                    data-telegram-login="EpicScoreBot"
-                    data-size="large"
-                    data-radius="12"
-                    data-auth-url="http://85.239.57.254:8080/api/gantt/auth"
-                    data-request-access="write"
-                    id="tg-widget-script">
-            </script>
+            <script async src="https://telegram.org/js/telegram-widget.js?22" data-telegram-login="EpicScoreBot"
+                data-size="large" data-radius="12" data-auth-url="http://85.239.57.254/api/gantt/auth"
+                data-request-access="write" id="tg-widget-script">
+                </script>
         </div>
     </div>
 
@@ -54,8 +52,7 @@
                 <select id="epic-select" class="select" disabled>
                     <option value="">Выберите эпик для генерации...</option>
                 </select>
-                <input type="date" id="start-date" class="input-date"
-                       title="Дата начала">
+                <input type="date" id="start-date" class="input-date" title="Дата начала">
                 <button id="btn-generate" class="btn btn-primary" disabled>
                     ⚡ Сгенерировать задачи
                 </button>
@@ -103,4 +100,5 @@
     <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@1.2.2/dist/frappe-gantt.umd.js"></script>
     <script src="app.js"></script>
 </body>
+
 </html>
