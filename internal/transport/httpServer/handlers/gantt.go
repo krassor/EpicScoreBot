@@ -382,7 +382,7 @@ func (h *GanttHandler) TelegramAuth(w http.ResponseWriter, r *http.Request) {
 		Value:    r.URL.Query().Get("hash"),
 		Path:     "/",
 		MaxAge:   86400,
-		HttpOnly: true,
+		HttpOnly: false, // Frontend JS needs to read this cookie
 		SameSite: http.SameSiteLaxMode,
 	})
 

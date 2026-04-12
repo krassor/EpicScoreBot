@@ -31,7 +31,7 @@ func TelegramAuth(botToken string) func(next http.Handler) http.Handler {
 					Value:    r.URL.Query().Get("hash"),
 					Path:     "/",
 					MaxAge:   86400, // 24 hours
-					HttpOnly: true,
+					HttpOnly: false, // Frontend JS needs to read this cookie
 					SameSite: http.SameSiteLaxMode,
 				})
 				next.ServeHTTP(w, r)
