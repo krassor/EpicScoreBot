@@ -22,7 +22,7 @@
     --color-epic: #6366f1;
     --color-default: #64748b;
 
-    --border-color: rgba(255, 255, 255, 0.08);
+    --border-color: rgba(255, 255, 255, 0.25);
     --border-radius: 12px;
     --border-radius-sm: 8px;
 
@@ -37,13 +37,16 @@
 
 /* ── Reset & Base ──────────────────────────────────────────────────── */
 
-*, *::before, *::after {
+*,
+*::before,
+*::after {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
 }
 
-html, body {
+html,
+body {
     height: 100%;
     font-family: var(--font-family);
     font-size: 14px;
@@ -69,7 +72,9 @@ body {
     z-index: 1000;
 }
 
-.auth-overlay.hidden { display: none; }
+.auth-overlay.hidden {
+    display: none;
+}
 
 .auth-card {
     text-align: center;
@@ -110,8 +115,15 @@ body {
 
 /* ── App Layout ────────────────────────────────────────────────────── */
 
-.app { display: flex; flex-direction: column; min-height: 100vh; }
-.app.hidden { display: none; }
+.app {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.app.hidden {
+    display: none;
+}
 
 /* ── Header ────────────────────────────────────────────────────────── */
 
@@ -134,7 +146,9 @@ body {
     gap: 12px;
 }
 
-.logo { font-size: 28px; }
+.logo {
+    font-size: 28px;
+}
 
 .header-left h1 {
     font-size: 18px;
@@ -153,7 +167,8 @@ body {
 
 /* ── Form Controls ─────────────────────────────────────────────────── */
 
-.select, .input-date {
+.select,
+.input-date {
     appearance: none;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
@@ -167,11 +182,13 @@ body {
     min-width: 200px;
 }
 
-.select:hover, .input-date:hover {
+.select:hover,
+.input-date:hover {
     border-color: var(--accent-primary);
 }
 
-.select:focus, .input-date:focus {
+.select:focus,
+.input-date:focus {
     outline: none;
     border-color: var(--accent-primary);
     box-shadow: 0 0 0 3px var(--accent-glow);
@@ -297,9 +314,10 @@ body {
     color: var(--text-secondary);
 }
 
-/* ── Gantt Container ───────────────────────────────────────────────── */
+/* ── Gantt Wrapper ───────────────────────────────────────────────── */
 
-.gantt-container {
+
+.app-gantt-wrapper {
     flex: 1;
     padding: 24px;
     overflow-x: auto;
@@ -314,7 +332,9 @@ body {
     text-align: center;
 }
 
-.empty-state.hidden { display: none; }
+.empty-state.hidden {
+    display: none;
+}
 
 .empty-icon {
     font-size: 64px;
@@ -336,15 +356,39 @@ body {
 
 /* ── Frappe Gantt Overrides ─────────────────────────────────────────── */
 
-.gantt .grid-background { fill: var(--bg-primary); }
-.gantt .grid-header { fill: var(--bg-secondary); stroke: var(--border-color); }
-.gantt .grid-row { fill: var(--bg-primary); }
-.gantt .grid-row:nth-child(even) { fill: rgba(255, 255, 255, 0.01); }
-.gantt .row-line { stroke: var(--border-color); }
-.gantt .tick { stroke: var(--border-color); stroke-dasharray: 4 4; }
-.gantt .today-highlight { fill: var(--accent-glow); opacity: 0.15; }
+.gantt .grid-background {
+    fill: var(--bg-primary);
+}
 
-.gantt .lower-text, .gantt .upper-text {
+.gantt .grid-header {
+    fill: var(--bg-secondary);
+    stroke: var(--border-color);
+}
+
+.gantt .grid-row {
+    fill: var(--bg-primary);
+}
+
+.gantt .grid-row:nth-child(even) {
+    fill: rgba(255, 255, 255, 0.01);
+}
+
+.gantt .row-line {
+    stroke: var(--border-color);
+}
+
+.gantt .tick {
+    stroke: var(--border-color);
+    stroke-dasharray: 4 4;
+}
+
+.gantt .today-highlight {
+    fill: var(--accent-glow);
+    opacity: 0.15;
+}
+
+.gantt .lower-text,
+.gantt .upper-text {
     fill: var(--text-secondary);
     font-family: var(--font-family);
     font-size: 12px;
@@ -362,7 +406,9 @@ body {
     transition: opacity var(--transition);
 }
 
-.gantt .bar-wrapper:hover .bar { opacity: 0.85; }
+.gantt .bar-wrapper:hover .bar {
+    opacity: 0.85;
+}
 
 .gantt .bar-label {
     fill: white;
@@ -377,24 +423,59 @@ body {
 }
 
 /* Custom task classes */
-.gantt .gantt-epic .bar { fill: var(--color-epic); opacity: 0.9; }
-.gantt .gantt-epic .bar-progress { fill: #4f46e5; }
-.gantt .gantt-epic .bar-label { font-weight: 700; font-size: 13px; }
+.gantt .gantt-epic .bar {
+    fill: var(--color-epic);
+    opacity: 0.9;
+}
 
-.gantt .gantt-analyst .bar { fill: var(--color-analyst); }
-.gantt .gantt-analyst .bar-progress { fill: #2563eb; }
+.gantt .gantt-epic .bar-progress {
+    fill: #4f46e5;
+}
 
-.gantt .gantt-developer .bar { fill: var(--color-developer); }
-.gantt .gantt-developer .bar-progress { fill: #16a34a; }
+.gantt .gantt-epic .bar-label {
+    font-weight: 700;
+    font-size: 13px;
+}
 
-.gantt .gantt-qa .bar { fill: var(--color-qa); }
-.gantt .gantt-qa .bar-progress { fill: #d97706; }
+.gantt .gantt-analyst .bar {
+    fill: var(--color-analyst);
+}
 
-.gantt .gantt-leader .bar { fill: var(--color-leader); }
-.gantt .gantt-leader .bar-progress { fill: #9333ea; }
+.gantt .gantt-analyst .bar-progress {
+    fill: #2563eb;
+}
 
-.gantt .gantt-default .bar { fill: var(--color-default); }
-.gantt .gantt-default .bar-progress { fill: #475569; }
+.gantt .gantt-developer .bar {
+    fill: var(--color-developer);
+}
+
+.gantt .gantt-developer .bar-progress {
+    fill: #16a34a;
+}
+
+.gantt .gantt-qa .bar {
+    fill: var(--color-qa);
+}
+
+.gantt .gantt-qa .bar-progress {
+    fill: #d97706;
+}
+
+.gantt .gantt-leader .bar {
+    fill: var(--color-leader);
+}
+
+.gantt .gantt-leader .bar-progress {
+    fill: #9333ea;
+}
+
+.gantt .gantt-default .bar {
+    fill: var(--color-default);
+}
+
+.gantt .gantt-default .bar-progress {
+    fill: #475569;
+}
 
 /* Handle (resize) */
 .gantt .handle-group .handle {
@@ -403,7 +484,10 @@ body {
 }
 
 /* Arrow (dependencies) */
-.gantt .arrow { stroke: var(--text-muted); stroke-width: 1.5; }
+.gantt .arrow {
+    stroke: var(--text-muted);
+    stroke-width: 1.5;
+}
 
 /* Popup */
 .gantt .popup-wrapper {
@@ -428,8 +512,18 @@ body {
 
 /* ── Modal ──────────────────────────────────────────────────────────── */
 
-.modal { position: fixed; inset: 0; z-index: 500; display: flex; align-items: center; justify-content: center; }
-.modal.hidden { display: none; }
+.modal {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.hidden {
+    display: none;
+}
 
 .modal-overlay {
     position: absolute;
@@ -462,7 +556,9 @@ body {
     font-weight: 600;
 }
 
-.modal-body { padding: 16px 24px; }
+.modal-body {
+    padding: 16px 24px;
+}
 
 .modal-footer {
     display: flex;
@@ -538,11 +634,25 @@ body {
     border-radius: 50%;
 }
 
-.role-color.analyst { background: var(--color-analyst); }
-.role-color.developer { background: var(--color-developer); }
-.role-color.qa { background: var(--color-qa); }
-.role-color.leader { background: var(--color-leader); }
-.role-color.default { background: var(--color-default); }
+.role-color.analyst {
+    background: var(--color-analyst);
+}
+
+.role-color.developer {
+    background: var(--color-developer);
+}
+
+.role-color.qa {
+    background: var(--color-qa);
+}
+
+.role-color.leader {
+    background: var(--color-leader);
+}
+
+.role-color.default {
+    background: var(--color-default);
+}
 
 /* ── Toast ──────────────────────────────────────────────────────────── */
 
@@ -569,25 +679,54 @@ body {
     max-width: 360px;
 }
 
-.toast.success { border-left: 3px solid var(--color-developer); }
-.toast.error { border-left: 3px solid #ef4444; }
-.toast.info { border-left: 3px solid var(--color-analyst); }
+.toast.success {
+    border-left: 3px solid var(--color-developer);
+}
+
+.toast.error {
+    border-left: 3px solid #ef4444;
+}
+
+.toast.info {
+    border-left: 3px solid var(--color-analyst);
+}
 
 /* ── Animations ────────────────────────────────────────────────────── */
 
 @keyframes fadeIn {
-    from { opacity: 0; transform: scale(0.95); }
-    to { opacity: 1; transform: scale(1); }
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
 }
 
 @keyframes slideUp {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 @keyframes slideIn {
-    from { opacity: 0; transform: translateX(20px); }
-    to { opacity: 1; transform: translateX(0); }
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
 }
 
 /* ── Responsive ────────────────────────────────────────────────────── */
@@ -615,7 +754,8 @@ body {
         width: 100%;
     }
 
-    .select, .input-date {
+    .select,
+    .input-date {
         min-width: 0;
         flex: 1;
     }
