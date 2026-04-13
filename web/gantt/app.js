@@ -10,9 +10,9 @@ let globalRole = 'member';
 // ── Auth ──────────────────────────────────────────────────────────────
 
 function checkAuth() {
-    // If we have the tg_auth cookie, we're authenticated.
+    // If we have the tg_sys_auth cookie, we're authenticated.
     const hasCookie = document.cookie.split(';')
-        .some(c => c.trim().startsWith('tg_auth='));
+        .some(c => c.trim().startsWith('tg_sys_auth='));
     if (hasCookie) {
         showApp();
         return;

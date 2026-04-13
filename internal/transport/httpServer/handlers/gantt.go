@@ -436,16 +436,36 @@ func (h *GanttHandler) DeleteTask(w http.ResponseWriter, r *http.Request) {
 
 // TelegramAuth handles the Telegram Login Widget callback.
 func (h *GanttHandler) TelegramAuth(w http.ResponseWriter, r *http.Request) {
-	// Auth verification is done by middleware; if we reach here,
-	// the user is authenticated. Set cookie and redirect.
-	http.SetCookie(w, &http.Cookie{
-		Name:     "tg_auth",
-		Value:    r.URL.Query().Get("hash"),
-		Path:     "/",
-		MaxAge:   86400,
-		HttpOnly: false, // Frontend JS needs to read this cookie
-		SameSite: http.SameSiteLaxMode,
-	})
+	// Verify query params (initial login redirect).
+	if middleware.VerifyTelegramAuth(r, h.cfg.TgbotApiToken) {
+		query := r.URL.Query()
+		session := middleware.UserSession{
+			TelegramID: query.Get("id"),
+			Username:   query.Get("username"),
+			FirstName:  query.Get("first_name"),
+		}
+		token, err := middleware.CreateSessionToken(session, h.cfg.TgbotApiToken)
+		if err == nil {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "tg_sys_auth",
+				Value:    token,
+				Path:     "/",
+				MaxAge:   86400 * 7, // 7 days
+				HttpOnly: false,     // Frontend JS needs to read this to know auth state
+				SameSite: http.SameSiteLaxMode,
+			})
+			// Clean up old tg_auth cookie if it still exists
+			http.SetCookie(w, &http.Cookie{
+				Name:   "tg_auth",
+				Value:  "",
+				Path:   "/",
+				MaxAge: -1,
+			})
+			http.Redirect(w, r, "/gantt/", http.StatusFound)
+			return
+		}
+	}
 
-	http.Redirect(w, r, "/gantt/", http.StatusFound)
+	w.WriteHeader(http.StatusUnauthorized)
+	w.Write([]byte("Unauthorized telegram login"))
 }
