@@ -255,6 +255,7 @@ function renderGantt(tasks) {
         view_mode: currentViewMode,
         date_format: 'YYYY-MM-DD',
         language: 'ru',
+        infinite_padding: false,
         on_click: task => {
             if (task._is_parent) {
                 openReorderModal(task);
