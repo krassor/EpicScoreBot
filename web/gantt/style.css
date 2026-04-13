@@ -356,76 +356,28 @@ body {
 
 /* ── Frappe Gantt Overrides ─────────────────────────────────────────── */
 
-.gantt .grid-background {
-    fill: var(--bg-primary);
-}
-
-.gantt .grid-header {
-    fill: var(--bg-secondary);
-    stroke: var(--border-color);
-}
-
-.gantt .grid-row {
-    fill: var(--bg-primary);
-}
-
-.gantt .grid-row:nth-child(even) {
-    fill: rgba(255, 255, 255, 0.01);
-}
-
-.gantt .row-line {
-    stroke: var(--border-color);
-}
-
-.gantt .tick {
-    stroke: var(--border-color);
-    stroke-dasharray: 4 4;
-}
-
-.gantt .today-highlight {
-    fill: var(--accent-glow);
-    opacity: 0.15;
-}
-
-.gantt .lower-text,
-.gantt .upper-text {
-    fill: var(--text-secondary);
-    font-family: var(--font-family);
-    font-size: 12px;
-}
-
-.gantt .upper-text {
-    fill: var(--text-muted);
-    font-weight: 600;
-}
-
-/* Task bars */
-.gantt .bar-wrapper .bar {
-    rx: 6;
-    ry: 6;
-    transition: opacity var(--transition);
-}
-
-.gantt .bar-wrapper:hover .bar {
-    opacity: 0.85;
-}
-
-.gantt .bar-label {
-    fill: white;
-    font-family: var(--font-family);
-    font-size: 12px;
-    font-weight: 500;
-}
-
-.gantt .bar-wrapper .bar-progress {
-    rx: 6;
-    ry: 6;
+:root {
+    /* Override Frappe Gantt native CSS variables with our dark theme */
+    --g-header-background: var(--bg-secondary);
+    --g-row-color: var(--bg-primary);
+    --g-row-border-color: var(--border-color);
+    --g-border-color: var(--border-color);
+    --g-tick-color: var(--border-color);
+    --g-tick-color-thick: var(--border-color);
+    --g-text-muted: var(--text-secondary);
+    --g-text-dark: var(--text-primary);
+    --g-text-light: #fff;
+    --g-arrow-color: var(--text-muted);
+    --g-today-highlight: var(--accent-glow);
+    --g-weekend-highlight-color: rgba(255, 255, 255, 0.02);
+    --g-actions-background: var(--bg-tertiary);
+    --g-popup-actions: var(--bg-card);
+    --g-bar-border: transparent;
 }
 
 /* Custom task classes */
 .gantt .gantt-epic .bar {
     fill: var(--color-epic);
-    opacity: 0.9;
 }
 
 .gantt .gantt-epic .bar-progress {
@@ -483,31 +435,14 @@ body {
     cursor: ew-resize;
 }
 
-/* Arrow (dependencies) */
-.gantt .arrow {
-    stroke: var(--text-muted);
-    stroke-width: 1.5;
-}
-
 /* Popup */
-.gantt .popup-wrapper {
+.gantt-container .popup-wrapper {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius-sm);
     box-shadow: var(--shadow-lg);
     backdrop-filter: blur(20px);
     padding: 12px 16px;
-}
-
-.gantt .popup-wrapper .title {
-    color: var(--text-primary);
-    font-family: var(--font-family);
-    font-weight: 600;
-}
-
-.gantt .popup-wrapper .subtitle {
-    color: var(--text-secondary);
-    font-family: var(--font-family);
 }
 
 /* ── Modal ──────────────────────────────────────────────────────────── */
