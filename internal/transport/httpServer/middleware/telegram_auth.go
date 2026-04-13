@@ -24,8 +24,8 @@ type UserSession struct {
 	FirstName  string `json:"first_name"`
 }
 
-// createSessionToken generates a signed token: base64(json) + "." + HMAC(base64(json)).
-func createSessionToken(session UserSession, secret string) (string, error) {
+// CreateSessionToken generates a signed token: base64(json) + "." + HMAC(base64(json)).
+func CreateSessionToken(session UserSession, secret string) (string, error) {
 	data, err := json.Marshal(session)
 	if err != nil {
 		return "", err
@@ -81,37 +81,8 @@ func TelegramAuth(botToken string) func(next http.Handler) http.Handler {
 				}
 			}
 
-			// Verify query params (initial login redirect).
-			if verifyTelegramAuth(r, botToken) {
-				query := r.URL.Query()
-				session := UserSession{
-					TelegramID: query.Get("id"),
-					Username:   query.Get("username"),
-					FirstName:  query.Get("first_name"),
-				}
-				token, err := createSessionToken(session, botToken)
-				if err == nil {
-					http.SetCookie(w, &http.Cookie{
-						Name:     "tg_sys_auth",
-						Value:    token,
-						Path:     "/",
-						MaxAge:   86400 * 7, // 7 days
-						HttpOnly: false,     // Frontend JS needs to read this to know auth state
-						SameSite: http.SameSiteLaxMode,
-					})
-					// Old cookie cleanup
-					http.SetCookie(w, &http.Cookie{
-						Name:   "tg_auth",
-						Value:  "",
-						Path:   "/",
-						MaxAge: -1,
-					})
-					ctx := context.WithValue(r.Context(), UserSessionKey, &session)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
-			}
-
+			// Since auth is done at the callback endpoint now,
+			// any request reaching this point without a valid cookie is unauthorized.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"}) //nolint:errcheck
@@ -119,8 +90,8 @@ func TelegramAuth(botToken string) func(next http.Handler) http.Handler {
 	}
 }
 
-// verifyTelegramAuth verifies the data-check-string from Telegram Login Widget.
-func verifyTelegramAuth(r *http.Request, botToken string) bool {
+// VerifyTelegramAuth verifies the data-check-string from Telegram Login Widget.
+func VerifyTelegramAuth(r *http.Request, botToken string) bool {
 	query := r.URL.Query()
 	hash := query.Get("hash")
 	if hash == "" {
