@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"EpicScoreBot/internal/config"
+	"EpicScoreBot/internal/models/domain"
+	"EpicScoreBot/internal/transport/httpServer/middleware"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -16,6 +19,7 @@ import (
 type GanttHandler struct {
 	svc  GanttService
 	repo Repository
+	cfg  config.BotConfig
 	log  *slog.Logger
 }
 
@@ -24,19 +28,73 @@ func NewGanttHandler(
 	log *slog.Logger,
 	svc GanttService,
 	repo Repository,
+	cfg config.BotConfig,
 ) *GanttHandler {
 	return &GanttHandler{
 		svc:  svc,
 		repo: repo,
+		cfg:  cfg,
 		log:  log.With(slog.String("component", "gantt-handler")),
 	}
 }
 
 // ── API Handlers ──────────────────────────────────────────────────────────
 
-// GetTeams returns all teams.
+// GetTeams returns teams based on user's role.
 func (h *GanttHandler) GetTeams(w http.ResponseWriter, r *http.Request) {
-	teams, err := h.repo.GetAllTeams(r.Context())
+	sessionData := r.Context().Value(middleware.UserSessionKey)
+	if sessionData == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	session, ok := sessionData.(*middleware.UserSession)
+	if !ok || session.TelegramID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid session")
+		return
+	}
+
+	var teams []domain.Team
+	var err error
+	var role string
+
+	// 1. Is SuperAdmin?
+	isSuperAdmin := false
+	for _, sa := range h.cfg.SuperAdmins {
+		if strings.EqualFold(session.Username, sa) {
+			isSuperAdmin = true
+			break
+		}
+	}
+
+	if isSuperAdmin {
+		teams, err = h.repo.GetAllTeams(r.Context())
+		role = "superadmin"
+	} else {
+		// 2. Is Admin?
+		isAdmin := false
+		for _, ad := range h.cfg.Admins {
+			if strings.EqualFold(session.Username, ad) {
+				isAdmin = true
+				break
+			}
+		}
+
+		if isAdmin {
+			teams, err = h.repo.GetTeamsByUserTelegramID(r.Context(), session.TelegramID)
+			role = "admin"
+		} else {
+			// 3. Regular member?
+			user, errDb := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
+			if errDb != nil || user == nil {
+				// 4. Access Denied
+				writeError(w, http.StatusForbidden, "access denied")
+				return
+			}
+			teams, err = h.repo.GetTeamsByUserTelegramID(r.Context(), session.TelegramID)
+			role = "member"
+		}
+	}
+
 	if err != nil {
 		h.log.Error("failed to get teams", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "failed to get teams")
@@ -54,7 +112,10 @@ func (h *GanttHandler) GetTeams(w http.ResponseWriter, r *http.Request) {
 			Name: t.Name,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"teams": resp})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"teams": resp,
+		"role":  role,
+	})
 }
 
 // GetEpics returns scored epics for a team.

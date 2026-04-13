@@ -58,7 +58,7 @@ func main() {
 
 	// Gantt chart service and HTTP server.
 	ganttService := gantt.New(log, repositoryService)
-	ganttHandler := handlers.NewGanttHandler(log, ganttService, repositoryService)
+	ganttHandler := handlers.NewGanttHandler(log, ganttService, repositoryService, cfg.BotConfig)
 	router := routers.NewRouter(ganttHandler, cfg.BotConfig.TgbotApiToken)
 	server := httpServer.NewHttpServer(log, router, cfg)
 

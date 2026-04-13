@@ -19,6 +19,10 @@ type GanttService interface {
 type Repository interface {
 	// Teams
 	GetAllTeams(ctx context.Context) ([]domain.Team, error)
+	GetTeamsByUserTelegramID(ctx context.Context, telegramID string) ([]domain.Team, error)
+
+	// Users
+	FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error)
 
 	// Epics
 	GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)

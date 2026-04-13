@@ -5,6 +5,7 @@ const API_BASE = '/api/gantt';
 let ganttChart = null;
 let currentTasks = [];
 let currentViewMode = 'Day';
+let globalRole = 'member';
 
 // ── Auth ──────────────────────────────────────────────────────────────
 
@@ -65,6 +66,10 @@ async function apiGet(path) {
         showAuth();
         throw new Error('unauthorized');
     }
+    if (resp.status === 403) {
+        showAccessDenied();
+        throw new Error('forbidden');
+    }
     if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error(err.error || resp.statusText);
@@ -124,6 +129,16 @@ async function init() {
 async function loadTeams() {
     try {
         const data = await apiGet('/teams');
+        globalRole = data.role || 'member';
+
+        // Apply RBAC to UI
+        const btnGenerate = document.getElementById('btn-generate');
+        if (globalRole === 'member') {
+            btnGenerate.style.display = 'none';
+        } else {
+            btnGenerate.style.display = 'inline-flex';
+        }
+
         const select = document.getElementById('team-select');
         select.innerHTML = '<option value="">Выберите команду...</option>';
         if (data.teams) {
@@ -135,8 +150,16 @@ async function loadTeams() {
             }
         }
     } catch (err) {
-        showToast('Ошибка загрузки команд: ' + err.message, 'error');
+        if (err.message !== 'forbidden' && err.message !== 'unauthorized') {
+            showToast('Ошибка загрузки команд: ' + err.message, 'error');
+        }
     }
+}
+
+function showAccessDenied() {
+    document.getElementById('auth-overlay').classList.add('hidden');
+    document.getElementById('app').classList.add('hidden');
+    document.getElementById('denied-overlay').classList.remove('hidden');
 }
 
 // ── Epics ─────────────────────────────────────────────────────────────
@@ -256,7 +279,9 @@ function renderGantt(tasks) {
         date_format: 'YYYY-MM-DD',
         language: 'ru',
         infinite_padding: false,
+        readonly: globalRole === 'member',
         on_click: task => {
+            if (globalRole === 'member') return;
             if (task._is_parent) {
                 openReorderModal(task);
             }
