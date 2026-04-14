@@ -15,8 +15,16 @@
 </head>
 
 <body>
+    <!-- Loading state -->
+    <div id="loading-overlay" class="auth-overlay">
+        <div class="auth-card">
+            <div class="loader"></div>
+            <p style="margin-top: 16px; margin-bottom: 0;">Загрузка...</p>
+        </div>
+    </div>
+
     <!-- Auth overlay -->
-    <div id="auth-overlay" class="auth-overlay">
+    <div id="auth-overlay" class="auth-overlay hidden">
         <div class="auth-card">
             <div class="auth-logo">📊</div>
             <h1>EpicScoreBot</h1>
