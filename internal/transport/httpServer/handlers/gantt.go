@@ -65,6 +65,11 @@ func (h *GanttHandler) GetTeams(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	
+	h.log.Info("RBAC Check In GetTeams",
+		slog.String("username", session.Username),
+		slog.Bool("isSuperAdmin", isSuperAdmin),
+		slog.Any("superAdminsConfig", h.cfg.SuperAdmins))
 
 	if isSuperAdmin {
 		teams, err = h.repo.GetAllTeams(r.Context())
