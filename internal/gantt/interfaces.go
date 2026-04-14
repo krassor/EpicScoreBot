@@ -36,4 +36,5 @@ type Repository interface {
 	UpdateGanttTaskSortOrder(ctx context.Context, taskID uuid.UUID, sortOrder int) error
 	DeleteGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID) error
 	HasGanttTasksForEpic(ctx context.Context, epicID uuid.UUID) (bool, error)
+	GetRisksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
 }

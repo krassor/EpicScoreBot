@@ -59,18 +59,19 @@ func (s *Service) CalculateEpicRoleAvg(ctx context.Context, epicID, roleID uuid.
 	return weightedSum / totalWeight, nil
 }
 
+// TODO: rewrite this func. In scoring.go finalCoeff must be saved in db
 // RiskCoefficient maps a weighted risk score to a multiplier coefficient.
 func RiskCoefficient(weightedScore float64) float64 {
 	rounded := math.Round(weightedScore)
 	switch {
 	case rounded >= 13:
-		return 1.30
-	case rounded >= 9:
 		return 1.20
-	case rounded >= 5:
+	case rounded >= 9:
 		return 1.10
-	default:
+	case rounded >= 5:
 		return 1.05
+	default:
+		return 1.03
 	}
 }
 
