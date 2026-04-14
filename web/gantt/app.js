@@ -18,14 +18,6 @@ async function checkAuth() {
         return;
     }
 
-    // Check if we arrived via Telegram Login redirect (hash in URL).
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('hash')) {
-        // The server should have set the cookie. Reload without params.
-        window.location.href = '/gantt/';
-        return;
-    }
-
     // Check if in telegram WebApp
     if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
         try {
@@ -44,17 +36,28 @@ async function checkAuth() {
         }
     }
 
+    // Check if we arrived via Telegram Login redirect (hash in URL).
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('hash')) {
+        // The server should have set the cookie. Reload without params.
+        window.location.href = '/gantt/';
+        return;
+    }
+
     // Show auth overlay.
     showAuth();
 }
 
 function showAuth() {
+    document.getElementById('loading-overlay').classList.add('hidden');
     document.getElementById('auth-overlay').classList.remove('hidden');
     document.getElementById('app').classList.add('hidden');
 }
 
 function showApp() {
+    document.getElementById('loading-overlay').classList.add('hidden');
     document.getElementById('auth-overlay').classList.add('hidden');
+    document.getElementById('denied-overlay').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
     init();
 }
