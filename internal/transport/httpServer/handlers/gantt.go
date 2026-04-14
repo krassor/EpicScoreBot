@@ -474,3 +474,33 @@ func (h *GanttHandler) TelegramAuth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusUnauthorized)
 	w.Write([]byte("Unauthorized telegram login"))
 }
+
+// TelegramWebAppAuth handles authorization from Telegram Mini App.
+func (h *GanttHandler) TelegramWebAppAuth(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		InitData string `json:"initData"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if session, ok := middleware.VerifyTelegramWebAppData(req.InitData, h.cfg.TgbotApiToken); ok {
+		token, err := middleware.CreateSessionToken(*session, h.cfg.TgbotApiToken)
+		if err == nil {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "tg_sys_auth",
+				Value:    token,
+				Path:     "/",
+				MaxAge:   86400 * 7, // 7 days
+				HttpOnly: false,
+				SameSite: http.SameSiteLaxMode,
+			})
+			writeJSON(w, http.StatusOK, map[string]string{"message": "authenticated"})
+			return
+		}
+	}
+
+	writeError(w, http.StatusUnauthorized, "invalid init data")
+}
+
