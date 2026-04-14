@@ -39,6 +39,7 @@ func (r *Router) Mount(mux *chi.Mux) {
 		mux.Route("/gantt", func(mux chi.Router) {
 			// Public: Telegram Login callback.
 			mux.Get("/auth", r.ganttHandler.TelegramAuth)
+			mux.Post("/auth/webapp", r.ganttHandler.TelegramWebAppAuth)
 
 			// Protected: require Telegram auth.
 			mux.Group(func(mux chi.Router) {

@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -120,6 +122,60 @@ func VerifyTelegramAuth(r *http.Request, botToken string) bool {
 	computedHash := hex.EncodeToString(mac.Sum(nil))
 
 	return hmac.Equal([]byte(computedHash), []byte(hash))
+}
+
+// VerifyTelegramWebAppData verifies the initData from Telegram Mini App.
+func VerifyTelegramWebAppData(initData, botToken string) (*UserSession, bool) {
+	vals, err := url.ParseQuery(initData)
+	if err != nil {
+		return nil, false
+	}
+	hash := vals.Get("hash")
+	if hash == "" {
+		return nil, false
+	}
+
+	var parts []string
+	for key, values := range vals {
+		if key == "hash" {
+			continue
+		}
+		parts = append(parts, key+"="+values[0])
+	}
+	sort.Strings(parts)
+	dataCheckStr := strings.Join(parts, "\n")
+
+	mac := hmac.New(sha256.New, []byte("WebAppData"))
+	mac.Write([]byte(botToken))
+	secretKey := mac.Sum(nil)
+
+	mac2 := hmac.New(sha256.New, secretKey)
+	mac2.Write([]byte(dataCheckStr))
+	computedHash := hex.EncodeToString(mac2.Sum(nil))
+
+	if !hmac.Equal([]byte(computedHash), []byte(hash)) {
+		return nil, false
+	}
+
+	userStr := vals.Get("user")
+	if userStr == "" {
+		return nil, false
+	}
+
+	var tpUser struct {
+		ID        int64  `json:"id"`
+		Username  string `json:"username"`
+		FirstName string `json:"first_name"`
+	}
+	if err := json.Unmarshal([]byte(userStr), &tpUser); err != nil {
+		return nil, false
+	}
+
+	return &UserSession{
+		TelegramID: strconv.FormatInt(tpUser.ID, 10),
+		Username:   tpUser.Username,
+		FirstName:  tpUser.FirstName,
+	}, true
 }
 
 // LoggerMiddleware logs incoming HTTP requests.

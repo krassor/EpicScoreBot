@@ -9,7 +9,7 @@ let globalRole = 'member';
 
 // ── Auth ──────────────────────────────────────────────────────────────
 
-function checkAuth() {
+async function checkAuth() {
     // If we have the tg_sys_auth cookie, we're authenticated.
     const hasCookie = document.cookie.split(';')
         .some(c => c.trim().startsWith('tg_sys_auth='));
@@ -24,6 +24,24 @@ function checkAuth() {
         // The server should have set the cookie. Reload without params.
         window.location.href = '/gantt/';
         return;
+    }
+
+    // Check if in telegram WebApp
+    if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
+        try {
+            const resp = await fetch(`${API_BASE}/auth/webapp`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ initData: window.Telegram.WebApp.initData }),
+                credentials: 'include',
+            });
+            if (resp.ok) {
+                showApp();
+                return;
+            }
+        } catch (e) {
+            console.error('Failed to authenticate via Telegram WebApp', e);
+        }
     }
 
     // Show auth overlay.
@@ -116,6 +134,10 @@ async function apiPut(path, body) {
 // ── Init ──────────────────────────────────────────────────────────────
 
 async function init() {
+    if (window.Telegram && window.Telegram.WebApp) {
+        window.Telegram.WebApp.expand();
+    }
+
     // Set default start date to today.
     const today = new Date().toISOString().split('T')[0];
     document.getElementById('start-date').value = today;
