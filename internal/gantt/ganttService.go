@@ -37,6 +37,22 @@ type Service struct {
 	log  *slog.Logger
 }
 
+// TODO: rewrite this func. In scoring.go finalCoeff must be saved in db
+// RiskCoefficient maps a weighted risk score to a multiplier coefficient.
+func RiskCoefficient(weightedScore float64) float64 {
+	rounded := math.Round(weightedScore)
+	switch {
+	case rounded >= 13:
+		return 1.20
+	case rounded >= 9:
+		return 1.10
+	case rounded >= 5:
+		return 1.05
+	default:
+		return 1.03
+	}
+}
+
 // New creates a new Gantt service.
 func New(logger *slog.Logger, repo Repository) *Service {
 	return &Service{
@@ -80,6 +96,19 @@ func (s *Service) GenerateTasksForEpic(
 		return nil, fmt.Errorf("%s: no role scores for epic %s", op, epicID)
 	}
 
+	risks, err := s.repo.GetRisksByEpicID(ctx, epicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	finalCoeff := 1.0
+	for _, risk := range risks {
+		if risk.WeightedScore != nil {
+			coeff := RiskCoefficient(*risk.WeightedScore)
+			finalCoeff *= coeff
+		}
+	}
+
 	// Build role info for each score.
 	var roleTasks []roleTask
 	for _, rs := range roleScores {
@@ -87,7 +116,8 @@ func (s *Service) GenerateTasksForEpic(
 		if err != nil {
 			return nil, fmt.Errorf("%s: get role: %w", op, err)
 		}
-		days := max(1, int(math.Ceil(rs.WeightedAvg)))
+		//7.0/5.0 - this coefficient is a compensation for 2 holidays in a week
+		days := max(1, int(math.Ceil(rs.WeightedAvg*finalCoeff*7.0/5.0)))
 		order, ok := defaultRoleOrder[role.Name]
 		if !ok {
 			order = 99
