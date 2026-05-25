@@ -25,3 +25,5 @@ docker-compose.yml
 
 # HTML
 template.html
+.roo/rules-code/rules.md
+.kilocodemodes
