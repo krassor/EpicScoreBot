@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"EpicScoreBot/internal/config"
 	"EpicScoreBot/internal/utils/logger/sl"
@@ -59,6 +60,7 @@ func New(
 
 	b, err := bot.New(cfg.BotConfig.TgbotApiToken,
 		bot.WithDefaultHandler(epicBot.defaultHandler),
+		bot.WithCheckInitTimeout(30*time.Second),
 	)
 	if err != nil {
 		log.Error("error auth telegram bot", sl.Err(err))
@@ -69,7 +71,10 @@ func New(
 	epicBot.b = b
 
 	// Fetch bot username for mention detection.
-	me, err := b.GetMe(ctx)
+	getMeCtx, getMeCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer getMeCancel()
+
+	me, err := b.GetMe(getMeCtx)
 	if err != nil {
 		log.Error("failed to get bot me", sl.Err(err))
 	} else {
