@@ -27,3 +27,4 @@ docker-compose.yml
 template.html
 .roo/rules-code/rules.md
 .kilocodemodes
+run_docker_build.sh
