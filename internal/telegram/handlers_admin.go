@@ -2,12 +2,14 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
 
+	"EpicScoreBot/internal/services"
 	"EpicScoreBot/internal/utils/logger/sl"
 
 	"github.com/go-telegram/bot/models"
@@ -32,14 +34,12 @@ func (epicBot *Bot) handleAddTeam(ctx context.Context, msg *models.Message) erro
 		return err
 	}
 
-	team, _ := epicBot.repo.GetTeamByName(ctx, args)
-	if team != nil {
-		_, err := epicBot.sendReply(ctx, msg, "❌ Команда с таким названием уже существует.")
-		return err
-	}
-
-	team, err := epicBot.repo.CreateTeam(ctx, args, "")
+	team, err := epicBot.teamService.CreateTeam(ctx, args, "")
 	if err != nil {
+		if errors.Is(err, services.ErrTeamAlreadyExists) {
+			_, retErr := epicBot.sendReply(ctx, msg, "❌ Команда с таким названием уже существует.")
+			return retErr
+		}
 		log.Error("error creating team", sl.Err(err))
 		_, retErr := epicBot.sendReply(ctx, msg, "❌ Ошибка создания команды.")
 		return retErr
@@ -70,14 +70,12 @@ func (epicBot *Bot) handleAddUser(ctx context.Context, msg *models.Message) erro
 			return retErr
 		}
 
-		user, _ := epicBot.repo.FindUserByTelegramID(ctx, username)
-		if user != nil {
-			_, retErr := epicBot.sendReply(ctx, msg, "❌ Пользователь с таким @username уже существует.")
-			return retErr
-		}
-
-		user, err = epicBot.repo.CreateUser(ctx, args[1], args[2], username, weight)
+		user, err := epicBot.userService.CreateUser(ctx, args[1], args[2], username, weight)
 		if err != nil {
+			if errors.Is(err, services.ErrUserAlreadyExists) {
+				_, retErr := epicBot.sendReply(ctx, msg, "❌ Пользователь с таким @username уже существует.")
+				return retErr
+			}
 			_, retErr := epicBot.sendReply(ctx, msg, "❌ Ошибка создания пользователя.")
 			return retErr
 		}
@@ -123,7 +121,7 @@ func (epicBot *Bot) showUserPickerWithoutRole(ctx context.Context, msg *models.M
 		slog.String("op", op),
 		slog.Int64("chat_id", msg.Chat.ID),
 	)
-	users, err := epicBot.repo.GetAllUsers(ctx)
+	users, err := epicBot.userService.GetAllUsers(ctx)
 	if err != nil {
 		log.Error("error getting all users", sl.Err(err))
 		_, retErr := epicBot.sendReply(ctx, msg, "❌ Ошибка получения пользователей.")
@@ -133,7 +131,7 @@ func (epicBot *Bot) showUserPickerWithoutRole(ctx context.Context, msg *models.M
 	var rows [][]models.InlineKeyboardButton
 	for _, u := range users {
 		// Skip users who already have a role.
-		if _, err := epicBot.repo.GetRoleByUserID(ctx, u.ID); err == nil {
+		if _, err := epicBot.roleService.GetRoleByUserID(ctx, u.ID); err == nil {
 			continue
 		}
 		label := fmt.Sprintf("👤 %s %s (@%s)", u.FirstName, u.LastName, u.TelegramID)

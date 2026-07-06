@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"EpicScoreBot/internal/config"
+	"EpicScoreBot/internal/services"
 	"EpicScoreBot/internal/utils/logger/sl"
 
 	"github.com/go-telegram/bot"
@@ -21,7 +22,11 @@ import (
 type Bot struct {
 	b           *bot.Bot
 	cfg         *config.Config
-	repo        Repository
+	userService services.UserService
+	teamService services.TeamService
+	epicService services.EpicService
+	riskService services.RiskService
+	roleService services.RoleService
 	scoring     ScoringService
 	report      ReportService
 	ai          AIClient
@@ -36,7 +41,11 @@ type Bot struct {
 func New(
 	logger *slog.Logger,
 	cfg *config.Config,
-	repo Repository,
+	userSvc services.UserService,
+	teamSvc services.TeamService,
+	epicSvc services.EpicService,
+	riskSvc services.RiskService,
+	roleSvc services.RoleService,
 	scoringSvc ScoringService,
 	reportSvc ReportService,
 	aiClient AIClient,
@@ -47,15 +56,19 @@ func New(
 	ctx, cancel := context.WithCancel(context.Background())
 
 	epicBot := &Bot{
-		cfg:      cfg,
-		repo:     repo,
-		scoring:  scoringSvc,
-		report:   reportSvc,
-		ai:       aiClient,
-		sessions: newSessionStore(),
-		ctx:      ctx,
-		cancel:   cancel,
-		log:      log,
+		cfg:         cfg,
+		userService: userSvc,
+		teamService: teamSvc,
+		epicService: epicSvc,
+		riskService: riskSvc,
+		roleService: roleSvc,
+		scoring:     scoringSvc,
+		report:      reportSvc,
+		ai:          aiClient,
+		sessions:    newSessionStore(),
+		ctx:         ctx,
+		cancel:      cancel,
+		log:         log,
 	}
 
 	b, err := bot.New(cfg.BotConfig.TgbotApiToken,

@@ -187,7 +187,7 @@ func (epicBot *Bot) showTeamEpics(ctx context.Context, msg *models.Message, user
 	op := "bot.showTeamEpics()"
 	log := epicBot.log.With(slog.String("op", op))
 
-	user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Пользователь не найден."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -196,12 +196,12 @@ func (epicBot *Bot) showTeamEpics(ctx context.Context, msg *models.Message, user
 	}
 
 	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
-		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+		if err := epicBot.userService.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
 			log.Error("failed to update user ChatID", sl.Err(err))
 		}
 	}
 
-	epics, err := epicBot.repo.GetUnscoredEpicsByUser(ctx, user.ID, teamID)
+	epics, err := epicBot.epicService.GetUnscoredEpicsByUser(ctx, user.ID, teamID)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка: %v", err)); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -221,7 +221,7 @@ func (epicBot *Bot) showTeamEpics(ctx context.Context, msg *models.Message, user
 			slog.String("status", string(e.Status)))
 	}
 
-	team, _ := epicBot.repo.GetTeamByID(ctx, teamID)
+	team, _ := epicBot.teamService.GetTeamByID(ctx, teamID)
 	teamName := ""
 	if team != nil {
 		teamName = team.Name
@@ -256,7 +256,7 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 	op := "bot.showEpicScoreOptions()"
 	log := epicBot.log.With(slog.String("op", op))
 
-	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
+	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Эпик не найден."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -264,7 +264,7 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 		return
 	}
 
-	user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Пользователь не найден."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -273,12 +273,12 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 	}
 
 	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
-		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+		if err := epicBot.userService.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
 			log.Error("failed to update user ChatID", sl.Err(err))
 		}
 	}
 
-	role, err := epicBot.repo.GetRoleByUserID(ctx, user.ID)
+	role, err := epicBot.roleService.GetRoleByUserID(ctx, user.ID)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ У вас нет назначенной роли."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -286,8 +286,8 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 		return
 	}
 
-	effortScored, _ := epicBot.repo.HasUserScoredEpic(ctx, epicID, user.ID)
-	unscoredRisks, _ := epicBot.repo.GetUnscoredRisksByUser(ctx, user.ID, epicID)
+	effortScored, _ := epicBot.epicService.HasUserScoredEpic(ctx, epicID, user.ID)
+	unscoredRisks, _ := epicBot.riskService.GetUnscoredRisksByUser(ctx, user.ID, epicID)
 
 	log.Debug("epic score check",
 		slog.String("user_id", user.ID.String()),
@@ -367,7 +367,7 @@ func (epicBot *Bot) handleEpicScoreSubmit(ctx context.Context, msg *models.Messa
 		return
 	}
 
-	user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Пользователь не найден."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -376,12 +376,12 @@ func (epicBot *Bot) handleEpicScoreSubmit(ctx context.Context, msg *models.Messa
 	}
 
 	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
-		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+		if err := epicBot.userService.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
 			log.Error("failed to update user ChatID", sl.Err(err))
 		}
 	}
 
-	role, err := epicBot.repo.GetRoleByUserID(ctx, user.ID)
+	role, err := epicBot.roleService.GetRoleByUserID(ctx, user.ID)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ У вас нет назначенной роли."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -389,7 +389,7 @@ func (epicBot *Bot) handleEpicScoreSubmit(ctx context.Context, msg *models.Messa
 		return
 	}
 
-	if err := epicBot.repo.CreateEpicScore(ctx, epicID, user.ID, role.ID, score); err != nil {
+	if err := epicBot.epicService.CreateEpicScore(ctx, epicID, user.ID, role.ID, score); err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg,
 			fmt.Sprintf("❌ Ошибка сохранения оценки: %v", err)); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -397,7 +397,7 @@ func (epicBot *Bot) handleEpicScoreSubmit(ctx context.Context, msg *models.Messa
 		return
 	}
 
-	epic, _ := epicBot.repo.GetEpicByID(ctx, epicID)
+	epic, _ := epicBot.epicService.GetEpicByID(ctx, epicID)
 	epicNum := epicID.String()
 	if epic != nil {
 		epicNum = epic.Number
@@ -418,7 +418,7 @@ func (epicBot *Bot) showEpicRisks(ctx context.Context, msg *models.Message, user
 	op := "bot.showEpicRisks()"
 	log := epicBot.log.With(slog.String("op", op))
 
-	user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Пользователь не найден."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -427,12 +427,12 @@ func (epicBot *Bot) showEpicRisks(ctx context.Context, msg *models.Message, user
 	}
 
 	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
-		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+		if err := epicBot.userService.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
 			log.Error("failed to update user ChatID", sl.Err(err))
 		}
 	}
 
-	risks, err := epicBot.repo.GetUnscoredRisksByUser(ctx, user.ID, epicID)
+	risks, err := epicBot.riskService.GetUnscoredRisksByUser(ctx, user.ID, epicID)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка: %v", err)); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -478,7 +478,7 @@ func (epicBot *Bot) showRiskScoreForm(ctx context.Context, msg *models.Message, 
 	op := "bot.showRiskScoreForm()"
 	log := epicBot.log.With(slog.String("op", op))
 
-	risk, err := epicBot.repo.GetRiskByID(ctx, riskID)
+	risk, err := epicBot.riskService.GetRiskByID(ctx, riskID)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Риск не найден."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -545,7 +545,7 @@ func (epicBot *Bot) handleRiskProbability(ctx context.Context, msg *models.Messa
 	}
 	kb := inlineKeyboard(inlineRow(impBtns...), inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
 
-	risk, _ := epicBot.repo.GetRiskByID(ctx, riskID)
+	risk, _ := epicBot.riskService.GetRiskByID(ctx, riskID)
 	desc := riskID.String()
 	if risk != nil {
 		desc = risk.Description
@@ -602,7 +602,7 @@ func (epicBot *Bot) handleRiskImpact(ctx context.Context, msg *models.Message, u
 		return
 	}
 
-	user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		log.Error("user not found", slog.String("username", username))
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Пользователь не найден."); botErr != nil {
@@ -612,12 +612,12 @@ func (epicBot *Bot) handleRiskImpact(ctx context.Context, msg *models.Message, u
 	}
 
 	if msg.Chat.ID > 0 && user.ChatID != msg.Chat.ID {
-		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
+		if err := epicBot.userService.UpdateUserChatID(ctx, user.ID, msg.Chat.ID); err != nil {
 			log.Error("failed to update user ChatID", sl.Err(err))
 		}
 	}
 
-	if err := epicBot.repo.CreateRiskScore(ctx, riskID, user.ID, prob, impact); err != nil {
+	if err := epicBot.riskService.CreateRiskScore(ctx, riskID, user.ID, prob, impact); err != nil {
 		log.Error("failed to create risk score", sl.Err(err))
 		if _, botErr := epicBot.sendReply(ctx, msg,
 			fmt.Sprintf("❌ Ошибка сохранения оценки риска: %v", err)); botErr != nil {
@@ -638,7 +638,7 @@ func (epicBot *Bot) handleRiskImpact(ctx context.Context, msg *models.Message, u
 	}
 
 	// Show remaining unscored risks for the epic
-	if risk, err := epicBot.repo.GetRiskByID(ctx, riskID); err == nil && risk != nil {
+	if risk, err := epicBot.riskService.GetRiskByID(ctx, riskID); err == nil && risk != nil {
 		epicBot.showEpicRisks(ctx, msg, username, risk.EpicID, successText)
 	} else {
 		log.Error("failed to get risk for epic ID", sl.Err(err))
@@ -650,7 +650,7 @@ func (epicBot *Bot) showEpicInfo(ctx context.Context, msg *models.Message, epicI
 	op := "bot.showEpicInfo()"
 	log := epicBot.log.With(slog.String("op", op))
 
-	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
+	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Эпик не найден."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
@@ -665,7 +665,7 @@ func (epicBot *Bot) showEpicInfo(ctx context.Context, msg *models.Message, epicI
 		fmt.Fprintf(&sb, "📄 Описание: %s\n", epic.Description)
 	}
 
-	risks, err := epicBot.repo.GetRisksByEpicID(ctx, epicID)
+	risks, err := epicBot.riskService.GetRisksByEpicID(ctx, epicID)
 	if err == nil && len(risks) > 0 {
 		sb.WriteString("\n⚠️ Риски:\n")
 		for i, risk := range risks {
