@@ -23,7 +23,7 @@ func (epicBot *Bot) showUserPickerInitial(ctx context.Context, msg *models.Messa
 		slog.Int64("chat_id", msg.Chat.ID),
 		slog.String("action", action),
 	)
-	users, err := epicBot.repo.GetAllUsers(ctx)
+	users, err := epicBot.userService.GetAllUsers(ctx)
 	if err != nil || len(users) == 0 {
 		if err != nil {
 			log.Error("error getting all users", sl.Err(err))
@@ -66,7 +66,7 @@ func (epicBot *Bot) showTeamPickerInitial(ctx context.Context, msg *models.Messa
 		slog.Int64("chat_id", msg.Chat.ID),
 		slog.String("action", action),
 	)
-	teams, err := epicBot.repo.GetAllTeams(ctx)
+	teams, err := epicBot.teamService.GetAllTeams(ctx)
 	if err != nil || len(teams) == 0 {
 		if err != nil {
 			log.Error("error getting all teams", sl.Err(err))
@@ -111,9 +111,9 @@ func (epicBot *Bot) showEpicPickerInitial(ctx context.Context, msg *models.Messa
 	var epics []domain.Epic
 	var err error
 	if statusFilter != "" {
-		epics, err = epicBot.repo.GetEpicsByStatus(ctx, domain.Status(statusFilter))
+		epics, err = epicBot.epicService.GetEpicsByStatus(ctx, domain.Status(statusFilter))
 	} else {
-		epics, err = epicBot.repo.GetAllEpics(ctx)
+		epics, err = epicBot.epicService.GetAllEpics(ctx)
 	}
 	if err != nil || len(epics) == 0 {
 		if err != nil {
@@ -164,7 +164,7 @@ func (epicBot *Bot) showRolePicker(
 		slog.String("user_id", userIDStr),
 	)
 
-	roles, err := epicBot.repo.GetAllRoles(ctx)
+	roles, err := epicBot.roleService.GetAllRoles(ctx)
 	log.Debug("roles found", slog.Int("roles count", len(roles)))
 
 	if err != nil || len(roles) == 0 {
@@ -211,7 +211,7 @@ func (epicBot *Bot) showUserRolePicker(
 	userID uuid.UUID,
 	msgID int,
 ) {
-	role, err := epicBot.repo.GetRoleByUserID(ctx, userID)
+	role, err := epicBot.roleService.GetRoleByUserID(ctx, userID)
 	if err != nil {
 		epicBot.editOrSend(ctx, msg, msgID, "❌ У пользователя нет назначенных ролей.")
 		return
@@ -252,7 +252,7 @@ func (epicBot *Bot) showUserTeamPicker(
 		slog.String("action", action),
 		slog.String("user_id", user.ID.String()),
 	)
-	teams, err := epicBot.repo.GetTeamsByUserTelegramID(ctx, user.TelegramID)
+	teams, err := epicBot.teamService.GetTeamsByUserTelegramID(ctx, user.TelegramID)
 	if err != nil || len(teams) == 0 {
 		if err != nil {
 			log.Error("error getting teams by user telegram id", sl.Err(err))

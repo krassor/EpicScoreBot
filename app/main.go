@@ -13,6 +13,7 @@ import (
 	"EpicScoreBot/internal/report"
 	"EpicScoreBot/internal/repositories"
 	"EpicScoreBot/internal/scoring"
+	"EpicScoreBot/internal/services"
 	"EpicScoreBot/internal/telegram"
 	httpServer "EpicScoreBot/internal/transport/httpServer"
 	"EpicScoreBot/internal/transport/httpServer/handlers"
@@ -42,6 +43,13 @@ func main() {
 	repositoryService := repositories.New(log, cfg)
 	scoringService := scoring.New(log, repositoryService)
 
+	// Initialize business services
+	userService := services.NewUserService(log, repositoryService)
+	teamService := services.NewTeamService(log, repositoryService)
+	epicService := services.NewEpicService(log, repositoryService)
+	riskService := services.NewRiskService(log, repositoryService)
+	roleService := services.NewRoleService(log, repositoryService)
+
 	// ai.New may return nil when AI is disabled. We must pass a nil interface
 	// (not a typed-nil pointer) so that telegram's epicBot.ai == nil check works.
 	var aiClient telegram.AIClient
@@ -51,7 +59,18 @@ func main() {
 
 	reportService := report.NewGenerator(log, cfg)
 
-	tgBot := telegram.New(log, cfg, repositoryService, scoringService, reportService, aiClient)
+	tgBot := telegram.New(
+		log,
+		cfg,
+		userService,
+		teamService,
+		epicService,
+		riskService,
+		roleService,
+		scoringService,
+		reportService,
+		aiClient,
+	)
 	if tgBot == nil {
 		log.Error("failed to initialize telegram bot. the app will continue running without telegram features.")
 	}

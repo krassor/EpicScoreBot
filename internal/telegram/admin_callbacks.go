@@ -7,10 +7,7 @@ import (
 	"strings"
 
 	"EpicScoreBot/internal/models/domain"
-	"EpicScoreBot/internal/report"
-	"EpicScoreBot/internal/scoring"
 	"EpicScoreBot/internal/utils/logger/sl"
-	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -131,7 +128,7 @@ func (epicBot *Bot) handleAdmUserSelected(
 		return
 	}
 
-	user, err := epicBot.repo.GetUserByID(ctx, userID)
+	user, err := epicBot.userService.GetUserByID(ctx, userID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Пользователь не найден.")
 		return
@@ -208,7 +205,7 @@ func (epicBot *Bot) showTeamPickerForUser(
 		slog.Int64("chat_id", msg.Chat.ID),
 		slog.String("action", action),
 	)
-	teams, err := epicBot.repo.GetAllTeams(ctx)
+	teams, err := epicBot.teamService.GetAllTeams(ctx)
 	if err != nil || len(teams) == 0 {
 		if err != nil {
 			log.Error("error getting all teams", sl.Err(err))
@@ -284,12 +281,12 @@ func (epicBot *Bot) handleAdmRoleSelected(
 		return
 	}
 
-	user, err := epicBot.repo.GetUserByID(ctx, userID)
+	user, err := epicBot.userService.GetUserByID(ctx, userID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Пользователь не найден.")
 		return
 	}
-	role, err := epicBot.repo.GetRoleByID(ctx, roleID)
+	role, err := epicBot.roleService.GetRoleByID(ctx, roleID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Роль не найдена.")
 		return
@@ -301,14 +298,14 @@ func (epicBot *Bot) handleAdmRoleSelected(
 
 	switch action {
 	case "assignrole":
-		if err := epicBot.repo.AssignUserRole(ctx, userID, roleID); err != nil {
+		if err := epicBot.roleService.AssignUserRole(ctx, userID, roleID); err != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка назначения роли: %v", err))
 			return
 		}
 		epicBot.deleteAndSend(ctx, msg, msgID,
 			fmt.Sprintf("✅ Роль «%s» назначена пользователю %s %s.", role.Name, user.FirstName, user.LastName))
 	case "unassignrole":
-		if err := epicBot.repo.RemoveUserRole(ctx, userID, roleID); err != nil {
+		if err := epicBot.roleService.RemoveUserRole(ctx, userID, roleID); err != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка снятия роли: %v", err))
 			return
 		}
@@ -384,12 +381,12 @@ func (epicBot *Bot) handleAdmTeamSelected(
 			return
 		}
 
-		user, err := epicBot.repo.GetUserByID(ctx, userID)
+		user, err := epicBot.userService.GetUserByID(ctx, userID)
 		if err != nil {
 			epicBot.sendReply(ctx, msg, "❌ Пользователь не найден.")
 			return
 		}
-		team, err := epicBot.repo.GetTeamByID(ctx, teamID)
+		team, err := epicBot.teamService.GetTeamByID(ctx, teamID)
 		if err != nil {
 			epicBot.sendReply(ctx, msg, "❌ Команда не найдена.")
 			return
@@ -401,7 +398,7 @@ func (epicBot *Bot) handleAdmTeamSelected(
 
 		switch action {
 		case "assignteam":
-			teams, err := epicBot.repo.GetTeamsByUserTelegramID(ctx, user.TelegramID)
+			teams, err := epicBot.teamService.GetTeamsByUserTelegramID(ctx, user.TelegramID)
 			if err != nil {
 				epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка получения команд пользователя.")
 				return
@@ -412,7 +409,7 @@ func (epicBot *Bot) handleAdmTeamSelected(
 					return
 				}
 			}
-			if err := epicBot.repo.AssignUserTeam(ctx, userID, teamID); err != nil {
+			if err := epicBot.teamService.AssignUserTeam(ctx, userID, teamID); err != nil {
 				epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка добавления в команду.")
 				return
 			}
@@ -420,7 +417,7 @@ func (epicBot *Bot) handleAdmTeamSelected(
 				fmt.Sprintf("✅ Пользователь %s %s добавлен в команду «%s».",
 					user.FirstName, user.LastName, team.Name))
 		case "removefromteam":
-			if err := epicBot.repo.RemoveUserTeam(ctx, userID, teamID); err != nil {
+			if err := epicBot.teamService.RemoveUserTeam(ctx, userID, teamID); err != nil {
 				epicBot.deleteAndSend(ctx, msg, msgID,
 					fmt.Sprintf("❌ Ошибка удаления из команды: %v", err))
 				return
@@ -443,14 +440,14 @@ func (epicBot *Bot) handleAdmTeamSelected(
 		}
 		epicBot.sessions.clear(sk)
 
-		users, err := epicBot.repo.GetUsersByTeamID(ctx, teamID)
+		users, err := epicBot.userService.GetUsersByTeamID(ctx, teamID)
 		if err != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка получения пользователей команды.")
 			return
 		}
 		var sb strings.Builder
 		for _, user := range users {
-			role, err := epicBot.repo.GetRoleByUserID(ctx, user.ID)
+			role, err := epicBot.roleService.GetRoleByUserID(ctx, user.ID)
 			roleName := "—"
 			if err == nil {
 				roleName = role.Name
@@ -490,102 +487,19 @@ func (epicBot *Bot) generateAndSendReport(ctx context.Context, msg *models.Messa
 
 	epicBot.editOrSend(ctx, msg, msgID, "🔄 Формирование отчета...")
 
-	team, err := epicBot.repo.GetTeamByID(ctx, teamID)
+	reportData, err := epicBot.epicService.GetReportData(ctx, teamID)
 	if err != nil {
-		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Команда не найдена.")
+		log.Error("failed to get report data", sl.Err(err))
+		epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка при формировании отчета: %v", err))
 		return
 	}
 
-	epics, err := epicBot.repo.GetEpicsByTeamIDAndStatus(ctx, teamID, domain.StatusScored)
-	if err != nil {
-		log.Error("failed to get epics", sl.Err(err))
-		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка получения эпиков.")
-		return
-	}
-
-	if len(epics) == 0 {
+	if len(reportData.Epics) == 0 {
 		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Нет оцененных эпиков для формирования отчета.")
 		return
 	}
 
-	reportData := report.ReportData{
-		TeamName:  team.Name,
-		Generated: time.Now(),
-		Epics:     make([]report.EpicReportData, 0, len(epics)),
-	}
-
-	for _, e := range epics {
-		epicData := report.EpicReportData{
-			Number:     e.Number,
-			Name:       e.Name,
-			RoleScores: []report.RoleScoreData{},
-			Risks:      []report.RiskReportData{},
-		}
-
-		if e.FinalScore != nil {
-			epicData.FinalScore = *e.FinalScore
-		}
-
-		// Role scores
-		roleScores, err := epicBot.repo.GetEpicRoleScoresByEpicID(ctx, e.ID)
-		if err == nil {
-			var totalScore float64
-			for _, rs := range roleScores {
-				roleName := rs.RoleID.String()
-				if r, err := epicBot.repo.GetRoleByID(ctx, rs.RoleID); err == nil {
-					roleName = r.Name
-				}
-				epicData.RoleScores = append(epicData.RoleScores, report.RoleScoreData{
-					RoleName:    roleName,
-					WeightedAvg: rs.WeightedAvg,
-				})
-				totalScore += rs.WeightedAvg
-			}
-			epicData.TotalScore = totalScore
-		} else {
-			log.Error("failed to get role scores", sl.Err(err), slog.String("epic_id", e.ID.String()))
-		}
-
-		// Risks
-		risks, err := epicBot.repo.GetRisksByEpicID(ctx, e.ID)
-		if err == nil {
-			for _, r := range risks {
-				riskScores, err := epicBot.repo.GetRiskScoresByRiskID(ctx, r.ID)
-
-				var probs []int
-				var impacts []int
-				if err == nil {
-					for _, rs := range riskScores {
-						probs = append(probs, rs.Probability)
-						impacts = append(impacts, rs.Impact)
-					}
-				}
-
-				var wScore float64
-				var coeff float64
-				if r.WeightedScore != nil {
-					wScore = *r.WeightedScore
-					coeff = scoring.RiskCoefficient(wScore)
-				} else {
-					coeff = 1.0 // default multiplier
-				}
-
-				epicData.Risks = append(epicData.Risks, report.RiskReportData{
-					Description:   r.Description,
-					Probabilities: probs,
-					Impacts:       impacts,
-					WeightedScore: wScore,
-					Coefficient:   coeff,
-				})
-			}
-		} else {
-			log.Error("failed to get risks", sl.Err(err), slog.String("epic_id", e.ID.String()))
-		}
-
-		reportData.Epics = append(reportData.Epics, epicData)
-	}
-
-	pdfPath, err := epicBot.report.GenerateReport(ctx, reportData)
+	pdfPath, err := epicBot.report.GenerateReport(ctx, *reportData)
 	if err != nil {
 		log.Error("failed to generate report pdf", sl.Err(err))
 		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка при генерации PDF отчета.")
@@ -596,7 +510,7 @@ func (epicBot *Bot) generateAndSendReport(ctx context.Context, msg *models.Messa
 		_ = epicBot.deleteMessage(ctx, msg.Chat.ID, msgID)
 	}
 
-	caption := fmt.Sprintf("📊 Отчет по команде «%s»", team.Name)
+	caption := fmt.Sprintf("📊 Отчет по команде «%s»", reportData.TeamName)
 	if err := epicBot.sendDocument(ctx, msg, pdfPath, caption); err != nil {
 		log.Error("failed to send pdf document", sl.Err(err))
 		epicBot.sendReply(ctx, msg, "❌ Ошибка отправки PDF файла.")
@@ -630,7 +544,7 @@ func (epicBot *Bot) handleAdmEpicSelected(
 		return
 	}
 
-	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
+	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Эпик не найден.")
 		return
@@ -721,7 +635,7 @@ func (epicBot *Bot) handleAdmRiskSelected(
 		return
 	}
 
-	risk, err := epicBot.repo.GetRiskByID(ctx, riskID)
+	risk, err := epicBot.riskService.GetRiskByID(ctx, riskID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Риск не найден.")
 		return
@@ -788,8 +702,8 @@ func (epicBot *Bot) handleAdmConfirm(
 
 	switch action {
 	case "deleteepic":
-		epic, _ := epicBot.repo.GetEpicByID(ctx, id)
-		if err := epicBot.repo.DeleteEpic(ctx, id); err != nil {
+		epic, _ := epicBot.epicService.GetEpicByID(ctx, id)
+		if err := epicBot.epicService.DeleteEpic(ctx, id); err != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка удаления эпика: %v", err))
 			return
 		}
@@ -800,8 +714,8 @@ func (epicBot *Bot) handleAdmConfirm(
 		epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("🗑️ Эпик #%s удалён.", epicNum))
 
 	case "deleterisk":
-		risk, _ := epicBot.repo.GetRiskByID(ctx, id)
-		if err := epicBot.repo.DeleteRisk(ctx, id); err != nil {
+		risk, _ := epicBot.riskService.GetRiskByID(ctx, id)
+		if err := epicBot.riskService.DeleteRisk(ctx, id); err != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка удаления риска: %v", err))
 			return
 		}
@@ -815,8 +729,8 @@ func (epicBot *Bot) handleAdmConfirm(
 		epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("🗑️ Риск «%s» удалён.", desc))
 
 	case "deleteuser":
-		user, _ := epicBot.repo.GetUserByID(ctx, id)
-		if err := epicBot.repo.DeleteUser(ctx, id); err != nil {
+		user, _ := epicBot.userService.GetUserByID(ctx, id)
+		if err := epicBot.userService.DeleteUser(ctx, id); err != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка удаления пользователя: %v", err))
 			return
 		}
@@ -847,7 +761,7 @@ func (epicBot *Bot) showRiskPickerEditing(
 		slog.String("action", action),
 		slog.String("epic_id", epic.ID.String()),
 	)
-	risks, err := epicBot.repo.GetRisksByEpicID(ctx, epic.ID)
+	risks, err := epicBot.riskService.GetRisksByEpicID(ctx, epic.ID)
 	if err != nil || len(risks) == 0 {
 		if err != nil {
 			log.Error("error getting risks by epic id", sl.Err(err))
@@ -899,13 +813,13 @@ func (epicBot *Bot) sendEpicNotifications(ctx context.Context, msg *models.Messa
 	op := "bot.sendEpicNotifications"
 	log := epicBot.log.With(slog.String("op", op), slog.String("epic_id", epicID.String()))
 
-	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
+	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
 	if err != nil {
 		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Эпик не найден.")
 		return
 	}
 
-	users, err := epicBot.repo.GetUsersByTeamID(ctx, epic.TeamID)
+	users, err := epicBot.userService.GetUsersByTeamID(ctx, epic.TeamID)
 	if err != nil {
 		log.Error("failed to get users by team", sl.Err(err))
 		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка получения пользователей команды.")
@@ -916,8 +830,8 @@ func (epicBot *Bot) sendEpicNotifications(ctx context.Context, msg *models.Messa
 	var failedUsers []string
 
 	for _, user := range users {
-		effortScored, err1 := epicBot.repo.HasUserScoredEpic(ctx, epicID, user.ID)
-		unscoredRisks, err2 := epicBot.repo.GetUnscoredRisksByUser(ctx, user.ID, epicID)
+		effortScored, err1 := epicBot.epicService.HasUserScoredEpic(ctx, epicID, user.ID)
+		unscoredRisks, err2 := epicBot.riskService.GetUnscoredRisksByUser(ctx, user.ID, epicID)
 
 		if err1 != nil || err2 != nil {
 			continue // skip on db error

@@ -144,7 +144,7 @@ func (epicBot *Bot) handleEpicInfo(ctx context.Context, msg *models.Message) err
 		return err
 	}
 
-	user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		_, retErr := epicBot.sendReply(ctx, msg,
 			"❌ Вы не зарегистрированы в системе. Обратитесь к администратору.")
@@ -152,12 +152,12 @@ func (epicBot *Bot) handleEpicInfo(ctx context.Context, msg *models.Message) err
 	}
 
 	if user.ChatID != msg.From.ID {
-		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.From.ID); err != nil {
+		if err := epicBot.userService.UpdateUserChatID(ctx, user.ID, msg.From.ID); err != nil {
 			log.Error("failed to update user ChatID", sl.Err(err))
 		}
 	}
 
-	teams, err := epicBot.repo.GetTeamsByUserTelegramID(ctx, username)
+	teams, err := epicBot.teamService.GetTeamsByUserTelegramID(ctx, username)
 	if err != nil || len(teams) == 0 {
 		if err != nil {
 			log.Error("error getting teams by user telegram id", sl.Err(err))
@@ -166,22 +166,11 @@ func (epicBot *Bot) handleEpicInfo(ctx context.Context, msg *models.Message) err
 		return retErr
 	}
 
-	// Collect unscored epics from all user's teams, dedup by epic ID.
-	seen := make(map[uuid.UUID]bool)
-	var allEpics []domain.Epic
-	for _, team := range teams {
-		epics, err := epicBot.repo.GetUnscoredEpicsByUser(ctx, user.ID, team.ID)
-		if err != nil {
-			log.Error("error getting unscored epics", sl.Err(err),
-				slog.String("team_id", team.ID.String()))
-			continue
-		}
-		for _, e := range epics {
-			if !seen[e.ID] {
-				seen[e.ID] = true
-				allEpics = append(allEpics, e)
-			}
-		}
+	allEpics, err := epicBot.epicService.GetUnscoredEpicsForUserAcrossTeams(ctx, user.ID, username)
+	if err != nil {
+		log.Error("error getting unscored epics", sl.Err(err))
+		_, retErr := epicBot.sendReply(ctx, msg, "❌ Ошибка получения неоценённых эпиков.")
+		return retErr
 	}
 
 	if len(allEpics) == 0 {
@@ -240,7 +229,7 @@ func (epicBot *Bot) handleScoreMenu(ctx context.Context, msg *models.Message) er
 		return err
 	}
 
-	user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			_, retErr := epicBot.sendReply(ctx, msg,
@@ -252,12 +241,12 @@ func (epicBot *Bot) handleScoreMenu(ctx context.Context, msg *models.Message) er
 	}
 
 	if user.ChatID != msg.From.ID {
-		if err := epicBot.repo.UpdateUserChatID(ctx, user.ID, msg.From.ID); err != nil {
+		if err := epicBot.userService.UpdateUserChatID(ctx, user.ID, msg.From.ID); err != nil {
 			log.Error("failed to update user ChatID", sl.Err(err))
 		}
 	}
 
-	teams, err := epicBot.repo.GetTeamsByUserTelegramID(ctx, username)
+	teams, err := epicBot.teamService.GetTeamsByUserTelegramID(ctx, username)
 	if err != nil || len(teams) == 0 {
 		if err != nil {
 			log.Error("error getting teams by user telegram id", sl.Err(err))
@@ -291,7 +280,7 @@ func (epicBot *Bot) handleScoreMenu(ctx context.Context, msg *models.Message) er
 
 func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, epicID uuid.UUID) {
 	// Attempt to compute risk scores first
-	risks, err := epicBot.repo.GetRisksByEpicID(ctx, epicID)
+	risks, err := epicBot.riskService.GetRisksByEpicID(ctx, epicID)
 	if err == nil {
 		for _, risk := range risks {
 			if risk.Status != domain.StatusScored {
@@ -301,13 +290,13 @@ func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, ep
 	}
 
 	// Attempt to compute epic score
-	epicInit, errInit := epicBot.repo.GetEpicByID(ctx, epicID)
+	epicInit, errInit := epicBot.epicService.GetEpicByID(ctx, epicID)
 	if errInit == nil && epicInit != nil && epicInit.Status != domain.StatusScored {
 		_ = epicBot.scoring.TryCompleteEpicScoring(ctx, epicID)
 	}
 
 	// Now reload the epic to get the fresh status and scores
-	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
+	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Эпик не найден.")
 		return
@@ -317,11 +306,11 @@ func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, ep
 	fmt.Fprintf(&sb, "📊 *Результаты эпика \\#%s «%s»*\n", escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name))
 	fmt.Fprintf(&sb, "Статус: %s\n\n", escapeMarkdownV2(string(epic.Status)))
 
-	roleScores, err := epicBot.repo.GetEpicRoleScoresByEpicID(ctx, epic.ID)
+	roleScores, err := epicBot.epicService.GetEpicRoleScoresByEpicID(ctx, epic.ID)
 	if err == nil && len(roleScores) > 0 {
 		sb.WriteString("📋 *Оценки по ролям:*\n")
 		for _, rs := range roleScores {
-			role, err := epicBot.repo.GetRoleByID(ctx, rs.RoleID)
+			role, err := epicBot.roleService.GetRoleByID(ctx, rs.RoleID)
 			roleName := rs.RoleID.String()
 			if err == nil {
 				roleName = role.Name
@@ -331,7 +320,7 @@ func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, ep
 		sb.WriteString("\n")
 	}
 
-	risks, err = epicBot.repo.GetRisksByEpicID(ctx, epic.ID)
+	risks, err = epicBot.riskService.GetRisksByEpicID(ctx, epic.ID)
 	if err == nil && len(risks) > 0 {
 		sb.WriteString("⚠️ *Риски:*\n")
 		for _, risk := range risks {
@@ -365,7 +354,7 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 		slog.Int64("chat_id", msg.Chat.ID),
 		slog.String("epic_id", epicID.String()),
 	)
-	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
+	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Эпик не найден.")
 		return
@@ -375,7 +364,7 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 		slog.String("epic", epic.Number),
 	)
 
-	teamMembers, err := epicBot.repo.GetUsersByTeamID(ctx, epic.TeamID)
+	teamMembers, err := epicBot.userService.GetUsersByTeamID(ctx, epic.TeamID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка получения участников: %v", err))
 		return
@@ -386,7 +375,7 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 		slog.Int("count", len(teamMembers)),
 	)
 
-	scoredEpic, _ := epicBot.repo.GetUsersWhoScoredEpic(ctx, epic.ID)
+	scoredEpic, _ := epicBot.epicService.GetUsersWhoScoredEpic(ctx, epic.ID)
 	scoredSet := make(map[uuid.UUID]bool)
 	for _, u := range scoredEpic {
 		scoredSet[u.ID] = true
@@ -415,11 +404,11 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 		sb.WriteString("  ✅ Все оценили\n")
 	}
 
-	risks, _ := epicBot.repo.GetRisksByEpicID(ctx, epic.ID)
+	risks, _ := epicBot.riskService.GetRisksByEpicID(ctx, epic.ID)
 	if len(risks) > 0 {
 		sb.WriteString("\n⚠️ *Риски:*\n")
 		for _, risk := range risks {
-			scoredRisk, _ := epicBot.repo.GetUsersWhoScoredRisk(ctx, risk.ID)
+			scoredRisk, _ := epicBot.riskService.GetUsersWhoScoredRisk(ctx, risk.ID)
 			riskScoredSet := make(map[uuid.UUID]bool)
 			for _, u := range scoredRisk {
 				riskScoredSet[u.ID] = true
@@ -458,7 +447,7 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 // ─── /startscore execution (called by callback) ───────────────────────────
 
 func (epicBot *Bot) execStartScore(ctx context.Context, msg *models.Message, epicID uuid.UUID) {
-	epic, err := epicBot.repo.GetEpicByID(ctx, epicID)
+	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Эпик не найден.")
 		return
@@ -468,17 +457,17 @@ func (epicBot *Bot) execStartScore(ctx context.Context, msg *models.Message, epi
 			fmt.Sprintf("⚠️ Эпик #%s уже в статусе %s.", epic.Number, string(epic.Status)))
 		return
 	}
-	if err := epicBot.repo.UpdateEpicStatus(ctx, epic.ID, domain.StatusScoring); err != nil {
+	if err := epicBot.epicService.UpdateEpicStatus(ctx, epic.ID, domain.StatusScoring); err != nil {
 		epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка смены статуса эпика: %v", err))
 		return
 	}
-	risks, err := epicBot.repo.GetRisksByEpicID(ctx, epic.ID)
+	risks, err := epicBot.riskService.GetRisksByEpicID(ctx, epic.ID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка получения рисков: %v", err))
 		return
 	}
 	for _, risk := range risks {
-		if err := epicBot.repo.UpdateRiskStatus(ctx, risk.ID, domain.StatusScoring); err != nil {
+		if err := epicBot.riskService.UpdateRiskStatus(ctx, risk.ID, domain.StatusScoring); err != nil {
 			epicBot.log.Error("failed to update risk status",
 				slog.String("riskID", risk.ID.String()), sl.Err(err))
 		}

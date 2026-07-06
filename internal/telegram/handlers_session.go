@@ -2,12 +2,14 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
+	"EpicScoreBot/internal/services"
 	"EpicScoreBot/internal/utils/logger/sl"
 
 	"github.com/go-telegram/bot/models"
@@ -104,11 +106,15 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			epicBot.editOrSend(ctx, msg, msgID, "❌ Вес должен быть числом от 0 до 100. Введите ещё раз:")
 			return
 		}
-		user, err := epicBot.repo.CreateUser(ctx,
+		user, err := epicBot.userService.CreateUser(ctx,
 			sess.Data["firstName"], sess.Data["lastName"],
 			sess.Data["username"], weight)
 		epicBot.sessions.clear(sk)
 		if err != nil {
+			if errors.Is(err, services.ErrUserAlreadyExists) {
+				epicBot.deleteAndSend(ctx, msg, msgID, "❌ Пользователь с таким @username уже существует.")
+				return
+			}
 			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка создания пользователя: %v", err))
 			return
 		}
@@ -140,7 +146,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка: неверный ID пользователя.")
 			return
 		}
-		if err := epicBot.repo.UpdateUserName(ctx, userID, sess.Data["firstName"], text); err != nil {
+		if err := epicBot.userService.UpdateUserName(ctx, userID, sess.Data["firstName"], text); err != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка переименования.")
 			return
 		}
@@ -162,7 +168,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка: неверный ID пользователя.")
 			return
 		}
-		if err := epicBot.repo.UpdateUserWeight(ctx, userID, weight); err != nil {
+		if err := epicBot.userService.UpdateUserWeight(ctx, userID, weight); err != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка изменения веса.")
 			return
 		}
@@ -172,7 +178,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 
 	case StepAddEpicNumber:
 		sess.Data["number"] = text
-		epic, _ := epicBot.repo.GetEpicByNumber(ctx, sess.Data["number"])
+		epic, _ := epicBot.epicService.GetEpicByNumber(ctx, sess.Data["number"])
 		// if err != nil {
 		// 	epicBot.editOrSend(ctx, msg, msgID, "❌ Ошибка поиска эпика.")
 		// 	return
@@ -205,18 +211,12 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			return
 		}
 
-		epic, _ := epicBot.repo.GetEpicByNumber(ctx, sess.Data["number"])
-		// if err != nil {
-		// 	epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка поиска эпика.")
-		// 	return
-		// }
-		if epic != nil {
-			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Эпик с таким номером уже существует.")
-			return
-		}
-
-		epic, err = epicBot.repo.CreateEpic(ctx, sess.Data["number"], sess.Data["name"], desc, teamID)
+		epic, err := epicBot.epicService.CreateEpic(ctx, sess.Data["number"], sess.Data["name"], desc, teamID)
 		if err != nil {
+			if errors.Is(err, services.ErrEpicAlreadyExists) {
+				epicBot.deleteAndSend(ctx, msg, msgID, "❌ Эпик с таким номером уже существует.")
+				return
+			}
 			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка создания эпика.")
 			return
 		}
@@ -233,12 +233,12 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка: неверный ID эпика.")
 			return
 		}
-		risk, err := epicBot.repo.CreateRisk(ctx, text, epicID)
+		risk, err := epicBot.riskService.CreateRisk(ctx, text, epicID)
 		if err != nil {
 			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка создания риска: %v", err))
 			return
 		}
-		epic, _ := epicBot.repo.GetEpicByID(ctx, epicID)
+		epic, _ := epicBot.epicService.GetEpicByID(ctx, epicID)
 		epicNum := epicID.String()
 		if epic != nil {
 			epicNum = epic.Number
@@ -273,24 +273,24 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			return
 		}
 
-		user, err := epicBot.repo.FindUserByTelegramID(ctx, username)
+		user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
 		if err != nil {
 			epicBot.editReply(ctx, msg.Chat.ID, promptMsgID, "❌ Пользователь не найден.")
 			return
 		}
 
-		role, err := epicBot.repo.GetRoleByUserID(ctx, user.ID)
+		role, err := epicBot.roleService.GetRoleByUserID(ctx, user.ID)
 		if err != nil {
 			epicBot.editReply(ctx, msg.Chat.ID, promptMsgID, "❌ У вас нет назначенной роли.")
 			return
 		}
 
-		if err := epicBot.repo.CreateEpicScore(ctx, epicID, user.ID, role.ID, score); err != nil {
+		if err := epicBot.epicService.CreateEpicScore(ctx, epicID, user.ID, role.ID, score); err != nil {
 			epicBot.editReply(ctx, msg.Chat.ID, promptMsgID, fmt.Sprintf("❌ Ошибка сохранения оценки: %v", err))
 			return
 		}
 
-		epic, _ := epicBot.repo.GetEpicByID(ctx, epicID)
+		epic, _ := epicBot.epicService.GetEpicByID(ctx, epicID)
 		epicNum := epicIDStr
 		if epic != nil {
 			epicNum = epic.Number
