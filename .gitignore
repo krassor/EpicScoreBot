@@ -18,7 +18,7 @@ config/config.yml
 vendor/
 
 # Docker
-main
+/main
 
 # Env
 docker-compose.yml
