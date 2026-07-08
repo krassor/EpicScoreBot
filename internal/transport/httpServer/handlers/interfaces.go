@@ -24,8 +24,13 @@ type Repository interface {
 	GetTeamByID(ctx context.Context, teamID uuid.UUID) (*domain.Team, error)
 	GetTeamByName(ctx context.Context, name string) (*domain.Team, error)
 
-	// Users
 	CreateUser(ctx context.Context, firstName, lastName string, telegramID string, weight int) (*domain.User, error)
+	CreateUserWithRelations(ctx context.Context, user *domain.User, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error
+	UpdateUserWithRelations(ctx context.Context, userID uuid.UUID, firstName, lastName string, weight int, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error
+	GetUserRelations(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, []uuid.UUID, error)
+	GetUserTeams(ctx context.Context, userID uuid.UUID) ([]domain.Team, error)
+	GetUserRoles(ctx context.Context, userID uuid.UUID) ([]domain.Role, error)
+	GetAllUsers(ctx context.Context) ([]domain.User, error)
 	BulkCreateUsers(ctx context.Context, users []domain.User, teamID *uuid.UUID, roleID *uuid.UUID) error
 	FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error)
 	GetUserByID(ctx context.Context, userID uuid.UUID) (*domain.User, error)

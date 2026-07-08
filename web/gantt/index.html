@@ -224,6 +224,70 @@
                                 <button type="submit" class="btn btn-primary">Импортировать пользователей</button>
                             </form>
                         </div>
+                        
+                        <!-- Create Single User -->
+                        <div class="admin-card">
+                            <h2>Создание пользователя</h2>
+                            <form id="form-single-user" class="admin-form">
+                                <div class="form-group">
+                                    <label for="single-user-telegram-id">Telegram ID (username)</label>
+                                    <input type="text" id="single-user-telegram-id" required placeholder="Например, ivan_tg">
+                                </div>
+                                <div class="form-group">
+                                    <label for="single-user-first-name">Имя</label>
+                                    <input type="text" id="single-user-first-name" required placeholder="Иван">
+                                </div>
+                                <div class="form-group">
+                                    <label for="single-user-last-name">Фамилия</label>
+                                    <input type="text" id="single-user-last-name" placeholder="Иванов">
+                                </div>
+                                <div class="form-group">
+                                    <label for="single-user-weight">Вес скоринга (0-100)</label>
+                                    <input type="number" id="single-user-weight" required min="0" max="100" value="100">
+                                </div>
+                                <div class="form-group">
+                                    <label>Роли</label>
+                                    <div class="checkbox-container-list" id="single-user-roles-container">
+                                        <!-- Checkboxes injected dynamically -->
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>Команды</label>
+                                    <div class="checkbox-container-list" id="single-user-teams-container">
+                                        <!-- Checkboxes injected dynamically -->
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Создать пользователя</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- User Management Table Card -->
+                    <div class="admin-card full-width-card" style="margin-top: 24px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--color-border); padding-bottom: 12px; margin-bottom: 16px;">
+                            <h2 style="margin: 0;">Управление пользователями</h2>
+                            <button id="btn-refresh-users" class="btn btn-secondary btn-sm" type="button">🔄 Обновить</button>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="admin-table" id="table-users">
+                                <thead>
+                                    <tr>
+                                        <th>Telegram ID</th>
+                                        <th>Имя</th>
+                                        <th>Фамилия</th>
+                                        <th>Роли</th>
+                                        <th>Команды</th>
+                                        <th>Вес</th>
+                                        <th>Действия</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="table-users-body">
+                                    <tr>
+                                        <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">Загрузка списка пользователей...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -259,6 +323,54 @@
                     <button id="modal-save" class="btn btn-primary">💾 Сохранить порядок</button>
                     <button id="modal-cancel" class="btn btn-secondary">Отмена</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Edit User Modal -->
+        <div id="modal-edit-user" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Редактирование пользователя</h2>
+                    <button id="edit-user-close" class="btn-icon">✕</button>
+                </div>
+                <form id="form-edit-user">
+                    <div class="modal-body">
+                        <input type="hidden" id="edit-user-id">
+                        <div class="form-group">
+                            <label for="edit-user-telegram-id">Telegram ID (Username)</label>
+                            <input type="text" id="edit-user-telegram-id" readonly class="input" style="opacity: 0.7; background-color: var(--color-border);">
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-user-first-name">Имя</label>
+                            <input type="text" id="edit-user-first-name" required class="input">
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-user-last-name">Фамилия</label>
+                            <input type="text" id="edit-user-last-name" class="input">
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-user-weight">Вес скоринга (0-100)</label>
+                            <input type="number" id="edit-user-weight" required min="0" max="100" class="input">
+                        </div>
+                        <div class="form-group">
+                            <label>Роли</label>
+                            <div class="checkbox-container-list" id="edit-user-roles-container">
+                                <!-- Checkboxes injected dynamically -->
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Команды</label>
+                            <div class="checkbox-container-list" id="edit-user-teams-container">
+                                <!-- Checkboxes injected dynamically -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="submit" class="btn btn-primary">💾 Сохранить</button>
+                        <button type="button" id="edit-user-cancel" class="btn btn-secondary">Отмена</button>
+                    </div>
+                </form>
             </div>
         </div>
 

@@ -1,18 +1,39 @@
 // ── Admin Panel Module ────────────────────────────────────────────────
 
 import { state } from './state.js';
-import { apiPost, apiGet } from './api.js';
+import { apiPost, apiGet, apiPut } from './api.js';
 import { showToast } from './utils.js';
 
 export function initAdminPanel() {
-    // Subscribe to teams to populate select inputs
+    // Подписка на изменение списка команд для заполнения выпадающих списков и чекбоксов
     state.subscribe('teams', (teams) => {
         populateTeamSelects(teams);
+        renderCheckboxList('single-user-teams-container', teams, 'team_ids');
+        renderCheckboxList('edit-user-teams-container', teams, 'team_ids');
+    });
+
+    // Подписка на изменение списка ролей для заполнения списков чекбоксов
+    state.subscribe('roles', (roles) => {
+        renderCheckboxList('single-user-roles-container', roles, 'role_ids');
+        renderCheckboxList('edit-user-roles-container', roles, 'role_ids');
+    });
+
+    // Подписка на изменение списка пользователей для рендеринга таблицы
+    state.subscribe('users', (users) => {
+        renderUsersTable(users);
+    });
+
+    // Загрузка пользователей при открытии вкладки админки
+    state.subscribe('activeTab', (tabName) => {
+        if (tabName === 'admin') {
+            loadUsers();
+        }
     });
 
     setupFormListeners();
 }
 
+// Заполняет стандартные выпадающие списки команд
 function populateTeamSelects(teams) {
     const selects = [
         document.getElementById('epic-team-select'),
@@ -23,7 +44,7 @@ function populateTeamSelects(teams) {
     selects.forEach(select => {
         if (!select) return;
         
-        // Save current value
+        // Сохраняем текущее выбранное значение
         const val = select.value;
         
         select.innerHTML = '<option value="">Выберите команду...</option>';
@@ -34,15 +55,183 @@ function populateTeamSelects(teams) {
             select.appendChild(opt);
         });
         
-        // Restore value if still valid
+        // Восстанавливаем значение, если оно всё ещё валидно
         if (teams.some(t => t.id === val)) {
             select.value = val;
         }
     });
 }
 
+// Рендерит список элементов (команд или ролей) в виде списка чекбоксов
+function renderCheckboxList(containerId, items, nameAttr) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    container.innerHTML = '';
+    if (!items || items.length === 0) {
+        container.innerHTML = '<div style="font-size: 12px; color: var(--text-muted);">Нет доступных элементов</div>';
+        return;
+    }
+
+    items.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'checkbox-item';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.name = nameAttr;
+        cb.value = item.id;
+        cb.id = `${containerId}-${item.id}`;
+
+        const label = document.createElement('label');
+        label.htmlFor = cb.id;
+        label.textContent = item.name;
+
+        div.appendChild(cb);
+        div.appendChild(label);
+        container.appendChild(div);
+    });
+}
+
+// Загружает список пользователей с бэкенда
+async function loadUsers() {
+    try {
+        const users = await apiGet('/admin/users');
+        state.set('users', users || []);
+    } catch (err) {
+        if (err.message !== 'UNAUTHORIZED' && err.message !== 'FORBIDDEN') {
+            showToast('Не удалось загрузить пользователей: ' + err.message, 'error');
+        }
+    }
+}
+
+// Рендерит таблицу пользователей во вкладке Admin
+function renderUsersTable(users) {
+    const tbody = document.getElementById('table-users-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    if (!users || users.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                    Нет зарегистрированных пользователей
+                </td>
+            </tr>`;
+        return;
+    }
+
+    users.forEach(user => {
+        const tr = document.createElement('tr');
+
+        // Telegram ID
+        const tdTg = document.createElement('td');
+        tdTg.textContent = user.telegram_id || '-';
+        tr.appendChild(tdTg);
+
+        // Имя
+        const tdFirst = document.createElement('td');
+        tdFirst.textContent = user.first_name || '-';
+        tr.appendChild(tdFirst);
+
+        // Фамилия
+        const tdLast = document.createElement('td');
+        tdLast.textContent = user.last_name || '-';
+        tr.appendChild(tdLast);
+
+        // Роли (бейджи)
+        const tdRoles = document.createElement('td');
+        const rolesDiv = document.createElement('div');
+        rolesDiv.className = 'table-badge-list';
+        (user.user_roles || []).forEach(r => {
+            const span = document.createElement('span');
+            span.className = 'table-badge';
+            span.textContent = r.name;
+            rolesDiv.appendChild(span);
+        });
+        if (rolesDiv.children.length === 0) {
+            rolesDiv.innerHTML = '<span style="color: var(--text-muted); font-size: 11px;">Нет ролей</span>';
+        }
+        tdRoles.appendChild(rolesDiv);
+        tr.appendChild(tdRoles);
+
+        // Команды (бейджи)
+        const tdTeams = document.createElement('td');
+        const teamsDiv = document.createElement('div');
+        teamsDiv.className = 'table-badge-list';
+        (user.user_teams || []).forEach(t => {
+            const span = document.createElement('span');
+            span.className = 'table-badge';
+            span.textContent = t.name;
+            teamsDiv.appendChild(span);
+        });
+        if (teamsDiv.children.length === 0) {
+            teamsDiv.innerHTML = '<span style="color: var(--text-muted); font-size: 11px;">Нет команд</span>';
+        }
+        tdTeams.appendChild(teamsDiv);
+        tr.appendChild(tdTeams);
+
+        // Вес
+        const tdWeight = document.createElement('td');
+        tdWeight.textContent = user.weight !== undefined ? user.weight : '100';
+        tr.appendChild(tdWeight);
+
+        // Действия
+        const tdActions = document.createElement('td');
+        const btnEdit = document.createElement('button');
+        btnEdit.className = 'btn btn-secondary btn-sm';
+        btnEdit.textContent = '✏️ Редактировать';
+        btnEdit.addEventListener('click', () => openEditUserModal(user.id));
+        tdActions.appendChild(btnEdit);
+
+        tr.appendChild(tdActions);
+        tbody.appendChild(tr);
+    });
+}
+
+// Открывает модальное окно детального просмотра и редактирования
+async function openEditUserModal(userId) {
+    const modal = document.getElementById('modal-edit-user');
+    if (!modal) return;
+
+    try {
+        const user = await apiGet(`/admin/users/${userId}`);
+
+        // Заполнение полей формы
+        document.getElementById('edit-user-id').value = user.id;
+        document.getElementById('edit-user-telegram-id').value = user.telegram_id || '';
+        document.getElementById('edit-user-first-name').value = user.first_name || '';
+        document.getElementById('edit-user-last-name').value = user.last_name || '';
+        document.getElementById('edit-user-weight').value = user.weight !== undefined ? user.weight : 100;
+
+        // Отметка чекбоксов ролей
+        const roleCbs = document.querySelectorAll('#edit-user-roles-container input[type="checkbox"]');
+        roleCbs.forEach(cb => {
+            cb.checked = (user.role_ids || []).includes(cb.value);
+        });
+
+        // Отметка чекбоксов команд
+        const teamCbs = document.querySelectorAll('#edit-user-teams-container input[type="checkbox"]');
+        teamCbs.forEach(cb => {
+            cb.checked = (user.team_ids || []).includes(cb.value);
+        });
+
+        modal.classList.remove('hidden');
+    } catch (err) {
+        showToast('Не удалось загрузить данные пользователя: ' + err.message, 'error');
+    }
+}
+
+// Закрывает модальное окно редактирования
+function closeEditUserModal() {
+    const modal = document.getElementById('modal-edit-user');
+    if (modal) {
+        modal.classList.add('hidden');
+    }
+}
+
 function setupFormListeners() {
-    // Create Team Form
+    // Форма создания новой команды
     const teamForm = document.getElementById('form-create-team');
     teamForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -53,15 +242,13 @@ function setupFormListeners() {
             const newTeam = await apiPost('/teams', { name, description });
             showToast(`Команда "${newTeam.name || name}" успешно создана!`, 'success');
             teamForm.reset();
-            
-            // Reload all teams in the application
             reloadTeams();
         } catch (err) {
             showToast('Не удалось создать команду: ' + err.message, 'error');
         }
     });
 
-    // Create Epic Form
+    // Форма создания эпика
     const epicForm = document.getElementById('form-create-epic');
     epicForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -75,7 +262,6 @@ function setupFormListeners() {
             showToast(`Эпик "${number}: ${name}" успешно создан!`, 'success');
             epicForm.reset();
             
-            // Reload epics if this was the active team
             if (teamId === state.get('selectedTeamId')) {
                 reloadEpics(teamId);
             }
@@ -84,7 +270,7 @@ function setupFormListeners() {
         }
     });
 
-    // Create Risk Form - Dynamic Epics dropdown based on selected team
+    // Выбор команды для рисков (динамическая загрузка эпиков)
     const riskTeamSelect = document.getElementById('risk-team-select');
     const riskEpicSelect = document.getElementById('risk-epic-select');
     
@@ -120,6 +306,7 @@ function setupFormListeners() {
         }
     });
 
+    // Форма добавления риска
     const riskForm = document.getElementById('form-create-risk');
     riskForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -137,7 +324,7 @@ function setupFormListeners() {
         }
     });
 
-    // Import Users Form
+    // Форма импорта пользователей
     const importForm = document.getElementById('form-import-users');
     importForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -148,9 +335,88 @@ function setupFormListeners() {
             const resp = await apiPost('/users/bulk', { csv: usersData, team_id: teamId });
             showToast(`Импортировано пользователей: ${resp.imported_count || resp.count || 0}`, 'success');
             importForm.reset();
+            loadUsers(); // Перезагружаем список
         } catch (err) {
             showToast('Ошибка импорта пользователей: ' + err.message, 'error');
         }
+    });
+
+    // Форма создания одиночного пользователя
+    const singleUserForm = document.getElementById('form-single-user');
+    singleUserForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const telegramId = document.getElementById('single-user-telegram-id').value.trim();
+        const firstName = document.getElementById('single-user-first-name').value.trim();
+        const lastName = document.getElementById('single-user-last-name').value.trim();
+        const weight = parseInt(document.getElementById('single-user-weight').value, 10) || 100;
+
+        // Сбор выбранных ролей
+        const roleCbs = document.querySelectorAll('#single-user-roles-container input[type="checkbox"]:checked');
+        const roleIds = Array.from(roleCbs).map(cb => cb.value);
+
+        // Сбор выбранных команд
+        const teamCbs = document.querySelectorAll('#single-user-teams-container input[type="checkbox"]:checked');
+        const teamIds = Array.from(teamCbs).map(cb => cb.value);
+
+        try {
+            await apiPost('/admin/users', {
+                telegram_id: telegramId,
+                first_name: firstName,
+                last_name: lastName,
+                weight: weight,
+                role_ids: roleIds,
+                team_ids: teamIds
+            });
+
+            showToast(`Пользователь @${telegramId} успешно создан!`, 'success');
+            singleUserForm.reset();
+            loadUsers();
+        } catch (err) {
+            showToast('Не удалось создать пользователя: ' + err.message, 'error');
+        }
+    });
+
+    // Форма редактирования пользователя
+    const editUserForm = document.getElementById('form-edit-user');
+    editUserForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const userId = document.getElementById('edit-user-id').value;
+        const firstName = document.getElementById('edit-user-first-name').value.trim();
+        const lastName = document.getElementById('edit-user-last-name').value.trim();
+        const weight = parseInt(document.getElementById('edit-user-weight').value, 10) || 100;
+
+        // Сбор выбранных ролей
+        const roleCbs = document.querySelectorAll('#edit-user-roles-container input[type="checkbox"]:checked');
+        const roleIds = Array.from(roleCbs).map(cb => cb.value);
+
+        // Сбор выбранных команд
+        const teamCbs = document.querySelectorAll('#edit-user-teams-container input[type="checkbox"]:checked');
+        const teamIds = Array.from(teamCbs).map(cb => cb.value);
+
+        try {
+            await apiPut(`/admin/users/${userId}`, {
+                first_name: firstName,
+                last_name: lastName,
+                weight: weight,
+                role_ids: roleIds,
+                team_ids: teamIds
+            });
+
+            showToast('Данные пользователя успешно обновлены!', 'success');
+            closeEditUserModal();
+            loadUsers();
+        } catch (err) {
+            showToast('Не удалось обновить пользователя: ' + err.message, 'error');
+        }
+    });
+
+    // Закрытие модального окна редактирования
+    document.getElementById('edit-user-close')?.addEventListener('click', closeEditUserModal);
+    document.getElementById('edit-user-cancel')?.addEventListener('click', closeEditUserModal);
+
+    // Кнопка обновления списка пользователей
+    document.getElementById('btn-refresh-users')?.addEventListener('click', () => {
+        loadUsers();
     });
 }
 
