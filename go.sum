@@ -37,10 +37,10 @@ github.com/mattn/go-isatty v0.0.22 h1:j8l17JJ9i6VGPUFUYoTUKPSgKe/83EYU2zBC7YNKMw
 github.com/mattn/go-isatty v0.0.22/go.mod h1:ZXfXG4SQHsB/w3ZeOYbR0PrPwLy+n6xiMrJlRFqopa4=
 github.com/mattn/go-sqlite3 v1.14.22 h1:2gZY6PC6kBnID23Tichd1K+Z0oS6nE/XwU+Vz/5o4kU=
 github.com/mattn/go-sqlite3 v1.14.22/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
-github.com/nativebpm/connectors/httpstream v0.0.2 h1:sbz6cU/FO/Uge9FqbiKhASJotq48Elvmj38k1OLID8k=
-github.com/nativebpm/connectors/httpstream v0.0.2/go.mod h1:nBNkMFg6xXbhDVT9h54UtDsRFCpsJnuwy0X1QXNXJIo=
-github.com/nativebpm/gotenberg v1.1.1 h1:nufVV8A2jM4U8SNFvnmfmBhqTiwBQUSrWP3WeIpOHWw=
-github.com/nativebpm/gotenberg v1.1.1/go.mod h1:6iak2jgVrjzT/S+Xzmh2PsTGhRO4tch47BchaTsiN9k=
+github.com/nativebpm/gotenberg v1.1.0 h1:N08qF4baVlLK/UMBoUgGruLIk5B1UIq/u6YURB3tVfo=
+github.com/nativebpm/gotenberg v1.1.0/go.mod h1:Woz9IoWYPVk4MxQcef/sz+DptPJDzu4/25I0eYQwKY0=
+github.com/nativebpm/httpstream v0.0.1 h1:i7p2+rXNA1cxrDJ23h3HUOIjcg7nA9S2esgO/ZMww8Q=
+github.com/nativebpm/httpstream v0.0.1/go.mod h1:mFCvnQu5iZ7/oMLG84W9o5ziI6X3UUejUiJBuQt1zCM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/revrost/go-openrouter v1.6.0 h1:A3++J/DypecvL6AcG3bZA/oBc7gs2zBBqD9haydxToE=
