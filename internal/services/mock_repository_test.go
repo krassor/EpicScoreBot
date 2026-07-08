@@ -22,6 +22,11 @@ type MockRepository struct {
 	UpdateUserNameFunc         func(ctx context.Context, userID uuid.UUID, firstName, lastName string) error
 	UpdateUserWeightFunc       func(ctx context.Context, userID uuid.UUID, weight int) error
 	UpdateUserChatIDFunc       func(ctx context.Context, userID uuid.UUID, chatID int64) error
+	CreateUserWithRelationsFunc func(ctx context.Context, user *domain.User, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error
+	UpdateUserWithRelationsFunc func(ctx context.Context, userID uuid.UUID, firstName, lastName string, weight int, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error
+	GetUserRelationsFunc        func(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, []uuid.UUID, error)
+	GetUserTeamsFunc            func(ctx context.Context, userID uuid.UUID) ([]domain.Team, error)
+	GetUserRolesFunc            func(ctx context.Context, userID uuid.UUID) ([]domain.Role, error)
 
 	// Roles
 	GetAllRolesFunc            func(ctx context.Context) ([]domain.Role, error)
@@ -132,6 +137,41 @@ func (m *MockRepository) UpdateUserChatID(ctx context.Context, userID uuid.UUID,
 		return m.UpdateUserChatIDFunc(ctx, userID, chatID)
 	}
 	return nil
+}
+
+func (m *MockRepository) CreateUserWithRelations(ctx context.Context, user *domain.User, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error {
+	if m.CreateUserWithRelationsFunc != nil {
+		return m.CreateUserWithRelationsFunc(ctx, user, teamUUIDs, roleUUIDs)
+	}
+	return nil
+}
+
+func (m *MockRepository) UpdateUserWithRelations(ctx context.Context, userID uuid.UUID, firstName, lastName string, weight int, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error {
+	if m.UpdateUserWithRelationsFunc != nil {
+		return m.UpdateUserWithRelationsFunc(ctx, userID, firstName, lastName, weight, teamUUIDs, roleUUIDs)
+	}
+	return nil
+}
+
+func (m *MockRepository) GetUserRelations(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, []uuid.UUID, error) {
+	if m.GetUserRelationsFunc != nil {
+		return m.GetUserRelationsFunc(ctx, userID)
+	}
+	return nil, nil, nil
+}
+
+func (m *MockRepository) GetUserTeams(ctx context.Context, userID uuid.UUID) ([]domain.Team, error) {
+	if m.GetUserTeamsFunc != nil {
+		return m.GetUserTeamsFunc(ctx, userID)
+	}
+	return nil, nil
+}
+
+func (m *MockRepository) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]domain.Role, error) {
+	if m.GetUserRolesFunc != nil {
+		return m.GetUserRolesFunc(ctx, userID)
+	}
+	return nil, nil
 }
 
 func (m *MockRepository) GetAllRoles(ctx context.Context) ([]domain.Role, error) {

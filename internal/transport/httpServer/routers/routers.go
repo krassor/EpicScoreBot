@@ -54,6 +54,16 @@ func (r *Router) Mount(mux *chi.Mux) {
 				mux.Post("/risks", r.ganttHandler.AddRisk)
 				mux.Post("/users/bulk", r.ganttHandler.BulkCreateUsers)
 
+				// User management (Admin only)
+				mux.Group(func(mux chi.Router) {
+					mux.Use(myMiddleware.RoleAuth(r.ganttHandler.Repo(), r.ganttHandler.Config(), "admin"))
+					mux.Get("/admin/users", r.ganttHandler.GetUsersList)
+					mux.Get("/admin/users/{id}", r.ganttHandler.GetUserDetails)
+					mux.Post("/admin/users", r.ganttHandler.CreateSingleUser)
+					mux.Put("/admin/users/{id}", r.ganttHandler.UpdateUser)
+				})
+
+
 				// Scoring endpoints
 				mux.Post("/epics/start", r.ganttHandler.StartEpicScoring)
 				mux.Post("/scores/epic", r.ganttHandler.SubmitEpicScore)

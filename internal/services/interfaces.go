@@ -28,6 +28,11 @@ type Repository interface {
 	UpdateUserName(ctx context.Context, userID uuid.UUID, firstName, lastName string) error
 	UpdateUserWeight(ctx context.Context, userID uuid.UUID, weight int) error
 	UpdateUserChatID(ctx context.Context, userID uuid.UUID, chatID int64) error
+	CreateUserWithRelations(ctx context.Context, user *domain.User, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error
+	UpdateUserWithRelations(ctx context.Context, userID uuid.UUID, firstName, lastName string, weight int, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error
+	GetUserRelations(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, []uuid.UUID, error)
+	GetUserTeams(ctx context.Context, userID uuid.UUID) ([]domain.Team, error)
+	GetUserRoles(ctx context.Context, userID uuid.UUID) ([]domain.Role, error)
 
 	// Roles
 	GetAllRoles(ctx context.Context) ([]domain.Role, error)

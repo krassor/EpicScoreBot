@@ -44,6 +44,16 @@ func NewGanttHandler(
 	}
 }
 
+// Repo возвращает Repository этого обработчика.
+func (h *GanttHandler) Repo() Repository {
+	return h.repo
+}
+
+// Config возвращает config.BotConfig этого обработчика.
+func (h *GanttHandler) Config() config.BotConfig {
+	return h.cfg
+}
+
 // ── API Handlers ──────────────────────────────────────────────────────────
 
 // GetTeams returns teams based on user's role.

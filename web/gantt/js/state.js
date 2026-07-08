@@ -11,7 +11,8 @@ class State {
             tasks: [],               // Array of GanttTask
             viewMode: 'Day',         // Day, Week, Month
             activeTab: 'gantt',      // gantt, scoring, admin, ai-chat
-            roles: []                // Array of Roles loaded from backend
+            roles: [],               // Array of Roles loaded from backend
+            users: []                // Array of all registered users
         };
         this._listeners = {};
     }

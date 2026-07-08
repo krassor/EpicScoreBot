@@ -572,3 +572,262 @@ func (h *GanttHandler) DeleteRisk(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+
+// GetUsersList возвращает список всех зарегистрированных пользователей со всеми связями.
+func (h *GanttHandler) GetUsersList(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.GetUsersList"
+	h.log.Info("executing get users list", slog.String("op", op))
+
+	users, err := h.repo.GetAllUsers(r.Context())
+	if err != nil {
+		h.log.Error("failed to get all users", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to get users")
+		return
+	}
+
+	type teamResp struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	type roleResp struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	type userWithRelations struct {
+		ID         string     `json:"id"`
+		TelegramID string     `json:"telegram_id"`
+		FirstName  string     `json:"first_name"`
+		LastName   string     `json:"last_name"`
+		Weight     int        `json:"weight"`
+		UserTeams  []teamResp `json:"user_teams"`
+		UserRoles  []roleResp `json:"user_roles"`
+	}
+
+	resp := make([]userWithRelations, 0, len(users))
+
+	for _, u := range users {
+		// Получение команд пользователя
+		userTeams, err := h.repo.GetUserTeams(r.Context(), u.ID)
+		if err != nil {
+			h.log.Error("failed to get teams for user", slog.String("op", op), slog.String("user_id", u.ID.String()), slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "failed to load user relations")
+			return
+		}
+		teams := make([]teamResp, len(userTeams))
+		for i, t := range userTeams {
+			teams[i] = teamResp{ID: t.ID.String(), Name: t.Name}
+		}
+
+		// Получение ролей пользователя
+		userRoles, err := h.repo.GetUserRoles(r.Context(), u.ID)
+		if err != nil {
+			h.log.Error("failed to get roles for user", slog.String("op", op), slog.String("user_id", u.ID.String()), slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "failed to load user relations")
+			return
+		}
+		roles := make([]roleResp, len(userRoles))
+		for i, r := range userRoles {
+			roles[i] = roleResp{ID: r.ID.String(), Name: r.Name}
+		}
+
+		resp = append(resp, userWithRelations{
+			ID:         u.ID.String(),
+			TelegramID: u.TelegramID,
+			FirstName:  u.FirstName,
+			LastName:   u.LastName,
+			Weight:     u.Weight,
+			UserTeams:  teams,
+			UserRoles:  roles,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// GetUserDetails возвращает детальную информацию о пользователе, включая списки ID привязанных команд и ролей.
+func (h *GanttHandler) GetUserDetails(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.GetUserDetails"
+	userIDStr := chi.URLParam(r, "id")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	h.log.Info("executing get user details", slog.String("op", op), slog.String("user_id", userIDStr))
+
+	user, err := h.repo.GetUserByID(r.Context(), userID)
+	if err != nil {
+		h.log.Error("failed to get user by id", slog.String("op", op), slog.String("user_id", userIDStr), slog.String("error", err.Error()))
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	teamIDs, roleIDs, err := h.repo.GetUserRelations(r.Context(), userID)
+	if err != nil {
+		h.log.Error("failed to get user relations", slog.String("op", op), slog.String("user_id", userIDStr), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to load user relations")
+		return
+	}
+
+	teamIDsStr := make([]string, len(teamIDs))
+	for i, tid := range teamIDs {
+		teamIDsStr[i] = tid.String()
+	}
+
+	roleIDsStr := make([]string, len(roleIDs))
+	for i, rid := range roleIDs {
+		roleIDsStr[i] = rid.String()
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":          user.ID.String(),
+		"telegram_id": user.TelegramID,
+		"first_name":  user.FirstName,
+		"last_name":   user.LastName,
+		"weight":      user.Weight,
+		"team_ids":    teamIDsStr,
+		"role_ids":    roleIDsStr,
+	})
+}
+
+// CreateSingleUser создает нового пользователя со всеми связями с командами и ролями в одной транзакции.
+func (h *GanttHandler) CreateSingleUser(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.CreateSingleUser"
+	h.log.Info("executing single user creation", slog.String("op", op))
+
+	var req struct {
+		TelegramID string   `json:"telegram_id"`
+		FirstName  string   `json:"first_name"`
+		LastName   string   `json:"last_name"`
+		Weight     int      `json:"weight"`
+		TeamIDs    []string `json:"team_ids"`
+		RoleIDs    []string `json:"role_ids"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.log.Error("failed to decode request body", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.TelegramID == "" || req.FirstName == "" {
+		writeError(w, http.StatusBadRequest, "telegram_id and first_name are required")
+		return
+	}
+
+	if req.Weight <= 0 {
+		req.Weight = 100 // вес по умолчанию
+	}
+
+	var teamUUIDs []uuid.UUID
+	for _, tidStr := range req.TeamIDs {
+		tid, err := uuid.Parse(tidStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid team_id in list")
+			return
+		}
+		teamUUIDs = append(teamUUIDs, tid)
+	}
+
+	var roleUUIDs []uuid.UUID
+	for _, ridStr := range req.RoleIDs {
+		rid, err := uuid.Parse(ridStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid role_id in list")
+			return
+		}
+		roleUUIDs = append(roleUUIDs, rid)
+	}
+
+	user := &domain.User{
+		ID:         uuid.New(),
+		TelegramID: req.TelegramID,
+		FirstName:  req.FirstName,
+		LastName:   req.LastName,
+		Weight:     req.Weight,
+	}
+
+	err := h.repo.CreateUserWithRelations(r.Context(), user, teamUUIDs, roleUUIDs)
+	if err != nil {
+		h.log.Error("failed to create user with relations", slog.String("op", op), slog.String("error", err.Error()))
+		if strings.Contains(err.Error(), "unique_telegram_id") || strings.Contains(err.Error(), "telegram_id") {
+			writeError(w, http.StatusConflict, "пользователь с таким telegram_id уже зарегистрирован")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create user")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, user)
+}
+
+// UpdateUser обновляет данные пользователя и его связи с командами и ролями.
+func (h *GanttHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.UpdateUser"
+	userIDStr := chi.URLParam(r, "id")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	h.log.Info("executing user update", slog.String("op", op), slog.String("user_id", userIDStr))
+
+	var req struct {
+		FirstName string   `json:"first_name"`
+		LastName  string   `json:"last_name"`
+		Weight    int      `json:"weight"`
+		TeamIDs   []string `json:"team_ids"`
+		RoleIDs   []string `json:"role_ids"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.log.Error("failed to decode request body", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.FirstName == "" {
+		writeError(w, http.StatusBadRequest, "first_name is required")
+		return
+	}
+
+	if req.Weight < 0 || req.Weight > 100 {
+		writeError(w, http.StatusBadRequest, "weight must be between 0 and 100")
+		return
+	}
+
+	var teamUUIDs []uuid.UUID
+	for _, tidStr := range req.TeamIDs {
+		tid, err := uuid.Parse(tidStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid team_id in list")
+			return
+		}
+		teamUUIDs = append(teamUUIDs, tid)
+	}
+
+	var roleUUIDs []uuid.UUID
+	for _, ridStr := range req.RoleIDs {
+		rid, err := uuid.Parse(ridStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid role_id in list")
+			return
+		}
+		roleUUIDs = append(roleUUIDs, rid)
+	}
+
+	err = h.repo.UpdateUserWithRelations(r.Context(), userID, req.FirstName, req.LastName, req.Weight, teamUUIDs, roleUUIDs)
+	if err != nil {
+		h.log.Error("failed to update user with relations", slog.String("op", op), slog.String("user_id", userIDStr), slog.String("error", err.Error()))
+		if strings.Contains(err.Error(), "user not found") {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to update user")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
