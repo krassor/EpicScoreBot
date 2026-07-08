@@ -763,11 +763,49 @@
 }
 
 .checkbox-item input[type="checkbox"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
     cursor: pointer;
-    accent-color: var(--accent-primary);
-    width: 16px;
-    height: 16px;
+    position: relative;
+    outline: none;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     margin: 0;
+}
+
+.checkbox-item input[type="checkbox"]:hover {
+    border-color: var(--accent-hover);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.checkbox-item input[type="checkbox"]:focus-visible {
+    border-color: var(--accent-hover);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.checkbox-item input[type="checkbox"]:checked {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.checkbox-item input[type="checkbox"]:checked::after {
+    content: '';
+    width: 4px;
+    height: 9px;
+    border: solid #ffffff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+    position: absolute;
+    top: 1px;
+    left: 5px;
 }
 
 /* ── Admin Table Styles ─────────────────────────────────────────────── */
