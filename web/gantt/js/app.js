@@ -12,11 +12,24 @@ import { initScoringPanel } from './scoring-panel.js';
 import { initAIChat } from './ai-chat.js';
 
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Initialise modules
-    initGanttRenderer();
-    initAdminPanel();
-    initScoringPanel();
-    initAIChat();
+    console.log('DOMContentLoaded: Инициализация модулей...');
+    
+    // 1. Initialise modules with error isolation
+    const modules = [
+        { name: 'GanttRenderer', init: initGanttRenderer },
+        { name: 'AdminPanel', init: initAdminPanel },
+        { name: 'ScoringPanel', init: initScoringPanel },
+        { name: 'AIChat', init: initAIChat }
+    ];
+
+    modules.forEach(m => {
+        try {
+            console.log(`Инициализация модуля ${m.name}...`);
+            m.init();
+        } catch (e) {
+            console.error(`Ошибка при инициализации модуля ${m.name}:`, e);
+        }
+    });
 
     // 2. Setup state listeners
     state.subscribe('userProfile', (profile) => {
@@ -90,8 +103,9 @@ function handleProfileLoaded(profile) {
         startDateInput.value = today;
     }
 
-    // Load teams
+    // Load teams and roles
     loadTeams();
+    loadRoles();
 }
 
 function getRoleDisplayName(role) {
@@ -249,3 +263,16 @@ function setupGlobalEventListeners() {
     // Generate tasks button
     document.getElementById('btn-generate')?.addEventListener('click', generateTasks);
 }
+
+async function loadRoles() {
+    try {
+        const data = await apiGet('/roles');
+        const roles = data.roles || [];
+        state.set('roles', roles);
+    } catch (err) {
+        if (err.message !== 'FORBIDDEN' && err.message !== 'UNAUTHORIZED') {
+            showToast('Ошибка загрузки ролей: ' + err.message, 'error');
+        }
+    }
+}
+

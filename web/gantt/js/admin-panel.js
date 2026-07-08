@@ -5,32 +5,55 @@ import { apiPost, apiGet, apiPut } from './api.js';
 import { showToast } from './utils.js';
 
 export function initAdminPanel() {
+    console.log('initAdminPanel: Инициализация панели администратора...');
+
     // Подписка на изменение списка команд для заполнения выпадающих списков и чекбоксов
     state.subscribe('teams', (teams) => {
-        populateTeamSelects(teams);
-        renderCheckboxList('single-user-teams-container', teams, 'team_ids');
-        renderCheckboxList('edit-user-teams-container', teams, 'team_ids');
+        console.log('initAdminPanel: Получен список команд:', teams);
+        try {
+            populateTeamSelects(teams);
+            renderCheckboxList('single-user-teams-container', teams, 'team_ids');
+            renderCheckboxList('edit-user-teams-container', teams, 'team_ids');
+        } catch (e) {
+            console.error('Ошибка в подписке на teams:', e);
+        }
     });
 
     // Подписка на изменение списка ролей для заполнения списков чекбоксов
     state.subscribe('roles', (roles) => {
-        renderCheckboxList('single-user-roles-container', roles, 'role_ids');
-        renderCheckboxList('edit-user-roles-container', roles, 'role_ids');
+        console.log('initAdminPanel: Получен список ролей:', roles);
+        try {
+            renderCheckboxList('single-user-roles-container', roles, 'role_ids');
+            renderCheckboxList('edit-user-roles-container', roles, 'role_ids');
+        } catch (e) {
+            console.error('Ошибка в подписке на roles:', e);
+        }
     });
 
     // Подписка на изменение списка пользователей для рендеринга таблицы
     state.subscribe('users', (users) => {
-        renderUsersTable(users);
+        console.log('initAdminPanel: Получен список пользователей:', users);
+        try {
+            renderUsersTable(users);
+        } catch (e) {
+            console.error('Ошибка в подписке на users:', e);
+        }
     });
 
     // Загрузка пользователей при открытии вкладки админки
     state.subscribe('activeTab', (tabName) => {
+        console.log('initAdminPanel: Вкладка изменена на:', tabName);
         if (tabName === 'admin') {
+            console.log('initAdminPanel: Запуск загрузки пользователей...');
             loadUsers();
         }
     });
 
-    setupFormListeners();
+    try {
+        setupFormListeners();
+    } catch (e) {
+        console.error('Ошибка при настройке слушателей форм:', e);
+    }
 }
 
 // Заполняет стандартные выпадающие списки команд
@@ -95,10 +118,13 @@ function renderCheckboxList(containerId, items, nameAttr) {
 
 // Загружает список пользователей с бэкенда
 async function loadUsers() {
+    console.log('loadUsers: Вызов apiGet("/admin/users")...');
     try {
         const users = await apiGet('/admin/users');
+        console.log('loadUsers: Пользователи успешно загружены с сервера:', users);
         state.set('users', users || []);
     } catch (err) {
+        console.error('loadUsers: Ошибка при загрузке пользователей:', err);
         if (err.message !== 'UNAUTHORIZED' && err.message !== 'FORBIDDEN') {
             showToast('Не удалось загрузить пользователей: ' + err.message, 'error');
         }
