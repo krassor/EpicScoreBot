@@ -1,0 +1,185 @@
+/* ── Gantt Chart Styles ─────────────────────────────────────────────── */
+
+.toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    background: var(--bg-glass);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.view-modes {
+    display: flex;
+    gap: 2px;
+    background: var(--bg-tertiary);
+    padding: 2px;
+    border-radius: var(--border-radius-sm);
+    border: 1px solid var(--border-color);
+}
+
+.btn-view {
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--font-family);
+    font-size: 12px;
+    font-weight: 500;
+    transition: all var(--transition);
+}
+
+.btn-view.active {
+    background: var(--accent-primary);
+    color: #fff;
+}
+
+.btn-view:hover:not(.active) {
+    color: var(--text-primary);
+    background: var(--bg-glass);
+}
+
+.app-gantt-wrapper {
+    flex: 1;
+    padding: 24px;
+    overflow: auto;
+    background: var(--bg-primary);
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 100px 24px;
+    text-align: center;
+}
+
+.empty-icon {
+    font-size: 56px;
+    margin-bottom: 16px;
+    opacity: 0.4;
+    filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.1));
+}
+
+.empty-state h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.empty-state p {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* ── Frappe Gantt Dark Theme Overrides ─────────────────────────────── */
+
+:root {
+    --g-header-background: var(--bg-secondary);
+    --g-row-color: var(--bg-primary);
+    --g-row-border-color: var(--border-color);
+    --g-border-color: var(--border-color);
+    --g-tick-color: var(--border-color);
+    --g-tick-color-thick: var(--border-color);
+    --g-text-muted: var(--text-secondary);
+    --g-text-dark: var(--text-primary);
+    --g-text-light: #fff;
+    --g-arrow-color: var(--text-muted);
+    --g-today-highlight: var(--accent-glow);
+    --g-weekend-highlight-color: rgba(255, 255, 255, 0.015);
+    --g-actions-background: var(--bg-tertiary);
+    --g-popup-actions: var(--bg-card);
+    --g-bar-border: transparent;
+}
+
+/* Custom Task Colors based on Role */
+.gantt .gantt-epic .bar {
+    fill: var(--color-epic);
+}
+.gantt .gantt-epic .bar-progress {
+    fill: #4f46e5;
+}
+.gantt .gantt-epic .bar-label {
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.gantt .gantt-analyst .bar {
+    fill: var(--color-role-analyst);
+}
+.gantt .gantt-analyst .bar-progress {
+    fill: #1d4ed8;
+}
+
+.gantt .gantt-developer .bar {
+    fill: var(--color-role-be);
+}
+.gantt .gantt-developer .bar-progress {
+    fill: #047857;
+}
+
+.gantt .gantt-qa .bar {
+    fill: var(--color-role-qa);
+}
+.gantt .gantt-qa .bar-progress {
+    fill: #4338ca;
+}
+
+.gantt .gantt-leader .bar {
+    fill: var(--color-role-it-leader);
+}
+.gantt .gantt-leader .bar-progress {
+    fill: #6d28d9;
+}
+
+.gantt .gantt-default .bar {
+    fill: var(--color-default);
+}
+.gantt .gantt-default .bar-progress {
+    fill: #334155;
+}
+
+/* Handles for dragging dates */
+.gantt .handle-group .handle {
+    fill: rgba(255, 255, 255, 0.35);
+    cursor: ew-resize;
+}
+
+/* Tooltip/Popup styling */
+.gantt-container .popup-wrapper {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: var(--border-radius-sm) !important;
+    box-shadow: var(--shadow-lg) !important;
+    backdrop-filter: blur(20px) !important;
+    padding: 10px 14px !important;
+}
+
+.gantt-container .popup-wrapper .title {
+    font-family: var(--font-family) !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: var(--text-primary) !important;
+}
+
+.gantt-container .popup-wrapper .subtitle {
+    font-family: var(--font-family) !important;
+    font-size: 11px !important;
+    color: var(--text-secondary) !important;
+}

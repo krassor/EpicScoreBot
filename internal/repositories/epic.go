@@ -225,3 +225,32 @@ func (r *Repository) DeleteEpic(ctx context.Context, epicID uuid.UUID) error {
 	}
 	return nil
 }
+
+// StartEpicScoring starts scoring for an epic and its risks.
+func (r *Repository) StartEpicScoring(ctx context.Context, epicID uuid.UUID) error {
+	op := "Repository.StartEpicScoring"
+	tx, err := r.DB.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%s: begin tx: %w", op, err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// 1. Update epic status
+	queryEpic := `UPDATE epics SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
+	_, err = tx.ExecContext(ctx, queryEpic, string(domain.StatusScoring), epicID)
+	if err != nil {
+		return fmt.Errorf("%s: update epic status: %w", op, err)
+	}
+
+	// 2. Update risks status
+	queryRisks := `UPDATE risks SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE epic_id = $2`
+	_, err = tx.ExecContext(ctx, queryRisks, string(domain.StatusScoring), epicID)
+	if err != nil {
+		return fmt.Errorf("%s: update risks status: %w", op, err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("%s: commit: %w", op, err)
+	}
+	return nil
+}
