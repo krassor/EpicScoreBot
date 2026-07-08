@@ -1,0 +1,48 @@
+/* ── Design Tokens ──────────────────────────────────────────────────── */
+
+:root {
+    /* Colors - Futuristic Cyberpunk Dark Theme */
+    --bg-primary: #0b0b16;
+    --bg-secondary: #111126;
+    --bg-tertiary: #1b1b3a;
+    --bg-card: rgba(22, 22, 53, 0.6);
+    --bg-glass: rgba(255, 255, 255, 0.03);
+    --bg-glass-active: rgba(255, 255, 255, 0.08);
+
+    --text-primary: #f0f0ff;
+    --text-secondary: #a5a5d9;
+    --text-muted: #6e6eb3;
+
+    --accent-primary: #6366f1;
+    --accent-hover: #818cf8;
+    --accent-glow: rgba(99, 102, 241, 0.25);
+    
+    /* Role Colors */
+    --color-role-it-leader: #8b5cf6;
+    --color-role-analyst: #3b82f6;
+    --color-role-be: #10b981;
+    --color-role-fe: #f59e0b;
+    --color-role-mobile: #ec4899;
+    --color-role-qa: #6366f1;
+    --color-epic: #6366f1;
+    --color-default: #64748b;
+
+    /* Status Colors */
+    --color-status-new: #3b82f6;
+    --color-status-scoring: #f59e0b;
+    --color-status-scored: #10b981;
+
+    --border-color: rgba(255, 255, 255, 0.12);
+    --border-color-focus: rgba(99, 102, 241, 0.5);
+    --border-radius: 16px;
+    --border-radius-sm: 8px;
+    --border-radius-lg: 24px;
+
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.7);
+    --shadow-glow: 0 0 24px var(--accent-glow);
+
+    --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    --transition: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}

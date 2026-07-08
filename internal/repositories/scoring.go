@@ -308,3 +308,49 @@ func (r *Repository) GetUsersWhoScoredRisk(ctx context.Context, riskID uuid.UUID
 	}
 	return users, nil
 }
+
+// GetEpicScoresByUserID returns all epic scores submitted by a user.
+func (r *Repository) GetEpicScoresByUserID(ctx context.Context, userID uuid.UUID) ([]domain.EpicScore, error) {
+	op := "Repository.GetEpicScoresByUserID"
+	query := `SELECT id, epic_id, user_id, role_id, score, created_at
+		FROM epic_scores WHERE user_id = $1`
+	rows, err := r.DB.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	var scores []domain.EpicScore
+	for rows.Next() {
+		var s domain.EpicScore
+		if err := rows.Scan(&s.ID, &s.EpicID, &s.UserID,
+			&s.RoleID, &s.Score, &s.CreatedAt); err != nil {
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		scores = append(scores, s)
+	}
+	return scores, nil
+}
+
+// GetRiskScoresByUserID returns all risk scores submitted by a user.
+func (r *Repository) GetRiskScoresByUserID(ctx context.Context, userID uuid.UUID) ([]domain.RiskScore, error) {
+	op := "Repository.GetRiskScoresByUserID"
+	query := `SELECT id, risk_id, user_id, probability, impact, created_at
+		FROM risk_scores WHERE user_id = $1`
+	rows, err := r.DB.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	var scores []domain.RiskScore
+	for rows.Next() {
+		var s domain.RiskScore
+		if err := rows.Scan(&s.ID, &s.RiskID, &s.UserID,
+			&s.Probability, &s.Impact, &s.CreatedAt); err != nil {
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		scores = append(scores, s)
+	}
+	return scores, nil
+}

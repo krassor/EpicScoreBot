@@ -17,10 +17,12 @@ import (
 
 // GanttHandler provides HTTP handlers for the Gantt API.
 type GanttHandler struct {
-	svc  GanttService
-	repo Repository
-	cfg  config.BotConfig
-	log  *slog.Logger
+	svc     GanttService
+	repo    Repository
+	scoring ScoringService
+	ai      AIClient
+	cfg     config.BotConfig
+	log     *slog.Logger
 }
 
 // NewGanttHandler creates a new GanttHandler.
@@ -28,13 +30,17 @@ func NewGanttHandler(
 	log *slog.Logger,
 	svc GanttService,
 	repo Repository,
+	scoring ScoringService,
+	ai AIClient,
 	cfg config.BotConfig,
 ) *GanttHandler {
 	return &GanttHandler{
-		svc:  svc,
-		repo: repo,
-		cfg:  cfg,
-		log:  log.With(slog.String("component", "gantt-handler")),
+		svc:     svc,
+		repo:    repo,
+		scoring: scoring,
+		ai:      ai,
+		cfg:     cfg,
+		log:     log.With(slog.String("component", "gantt-handler")),
 	}
 }
 
@@ -123,7 +129,7 @@ func (h *GanttHandler) GetTeams(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetEpics returns scored epics for a team.
+// GetEpics returns epics for a team (scored only by default, or all if all=true).
 func (h *GanttHandler) GetEpics(w http.ResponseWriter, r *http.Request) {
 	teamIDStr := r.URL.Query().Get("team_id")
 	teamID, err := uuid.Parse(teamIDStr)
@@ -132,9 +138,24 @@ func (h *GanttHandler) GetEpics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	epics, err := h.repo.GetEpicsByTeamIDAndStatus(
-		r.Context(), teamID, "SCORED",
-	)
+	var epics []domain.Epic
+	allStr := r.URL.Query().Get("all")
+	if allStr == "true" {
+		var allEpics []domain.Epic
+		allEpics, err = h.repo.GetAllEpics(r.Context())
+		if err == nil {
+			for _, e := range allEpics {
+				if e.TeamID == teamID {
+					epics = append(epics, e)
+				}
+			}
+		}
+	} else {
+		epics, err = h.repo.GetEpicsByTeamIDAndStatus(
+			r.Context(), teamID, "SCORED",
+		)
+	}
+	
 	if err != nil {
 		h.log.Error("failed to get epics", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "failed to get epics")
@@ -142,18 +163,22 @@ func (h *GanttHandler) GetEpics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type epicResp struct {
-		ID         string   `json:"id"`
-		Number     string   `json:"number"`
-		Name       string   `json:"name"`
-		FinalScore *float64 `json:"final_score"`
+		ID          string   `json:"id"`
+		Number      string   `json:"number"`
+		Name        string   `json:"name"`
+		Status      string   `json:"status"`
+		Description string   `json:"description"`
+		FinalScore  *float64 `json:"final_score"`
 	}
 	var resp []epicResp
 	for _, e := range epics {
 		resp = append(resp, epicResp{
-			ID:         e.ID.String(),
-			Number:     e.Number,
-			Name:       e.Name,
-			FinalScore: e.FinalScore,
+			ID:          e.ID.String(),
+			Number:      e.Number,
+			Name:        e.Name,
+			Status:      string(e.Status),
+			Description: e.Description,
+			FinalScore:  e.FinalScore,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"epics": resp})
@@ -503,4 +528,215 @@ func (h *GanttHandler) TelegramWebAppAuth(w http.ResponseWriter, r *http.Request
 
 	writeError(w, http.StatusUnauthorized, "invalid init data")
 }
+
+// GetProfile returns the profile of the currently authenticated user including their role.
+func (h *GanttHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	sessionData := r.Context().Value(middleware.UserSessionKey)
+	if sessionData == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	session, ok := sessionData.(*middleware.UserSession)
+	if !ok || session.TelegramID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid session")
+		return
+	}
+
+	var role string
+
+	// 1. Is SuperAdmin?
+	isSuperAdmin := false
+	for _, sa := range h.cfg.SuperAdmins {
+		if strings.EqualFold(session.Username, sa) {
+			isSuperAdmin = true
+			break
+		}
+	}
+
+	if isSuperAdmin {
+		role = "superadmin"
+	} else {
+		// 2. Is Admin?
+		isAdmin := false
+		for _, ad := range h.cfg.Admins {
+			if strings.EqualFold(session.Username, ad) {
+				isAdmin = true
+				break
+			}
+		}
+
+		if isAdmin {
+			role = "admin"
+		} else {
+			// 3. Regular member?
+			user, errDb := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
+			if errDb != nil || user == nil {
+				writeError(w, http.StatusForbidden, "access denied")
+				return
+			}
+			role = "member"
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"telegram_id": session.TelegramID,
+		"username":    session.Username,
+		"first_name":  session.FirstName,
+		"role":        role,
+	})
+}
+
+// GetRoles returns all system roles.
+func (h *GanttHandler) GetRoles(w http.ResponseWriter, r *http.Request) {
+	roles, err := h.repo.GetAllRoles(r.Context())
+	if err != nil {
+		h.log.Error("failed to get roles", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to get roles")
+		return
+	}
+
+	type roleResp struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	var resp []roleResp
+	for _, role := range roles {
+		resp = append(resp, roleResp{
+			ID:   role.ID.String(),
+			Name: role.Name,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"roles": resp})
+}
+
+// CreateTeam inserts a new team.
+func (h *GanttHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	team, err := h.repo.CreateTeam(r.Context(), req.Name, req.Description)
+	if err != nil {
+		h.log.Error("failed to create team", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to create team: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, team)
+}
+
+// GetEpicScores returns voting progress and raw scores.
+func (h *GanttHandler) GetEpicScores(w http.ResponseWriter, r *http.Request) {
+	epicIDStr := chi.URLParam(r, "epic_id")
+	epicID, err := uuid.Parse(epicIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid epic_id")
+		return
+	}
+
+	scores, err := h.repo.GetEpicScoresByEpicID(r.Context(), epicID)
+	if err != nil {
+		h.log.Error("failed to get scores", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to get scores")
+		return
+	}
+
+	epic, err := h.repo.GetEpicByID(r.Context(), epicID)
+	var expected int
+	if err == nil && epic != nil {
+		members, errMem := h.repo.GetUsersByTeamID(r.Context(), epic.TeamID)
+		if errMem == nil {
+			expected = len(members)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"scores":          scores,
+		"scores_received": len(scores),
+		"scores_expected": expected,
+	})
+}
+
+// GetEpicRoleScores returns aggregated weighted scores per role.
+func (h *GanttHandler) GetEpicRoleScores(w http.ResponseWriter, r *http.Request) {
+	epicIDStr := chi.URLParam(r, "epic_id")
+	epicID, err := uuid.Parse(epicIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid epic_id")
+		return
+	}
+
+	roleScores, err := h.repo.GetEpicRoleScoresByEpicID(r.Context(), epicID)
+	if err != nil {
+		h.log.Error("failed to get role scores", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to get role scores")
+		return
+	}
+
+	type roleScoreResp struct {
+		RoleID      string  `json:"role_id"`
+		RoleName    string  `json:"role_name"`
+		WeightedAvg float64 `json:"weighted_avg"`
+	}
+
+	var resp []roleScoreResp
+	for _, rs := range roleScores {
+		roleName := rs.RoleID.String()
+		role, errR := h.repo.GetRoleByID(r.Context(), rs.RoleID)
+		if errR == nil && role != nil {
+			roleName = role.Name
+		}
+		resp = append(resp, roleScoreResp{
+			RoleID:      rs.RoleID.String(),
+			RoleName:    roleName,
+			WeightedAvg: rs.WeightedAvg,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// GetEpicRisks returns risks of an epic.
+func (h *GanttHandler) GetEpicRisks(w http.ResponseWriter, r *http.Request) {
+	epicIDStr := chi.URLParam(r, "epic_id")
+	epicID, err := uuid.Parse(epicIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid epic_id")
+		return
+	}
+
+	risks, err := h.repo.GetRisksByEpicID(r.Context(), epicID)
+	if err != nil {
+		h.log.Error("failed to get risks", slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to get risks")
+		return
+	}
+
+	type riskResp struct {
+		ID            string   `json:"id"`
+		Description   string   `json:"description"`
+		WeightedScore *float64 `json:"weighted_score"`
+	}
+	var resp []riskResp
+	for _, risk := range risks {
+		resp = append(resp, riskResp{
+			ID:            risk.ID.String(),
+			Description:   risk.Description,
+			WeightedScore: risk.WeightedScore,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"risks": resp})
+}
+
+
 

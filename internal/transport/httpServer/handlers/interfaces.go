@@ -18,18 +18,75 @@ type GanttService interface {
 // Repository defines the data-access contract used by handlers.
 type Repository interface {
 	// Teams
+	CreateTeam(ctx context.Context, name, description string) (*domain.Team, error)
 	GetAllTeams(ctx context.Context) ([]domain.Team, error)
 	GetTeamsByUserTelegramID(ctx context.Context, telegramID string) ([]domain.Team, error)
+	GetTeamByID(ctx context.Context, teamID uuid.UUID) (*domain.Team, error)
+	GetTeamByName(ctx context.Context, name string) (*domain.Team, error)
 
 	// Users
+	CreateUser(ctx context.Context, firstName, lastName string, telegramID string, weight int) (*domain.User, error)
+	BulkCreateUsers(ctx context.Context, users []domain.User, teamID *uuid.UUID, roleID *uuid.UUID) error
 	FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error)
+	GetUserByID(ctx context.Context, userID uuid.UUID) (*domain.User, error)
+	GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
+	AssignUserTeam(ctx context.Context, userID, teamID uuid.UUID) error
+	RemoveUserTeam(ctx context.Context, userID, teamID uuid.UUID) error
+	AssignUserRole(ctx context.Context, userID, roleID uuid.UUID) error
+	RemoveUserRole(ctx context.Context, userID, roleID uuid.UUID) error
+	UpdateUserWeight(ctx context.Context, userID uuid.UUID, weight int) error
+	DeleteUser(ctx context.Context, userID uuid.UUID) error
 
 	// Epics
+	CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID) (*domain.Epic, error)
+	GetEpicByID(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error)
+	GetEpicByNumber(ctx context.Context, number string) (*domain.Epic, error)
 	GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
+	UpdateEpicStatus(ctx context.Context, epicID uuid.UUID, status domain.Status) error
+	StartEpicScoring(ctx context.Context, epicID uuid.UUID) error
+	DeleteEpic(ctx context.Context, epicID uuid.UUID) error
+	GetAllEpics(ctx context.Context) ([]domain.Epic, error)
+
+	// Risks
+	CreateRisk(ctx context.Context, description string, epicID uuid.UUID) (*domain.Risk, error)
+	GetRiskByID(ctx context.Context, riskID uuid.UUID) (*domain.Risk, error)
+	GetRisksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
+	DeleteRisk(ctx context.Context, riskID uuid.UUID) error
+
+	// Roles
+	GetAllRoles(ctx context.Context) ([]domain.Role, error)
+	GetRoleByID(ctx context.Context, roleID uuid.UUID) (*domain.Role, error)
+	GetRoleByName(ctx context.Context, name string) (*domain.Role, error)
+	GetRoleByUserID(ctx context.Context, userID uuid.UUID) (*domain.Role, error)
+
+	// Scoring
+	CreateEpicScore(ctx context.Context, epicID, userID, roleID uuid.UUID, score int) error
+	CreateRiskScore(ctx context.Context, riskID, userID uuid.UUID, probability, impact int) error
+	GetEpicScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicScore, error)
+	GetEpicScoresByUserID(ctx context.Context, userID uuid.UUID) ([]domain.EpicScore, error)
+	GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
+	GetRiskScoresByRiskID(ctx context.Context, riskID uuid.UUID) ([]domain.RiskScore, error)
+	GetRiskScoresByUserID(ctx context.Context, userID uuid.UUID) ([]domain.RiskScore, error)
+	GetUsersWhoScoredEpic(ctx context.Context, epicID uuid.UUID) ([]domain.User, error)
+	GetUsersWhoScoredRisk(ctx context.Context, riskID uuid.UUID) ([]domain.User, error)
+	CountTeamMembers(ctx context.Context, teamID uuid.UUID) (int, error)
+	CountEpicScores(ctx context.Context, epicID uuid.UUID) (int, error)
+	CountRiskScores(ctx context.Context, riskID uuid.UUID) (int, error)
 
 	// Gantt tasks
 	GetGanttTasksByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error)
 	GetGanttTaskByID(ctx context.Context, taskID uuid.UUID) (*domain.GanttTask, error)
 	UpdateGanttTaskProgress(ctx context.Context, taskID uuid.UUID, progress float64) error
 	DeleteGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID) error
+}
+
+// ScoringService defines the contract for epic and risk scoring completion checks.
+type ScoringService interface {
+	TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) error
+	TryCompleteRiskScoring(ctx context.Context, riskID uuid.UUID) error
+}
+
+// AIClient defines the contract for interacting with the AI assistant.
+type AIClient interface {
+	Ask(ctx context.Context, question string) (string, error)
 }

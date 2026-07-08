@@ -4,22 +4,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EpicScoreBot — Диаграмма Ганта</title>
-    <meta name="description" content="Интерактивная диаграмма Ганта для планирования задач по эпикам">
+    <title>EpicScoreBot — Инструменты планирования</title>
+    <meta name="description" content="Интерактивная диаграмма Ганта и система скоринга эпиков">
+    
+    <!-- Frappe Gantt CDN styles -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@1.2.2/dist/frappe-gantt.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    
+    <!-- Modular CSS structure -->
+    <link rel="stylesheet" href="css/variables.css">
+    <link rel="stylesheet" href="css/base.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/gantt.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    
+    <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 
 <body>
-    <!-- Loading state -->
+    <!-- Loading state overlay -->
     <div id="loading-overlay" class="auth-overlay">
         <div class="auth-card">
             <div class="loader"></div>
-            <p style="margin-top: 16px; margin-bottom: 0;">Загрузка...</p>
+            <p style="margin-top: 16px; margin-bottom: 0;">Загрузка системы...</p>
         </div>
     </div>
 
@@ -28,12 +38,12 @@
         <div class="auth-card">
             <div class="auth-logo">📊</div>
             <h1>EpicScoreBot</h1>
-            <p>Диаграмма Ганта</p>
+            <p>Система совместного планирования и скоринга эпиков</p>
             <div id="telegram-login"></div>
             <script async src="https://telegram.org/js/telegram-widget.js?22" data-telegram-login="EpicScoreBot"
                 data-size="large" data-radius="12" data-auth-url="https://epicscore.net.ru/api/gantt/auth"
                 data-request-access="write" id="tg-widget-script">
-                </script>
+            </script>
         </div>
     </div>
 
@@ -41,55 +51,200 @@
     <div id="denied-overlay" class="auth-overlay hidden">
         <div class="auth-card" style="border-color: #ef4444;">
             <div class="auth-logo" style="color: #ef4444;">🚫</div>
-            <h1>Доступ закрыт</h1>
-            <p>Вы не состоите ни в одной из зарегистрированных команд и не являетесь администратором.</p>
+            <h1>Доступ ограничен</h1>
+            <p>Вы не являетесь участником ни одной из зарегистрированных команд и не зарегистрированы как администратор.</p>
         </div>
     </div>
 
-    <!-- Main app -->
+    <!-- Main App Container -->
     <div id="app" class="app hidden">
         <header class="header">
             <div class="header-left">
                 <span class="logo">📊</span>
-                <h1 id="page-title">EpicScoreBot — Ганта</h1>
+                <h1>EpicScore</h1>
             </div>
+            
+            <!-- Navigation Tabs -->
+            <nav class="nav-tabs" id="nav-tabs">
+                <button class="nav-tab active" data-tab="gantt">📅 Гант</button>
+                <button class="nav-tab" data-tab="scoring">⚡ Скоринг</button>
+                <button class="nav-tab" data-tab="admin" style="display: none;">⚙️ Админка</button>
+                <button class="nav-tab" data-tab="ai-chat">💬 Чат с AI</button>
+            </nav>
+            
             <div class="header-controls">
                 <select id="team-select" class="select">
                     <option value="">Выберите команду...</option>
                 </select>
-                <div class="view-modes">
-                    <button class="btn btn-view active" data-mode="Day">День</button>
-                    <button class="btn btn-view" data-mode="Week">Неделя</button>
-                    <button class="btn btn-view" data-mode="Month">Месяц</button>
+                <div class="user-profile" id="user-profile" style="display: none;">
+                    <span id="user-name"></span>
+                    <span id="user-role-badge" class="badge"></span>
+                    <button id="btn-logout" class="btn btn-secondary btn-sm" style="margin-left: 8px;">Выйти</button>
                 </div>
             </div>
         </header>
 
-        <div class="toolbar">
-            <div class="toolbar-left">
-                <select id="epic-select" class="select" disabled>
-                    <option value="">Выберите эпик для генерации...</option>
-                </select>
-                <input type="date" id="start-date" class="input-date" title="Дата начала">
-                <button id="btn-generate" class="btn btn-primary" disabled>
-                    ⚡ Сгенерировать задачи
-                </button>
-            </div>
-            <div class="toolbar-right">
-                <span id="task-count" class="badge">0 задач</span>
-            </div>
-        </div>
+        <main class="main-content">
+            <!-- TAB: Gantt Chart -->
+            <section id="tab-content-gantt" class="tab-content">
+                <div class="toolbar">
+                    <div class="toolbar-left">
+                        <select id="epic-select" class="select" disabled>
+                            <option value="">Выберите эпик для генерации...</option>
+                        </select>
+                        <input type="date" id="start-date" class="input-date" title="Дата начала">
+                        <button id="btn-generate" class="btn btn-primary" disabled>
+                            ⚡ Сгенерировать задачи
+                        </button>
+                    </div>
+                    <div class="toolbar-right">
+                        <div class="view-modes">
+                            <button class="btn-view active" data-mode="Day">День</button>
+                            <button class="btn-view" data-mode="Week">Неделя</button>
+                            <button class="btn-view" data-mode="Month">Месяц</button>
+                        </div>
+                        <span id="task-count" class="badge">0 задач</span>
+                    </div>
+                </div>
 
-        <div id="app-gantt-wrapper" class="app-gantt-wrapper">
-            <div id="gantt-empty" class="empty-state">
-                <div class="empty-icon">📋</div>
-                <h2>Нет задач</h2>
-                <p>Выберите команду и сгенерируйте задачи для эпиков</p>
-            </div>
-            <div id="gantt-chart"></div>
-        </div>
+                <div id="app-gantt-wrapper" class="app-gantt-wrapper">
+                    <div id="gantt-empty" class="empty-state">
+                        <div class="empty-icon">📋</div>
+                        <h2>Нет задач</h2>
+                        <p>Выберите команду в правом верхнем углу и сгенерируйте задачи для эпиков</p>
+                    </div>
+                    <div id="gantt-chart"></div>
+                </div>
+            </section>
 
-        <!-- Reorder modal -->
+            <!-- TAB: Scoring Dashboard -->
+            <section id="tab-content-scoring" class="tab-content hidden">
+                <div class="scoring-container">
+                    <div class="scoring-sidebar">
+                        <h3>Эпики команды</h3>
+                        <div id="scoring-epics-list" class="epics-list">
+                            <!-- Epics injected dynamically -->
+                        </div>
+                    </div>
+                    <div class="scoring-details" id="scoring-details">
+                        <div class="empty-state">
+                            <div class="empty-icon">⚡</div>
+                            <h2>Выберите эпик для скоринга</h2>
+                            <p>Выберите команду в верхнем меню, затем выберите эпик из списка слева</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: Admin Dashboard -->
+            <section id="tab-content-admin" class="tab-content hidden">
+                <div class="admin-container">
+                    <div class="admin-grid">
+                        <!-- Create Team -->
+                        <div class="admin-card">
+                            <h2>Создание новой команды</h2>
+                            <form id="form-create-team" class="admin-form">
+                                <div class="form-group">
+                                    <label for="team-name">Название команды</label>
+                                    <input type="text" id="team-name" required placeholder="Например, Team Alpha">
+                                </div>
+                                <div class="form-group">
+                                    <label for="team-desc">Описание</label>
+                                    <textarea id="team-desc" placeholder="Описание направлений деятельности команды..."></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Создать команду</button>
+                            </form>
+                        </div>
+
+                        <!-- Create Epic -->
+                        <div class="admin-card">
+                            <h2>Создание Эпика</h2>
+                            <form id="form-create-epic" class="admin-form">
+                                <div class="form-group">
+                                    <label for="epic-team-select">Команда</label>
+                                    <select id="epic-team-select" required class="select">
+                                        <option value="">Выберите команду...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="epic-number">Номер эпика</label>
+                                    <input type="text" id="epic-number" required placeholder="Например, EPIC-42">
+                                </div>
+                                <div class="form-group">
+                                    <label for="epic-name">Название эпика</label>
+                                    <input type="text" id="epic-name" required placeholder="Название фичи/цели">
+                                </div>
+                                <div class="form-group">
+                                    <label for="epic-desc">Описание / ТЗ</label>
+                                    <textarea id="epic-desc" placeholder="Подробное описание требований..."></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Создать эпик</button>
+                            </form>
+                        </div>
+
+                        <!-- Create Risk -->
+                        <div class="admin-card">
+                            <h2>Добавление Риска</h2>
+                            <form id="form-create-risk" class="admin-form">
+                                <div class="form-group">
+                                    <label for="risk-team-select">Команда</label>
+                                    <select id="risk-team-select" required class="select">
+                                        <option value="">Выберите команду...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="risk-epic-select">Эпик</label>
+                                    <select id="risk-epic-select" required class="select" disabled>
+                                        <option value="">Сначала выберите команду...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="risk-desc">Описание риска</label>
+                                    <textarea id="risk-desc" required placeholder="Например, Зависимость от стороннего API интегратора"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Добавить риск</button>
+                            </form>
+                        </div>
+
+                        <!-- Import Users -->
+                        <div class="admin-card">
+                            <h2>Массовый импорт пользователей</h2>
+                            <form id="form-import-users" class="admin-form">
+                                <div class="form-group">
+                                    <label for="import-team-select">Команда для импорта</label>
+                                    <select id="import-team-select" required class="select">
+                                        <option value="">Выберите команду...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="import-data">Данные пользователей (CSV / текст)</label>
+                                    <div class="form-help">Формат: <code>telegram_id,first_name,last_name,role,weight</code> (один человек на строку)</div>
+                                    <textarea id="import-data" required placeholder="12345678,Иван,Иванов,BE разработчик,100&#10;87654321,Петр,Петров,FE разработчик,80" rows="6"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Импортировать пользователей</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: AI Chat -->
+            <section id="tab-content-ai-chat" class="tab-content hidden">
+                <div class="ai-chat-container">
+                    <div class="ai-chat-messages" id="ai-chat-messages">
+                        <div class="ai-message assistant">
+                            Привет! Я твой AI-ассистент EpicScore. Я могу подсказать по оценкам, рискам, структуре команды или помочь с распределением задач на диаграмме Ганта. Спроси меня о чем-нибудь!
+                        </div>
+                    </div>
+                    <form id="ai-chat-form" class="ai-chat-form">
+                        <input type="text" id="ai-chat-input" placeholder="Задайте вопрос по проекту или планированию..." required autocomplete="off">
+                        <button type="submit" class="btn btn-primary">Отправить</button>
+                    </form>
+                </div>
+            </section>
+        </main>
+
+        <!-- Reorder modal for role priorities in Gantt -->
         <div id="reorder-modal" class="modal hidden">
             <div class="modal-overlay"></div>
             <div class="modal-content">
@@ -98,15 +253,11 @@
                     <button id="modal-close" class="btn-icon">✕</button>
                 </div>
                 <div id="modal-body" class="modal-body">
-                    <!-- Role items will be injected here -->
+                    <!-- Dynamic items injection with drag handle -->
                 </div>
                 <div class="modal-footer">
-                    <button id="modal-save" class="btn btn-primary">
-                        💾 Сохранить порядок
-                    </button>
-                    <button id="modal-cancel" class="btn btn-secondary">
-                        Отмена
-                    </button>
+                    <button id="modal-save" class="btn btn-primary">💾 Сохранить порядок</button>
+                    <button id="modal-cancel" class="btn btn-secondary">Отмена</button>
                 </div>
             </div>
         </div>
@@ -115,8 +266,10 @@
         <div id="toast-container" class="toast-container"></div>
     </div>
 
+    <!-- Frappe Gantt UMD build -->
     <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@1.2.2/dist/frappe-gantt.umd.js"></script>
-    <script src="app.js"></script>
+    <!-- Entry point script (type="module") -->
+    <script type="module" src="js/app.js"></script>
 </body>
 
 </html>

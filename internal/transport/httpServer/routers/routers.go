@@ -45,6 +45,29 @@ func (r *Router) Mount(mux *chi.Mux) {
 			mux.Group(func(mux chi.Router) {
 				mux.Use(myMiddleware.TelegramAuth(r.botToken))
 
+				mux.Get("/profile", r.ganttHandler.GetProfile)
+				mux.Get("/roles", r.ganttHandler.GetRoles)
+
+				// Admin endpoints
+				mux.Post("/teams", r.ganttHandler.CreateTeam)
+				mux.Post("/epics", r.ganttHandler.AddEpic)
+				mux.Post("/risks", r.ganttHandler.AddRisk)
+				mux.Post("/users/bulk", r.ganttHandler.BulkCreateUsers)
+
+				// Scoring endpoints
+				mux.Post("/epics/start", r.ganttHandler.StartEpicScoring)
+				mux.Post("/scores/epic", r.ganttHandler.SubmitEpicScore)
+				mux.Post("/scores/risk", r.ganttHandler.SubmitRiskScore)
+				mux.Get("/scores/my", r.ganttHandler.GetMyScores)
+				
+				mux.Get("/epics/{epic_id}/scores", r.ganttHandler.GetEpicScores)
+				mux.Get("/epics/{epic_id}/role-scores", r.ganttHandler.GetEpicRoleScores)
+				mux.Get("/epics/{epic_id}/risks", r.ganttHandler.GetEpicRisks)
+
+				// AI chat endpoint
+				mux.Post("/ask-ai", r.ganttHandler.AskAI)
+
+				// Existing Gantt routes
 				mux.Get("/teams", r.ganttHandler.GetTeams)
 				mux.Get("/epics", r.ganttHandler.GetEpics)
 				mux.Get("/tasks", r.ganttHandler.GetTasks)

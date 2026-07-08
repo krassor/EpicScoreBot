@@ -238,3 +238,46 @@ func (r *Repository) UpdateUserChatID(ctx context.Context, userID uuid.UUID, cha
 	}
 	return nil
 }
+
+// BulkCreateUsers creates multiple users and optionally assigns them to a team and a role.
+func (r *Repository) BulkCreateUsers(ctx context.Context, users []domain.User, teamID *uuid.UUID, roleID *uuid.UUID) error {
+	op := "Repository.BulkCreateUsers"
+	tx, err := r.DB.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%s: begin tx: %w", op, err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, u := range users {
+		queryUser := `INSERT INTO users (id, first_name, last_name, telegram_id, chat_id, weight)
+			VALUES ($1, $2, $3, $4, 0, $5)
+			ON CONFLICT (telegram_id) DO UPDATE SET first_name = $2, last_name = $3, weight = $5
+			RETURNING id`
+		var finalID uuid.UUID
+		err = tx.QueryRowContext(ctx, queryUser, u.ID, u.FirstName, u.LastName, u.TelegramID, u.Weight).Scan(&finalID)
+		if err != nil {
+			return fmt.Errorf("%s: insert user %s: %w", op, u.TelegramID, err)
+		}
+
+		if teamID != nil {
+			queryTeam := `INSERT INTO user_teams (user_id, team_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+			_, err = tx.ExecContext(ctx, queryTeam, finalID, *teamID)
+			if err != nil {
+				return fmt.Errorf("%s: assign team %s: %w", op, u.TelegramID, err)
+			}
+		}
+
+		if roleID != nil {
+			queryRole := `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+			_, err = tx.ExecContext(ctx, queryRole, finalID, *roleID)
+			if err != nil {
+				return fmt.Errorf("%s: assign role %s: %w", op, u.TelegramID, err)
+			}
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("%s: commit: %w", op, err)
+	}
+	return nil
+}
