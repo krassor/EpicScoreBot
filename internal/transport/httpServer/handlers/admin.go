@@ -274,10 +274,14 @@ func (h *GanttHandler) RemoveUserRole(w http.ResponseWriter, r *http.Request) {
 func (h *GanttHandler) AddEpic(w http.ResponseWriter, r *http.Request) {
 	op := "handlers.AddEpic"
 	var req struct {
-		Number      string `json:"number"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		TeamID      string `json:"team_id"`
+		Number            string   `json:"number"`
+		Name              string   `json:"name"`
+		Description       string   `json:"description"`
+		TeamID            string   `json:"team_id"`
+		Year              *int     `json:"year"`
+		Quarter           *int     `json:"quarter"`
+		Type              *string  `json:"type"`
+		EvaluatingRoleIDs []string `json:"evaluating_role_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -289,7 +293,28 @@ func (h *GanttHandler) AddEpic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	epic, err := h.repo.CreateEpic(r.Context(), req.Number, req.Name, req.Description, teamUUID)
+	yearVal := 2026
+	if req.Year != nil {
+		yearVal = *req.Year
+	}
+	quarterVal := 3
+	if req.Quarter != nil {
+		quarterVal = *req.Quarter
+	}
+	typeVal := "feature"
+	if req.Type != nil {
+		typeVal = *req.Type
+	}
+
+	var evalUUIDs []uuid.UUID
+	for _, idStr := range req.EvaluatingRoleIDs {
+		u, err := uuid.Parse(idStr)
+		if err == nil {
+			evalUUIDs = append(evalUUIDs, u)
+		}
+	}
+
+	epic, err := h.repo.CreateEpic(r.Context(), req.Number, req.Name, req.Description, teamUUID, yearVal, quarterVal, typeVal, evalUUIDs)
 	if err != nil {
 		h.log.Error("failed to create epic", slog.String("op", op), slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("%s: %w", op, err).Error())

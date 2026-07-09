@@ -51,7 +51,12 @@ type Repository interface {
 	RemoveUserTeam(ctx context.Context, userID, teamID uuid.UUID) error
 
 	// Epics
-	CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID) (*domain.Epic, error)
+	CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
+	GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error)
+	GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
+	GetExpectedScorersCount(ctx context.Context, epicID uuid.UUID, teamID uuid.UUID) (int, error)
+	GetSubmittedEpicScorersCount(ctx context.Context, epicID uuid.UUID, teamID uuid.UUID) (int, error)
+	GetSubmittedRiskScorersCount(ctx context.Context, riskID uuid.UUID, epicID uuid.UUID, teamID uuid.UUID) (int, error)
 	GetEpicByID(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error)
 	GetEpicByNumber(ctx context.Context, number string) (*domain.Epic, error)
 	GetEpicsByStatus(ctx context.Context, status domain.Status) ([]domain.Epic, error)
@@ -105,7 +110,7 @@ type TeamService interface {
 
 // EpicService defines the business logic for epics.
 type EpicService interface {
-	CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID) (*domain.Epic, error)
+	CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
 	GetEpicByID(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error)
 	GetEpicByNumber(ctx context.Context, number string) (*domain.Epic, error)
 	GetEpicsByStatus(ctx context.Context, status domain.Status) ([]domain.Epic, error)
@@ -119,7 +124,9 @@ type EpicService interface {
 	HasUserScoredEpic(ctx context.Context, epicID, userID uuid.UUID) (bool, error)
 	GetUsersWhoScoredEpic(ctx context.Context, epicID uuid.UUID) ([]domain.User, error)
 	GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
-	GetReportData(ctx context.Context, teamID uuid.UUID) (*report.ReportData, error)
+	GetReportData(ctx context.Context, teamID uuid.UUID, year, quarter int) (*report.ReportData, error)
+	GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error)
+	GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
 }
 
 // RiskService defines the business logic for risks.

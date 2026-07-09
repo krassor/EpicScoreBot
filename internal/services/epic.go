@@ -28,7 +28,7 @@ func NewEpicService(log *slog.Logger, repo Repository) EpicService {
 	}
 }
 
-func (s *epicService) CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID) (*domain.Epic, error) {
+func (s *epicService) CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
 	op := "epicService.CreateEpic"
 	log := s.log.With(slog.String("op", op), slog.String("number", number))
 
@@ -41,7 +41,7 @@ func (s *epicService) CreateEpic(ctx context.Context, number, name, description 
 		return nil, err
 	}
 
-	epic, err := s.repo.CreateEpic(ctx, number, name, description, teamID)
+	epic, err := s.repo.CreateEpic(ctx, number, name, description, teamID, year, quarter, epicType, evaluatingRoleIDs)
 	if err != nil {
 		log.Error("failed to create epic", sl.Err(err))
 		return nil, err
@@ -128,9 +128,9 @@ func (s *epicService) GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid
 	return s.repo.GetEpicRoleScoresByEpicID(ctx, epicID)
 }
 
-func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID) (*report.ReportData, error) {
+func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year, quarter int) (*report.ReportData, error) {
 	op := "epicService.GetReportData"
-	log := s.log.With(slog.String("op", op), slog.String("team_id", teamID.String()))
+	log := s.log.With(slog.String("op", op), slog.String("team_id", teamID.String()), slog.Int("year", year), slog.Int("quarter", quarter))
 
 	team, err := s.repo.GetTeamByID(ctx, teamID)
 	if err != nil {
@@ -138,17 +138,44 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID) (*rep
 		return nil, fmt.Errorf("team not found: %w", err)
 	}
 
-	epics, err := s.repo.GetEpicsByTeamIDAndStatus(ctx, teamID, domain.StatusScored)
+	allEpics, err := s.repo.GetEpicsByTeamYearQuarter(ctx, teamID, year, quarter)
 	if err != nil {
 		log.Error("failed to get epics for team", sl.Err(err))
 		return nil, fmt.Errorf("failed to get epics: %w", err)
 	}
 
-	reportData := &report.ReportData{
-		TeamName:  team.Name,
-		Generated: time.Now(),
-		Epics:     make([]report.EpicReportData, 0, len(epics)),
+	var epics []domain.Epic
+	for _, e := range allEpics {
+		if e.Status == domain.StatusScored {
+			epics = append(epics, e)
+		}
 	}
+
+	// 1. Get users in team and role capacities
+	users, err := s.repo.GetUsersByTeamID(ctx, teamID)
+	if err != nil {
+		log.Error("failed to get team members", sl.Err(err))
+		return nil, fmt.Errorf("failed to get team members: %w", err)
+	}
+
+	roleMembersCount := make(map[uuid.UUID]int)
+	roleNames := make(map[uuid.UUID]string)
+	for _, u := range users {
+		role, err := s.repo.GetRoleByUserID(ctx, u.ID)
+		if err == nil && role != nil {
+			roleMembersCount[role.ID]++
+			roleNames[role.ID] = role.Name
+		}
+	}
+
+	const capacityFactor = 8.0 * 6.0 * 0.838
+	totalCapacity := float64(len(users)) * capacityFactor
+
+	rolePlanned := make(map[string]float64)
+	epicReportItems := make([]report.EpicReportData, 0, len(epics))
+	var featureScoreSum float64
+	var techScoreSum float64
+	var totalFinalScore float64
 
 	for _, e := range epics {
 		epicData := report.EpicReportData{
@@ -160,6 +187,12 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID) (*rep
 
 		if e.FinalScore != nil {
 			epicData.FinalScore = *e.FinalScore
+			totalFinalScore += *e.FinalScore
+			if e.Type == "feature" {
+				featureScoreSum += *e.FinalScore
+			} else if e.Type == "architecture" || e.Type == "techdebt" {
+				techScoreSum += *e.FinalScore
+			}
 		}
 
 		// Role scores
@@ -168,14 +201,20 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID) (*rep
 			var totalScore float64
 			for _, rs := range roleScores {
 				roleName := rs.RoleID.String()
-				if r, err := s.repo.GetRoleByID(ctx, rs.RoleID); err == nil {
-					roleName = r.Name
+				if rName, exists := roleNames[rs.RoleID]; exists {
+					roleName = rName
+				} else {
+					if r, err := s.repo.GetRoleByID(ctx, rs.RoleID); err == nil {
+						roleName = r.Name
+						roleNames[rs.RoleID] = r.Name
+					}
 				}
 				epicData.RoleScores = append(epicData.RoleScores, report.RoleScoreData{
 					RoleName:    roleName,
 					WeightedAvg: rs.WeightedAvg,
 				})
 				totalScore += rs.WeightedAvg
+				rolePlanned[roleName] += rs.WeightedAvg
 			}
 			epicData.TotalScore = totalScore
 		} else {
@@ -218,8 +257,68 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID) (*rep
 			log.Error("failed to get risks", sl.Err(err), slog.String("epic_id", e.ID.String()))
 		}
 
-		reportData.Epics = append(reportData.Epics, epicData)
+		epicReportItems = append(epicReportItems, epicData)
+	}
+
+	var roleCapacities []report.RoleCapacityReportData
+	for rID, count := range roleMembersCount {
+		rName := roleNames[rID]
+		capVal := float64(count) * capacityFactor
+		plannedVal := rolePlanned[rName]
+		roleCapacities = append(roleCapacities, report.RoleCapacityReportData{
+			RoleName: rName,
+			Capacity: capVal,
+			Planned:  plannedVal,
+			Diff:     capVal - plannedVal,
+		})
+	}
+
+	quotas := make(map[string]report.QuotaReportData)
+	var featurePercent float64
+	var techPercent float64
+	if totalFinalScore > 0 {
+		featurePercent = (featureScoreSum / totalFinalScore) * 100
+		techPercent = (techScoreSum / totalFinalScore) * 100
+	}
+
+	featureStatus := "OK"
+	if featurePercent > 40 {
+		featureStatus = "EXCEEDED"
+	}
+	quotas["feature"] = report.QuotaReportData{
+		LimitPercent:  40,
+		ActualPercent: featurePercent,
+		Status:        featureStatus,
+	}
+
+	techStatus := "OK"
+	if techPercent > 60 {
+		techStatus = "EXCEEDED"
+	}
+	quotas["tech_architecture"] = report.QuotaReportData{
+		LimitPercent:  60,
+		ActualPercent: techPercent,
+		Status:        techStatus,
+	}
+
+	reportData := &report.ReportData{
+		TeamName:       team.Name,
+		Year:           year,
+		Quarter:        quarter,
+		TotalCapacity:  totalCapacity,
+		RoleCapacities: roleCapacities,
+		Epics:          epicReportItems,
+		Quotas:         quotas,
+		Generated:      time.Now(),
 	}
 
 	return reportData, nil
+}
+
+func (s *epicService) GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error) {
+	return s.repo.GetEvaluatingRoleIDs(ctx, epicID)
+}
+
+func (s *epicService) GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+	return s.repo.GetEpicsByTeamYearQuarter(ctx, teamID, year, quarter)
 }

@@ -26,7 +26,7 @@ func TestEpicService_CreateEpic(t *testing.T) {
 			GetEpicByNumberFunc: func(ctx context.Context, number string) (*domain.Epic, error) {
 				return nil, sql.ErrNoRows
 			},
-			CreateEpicFunc: func(ctx context.Context, number, name, description string, tID uuid.UUID) (*domain.Epic, error) {
+			CreateEpicFunc: func(ctx context.Context, number, name, description string, tID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
 				return &domain.Epic{
 					ID:          epicID,
 					Number:      number,
@@ -34,12 +34,15 @@ func TestEpicService_CreateEpic(t *testing.T) {
 					Description: description,
 					TeamID:      tID,
 					Status:      domain.StatusNew,
+					Year:        year,
+					Quarter:     quarter,
+					Type:        epicType,
 				}, nil
 			},
 		}
 
 		s := NewEpicService(log, repo)
-		epic, err := s.CreateEpic(ctx, "EPIC-101", "Фича 1", "Описание фичи", teamID)
+		epic, err := s.CreateEpic(ctx, "EPIC-101", "Фича 1", "Описание фичи", teamID, 2026, 3, "feature", nil)
 		if err != nil {
 			t.Fatalf("ожидалось успешное создание, получена ошибка: %v", err)
 		}
@@ -62,7 +65,7 @@ func TestEpicService_CreateEpic(t *testing.T) {
 		}
 
 		s := NewEpicService(log, repo)
-		epic, err := s.CreateEpic(ctx, "EPIC-101", "Фича 1", "Описание фичи", teamID)
+		epic, err := s.CreateEpic(ctx, "EPIC-101", "Фича 1", "Описание фичи", teamID, 2026, 3, "feature", nil)
 		if !errors.Is(err, ErrEpicAlreadyExists) {
 			t.Fatalf("ожидалась ошибка %v, получена: %v", ErrEpicAlreadyExists, err)
 		}
@@ -80,7 +83,7 @@ func TestEpicService_CreateEpic(t *testing.T) {
 		}
 
 		s := NewEpicService(log, repo)
-		epic, err := s.CreateEpic(ctx, "EPIC-101", "Фича 1", "Описание фичи", teamID)
+		epic, err := s.CreateEpic(ctx, "EPIC-101", "Фича 1", "Описание фичи", teamID, 2026, 3, "feature", nil)
 		if !errors.Is(err, dbErr) {
 			t.Fatalf("ожидалась ошибка %v, получена: %v", dbErr, err)
 		}
@@ -95,13 +98,13 @@ func TestEpicService_CreateEpic(t *testing.T) {
 			GetEpicByNumberFunc: func(ctx context.Context, number string) (*domain.Epic, error) {
 				return nil, sql.ErrNoRows
 			},
-			CreateEpicFunc: func(ctx context.Context, number, name, description string, tID uuid.UUID) (*domain.Epic, error) {
+			CreateEpicFunc: func(ctx context.Context, number, name, description string, tID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
 				return nil, dbErr
 			},
 		}
 
 		s := NewEpicService(log, repo)
-		epic, err := s.CreateEpic(ctx, "EPIC-101", "Фича 1", "Описание фичи", teamID)
+		epic, err := s.CreateEpic(ctx, "EPIC-101", "Фича 1", "Описание фичи", teamID, 2026, 3, "feature", nil)
 		if !errors.Is(err, dbErr) {
 			t.Fatalf("ожидалась ошибка %v, получена: %v", dbErr, err)
 		}
@@ -199,9 +202,9 @@ func TestEpicService_GetReportData(t *testing.T) {
 			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
 				return &domain.Team{ID: teamID, Name: "Супер Команда"}, nil
 			},
-			GetEpicsByTeamIDAndStatusFunc: func(ctx context.Context, tID uuid.UUID, status domain.Status) ([]domain.Epic, error) {
-				if tID != teamID || status != domain.StatusScored {
-					t.Errorf("неверные параметры: tID=%v, status=%s", tID, status)
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+				if tID != teamID || year != 2026 || quarter != 3 {
+					t.Errorf("неверные параметры: tID=%v, year=%d, quarter=%d", tID, year, quarter)
 				}
 				return []domain.Epic{
 					{
@@ -211,8 +214,17 @@ func TestEpicService_GetReportData(t *testing.T) {
 						TeamID:     teamID,
 						Status:     domain.StatusScored,
 						FinalScore: floatPtr(15.5),
+						Year:       year,
+						Quarter:    quarter,
+						Type:       "feature",
 					},
 				}, nil
+			},
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{{ID: userID, FirstName: "Иван", LastName: "Иванов"}}, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return &domain.Role{ID: roleID, Name: "IT-лидер"}, nil
 			},
 			GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
 				if eID != epicID {
@@ -260,7 +272,7 @@ func TestEpicService_GetReportData(t *testing.T) {
 		}
 
 		s := NewEpicService(log, repo)
-		report, err := s.GetReportData(ctx, teamID)
+		report, err := s.GetReportData(ctx, teamID, 2026, 3)
 		if err != nil {
 			t.Fatalf("ожидался успешный отчет, получена ошибка: %v", err)
 		}
@@ -310,36 +322,108 @@ func TestEpicService_GetReportData(t *testing.T) {
 			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
 				return nil, dbErr
 			},
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+				return nil, nil
+			},
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return nil, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return nil, nil
+			},
 		}
 
 		s := NewEpicService(log, repo)
-		report, err := s.GetReportData(ctx, teamID)
-		if err == nil || !errors.Is(err, dbErr) {
+		_, err := s.GetReportData(ctx, teamID, 2026, 3)
+		if !errors.Is(err, dbErr) {
 			t.Fatalf("ожидалась ошибка %v, получена: %v", dbErr, err)
-		}
-		if report != nil {
-			t.Fatal("ожидался nil отчет")
 		}
 	})
 
-	t.Run("ошибка при получении эпиков команды", func(t *testing.T) {
+	t.Run("ошибка при получении эпиков", func(t *testing.T) {
 		dbErr := errors.New("epics error")
 		repo := &MockRepository{
 			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
 				return &domain.Team{ID: teamID, Name: "Супер Команда"}, nil
 			},
-			GetEpicsByTeamIDAndStatusFunc: func(ctx context.Context, tID uuid.UUID, status domain.Status) ([]domain.Epic, error) {
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
 				return nil, dbErr
+			},
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return nil, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return nil, nil
 			},
 		}
 
 		s := NewEpicService(log, repo)
-		report, err := s.GetReportData(ctx, teamID)
-		if err == nil || !errors.Is(err, dbErr) {
+		_, err := s.GetReportData(ctx, teamID, 2026, 3)
+		if !errors.Is(err, dbErr) {
 			t.Fatalf("ожидалась ошибка %v, получена: %v", dbErr, err)
 		}
-		if report != nil {
-			t.Fatal("ожидался nil отчет")
+	})
+
+	t.Run("нет эпиков для отчета", func(t *testing.T) {
+		repo := &MockRepository{
+			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
+				return &domain.Team{ID: teamID, Name: "Супер Команда"}, nil
+			},
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+				return []domain.Epic{}, nil
+			},
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{}, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return nil, nil
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		report, err := s.GetReportData(ctx, teamID, 2026, 3)
+		if err != nil {
+			t.Fatalf("ожидался успешный отчет, получена ошибка: %v", err)
+		}
+
+		if len(report.Epics) != 0 {
+			t.Errorf("ожидалось 0 эпиков в отчете, получено: %d", len(report.Epics))
+		}
+	})
+
+	t.Run("ошибка при получении оценок ролей", func(t *testing.T) {
+		dbErr := errors.New("role scores error")
+		repo := &MockRepository{
+			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
+				return &domain.Team{ID: teamID, Name: "Супер Команда"}, nil
+			},
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+				return []domain.Epic{
+					{ID: epicID, Number: "EP-42", Name: "Epic 42", Status: domain.StatusScored},
+				}, nil
+			},
+			GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
+				return nil, dbErr
+			},
+			GetRisksByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Risk, error) {
+				return []domain.Risk{}, nil
+			},
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{}, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return nil, nil
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		report, err := s.GetReportData(ctx, teamID, 2026, 3)
+		if err != nil {
+			t.Fatalf("ожидался успешный отчет (ошибки оценок логгируются, но не прерывают отчет), получена ошибка: %v", err)
+		}
+
+		if len(report.Epics[0].RoleScores) != 0 {
+			t.Errorf("ожидалось 0 оценок ролей, получено: %d", len(report.Epics[0].RoleScores))
 		}
 	})
 
@@ -348,7 +432,7 @@ func TestEpicService_GetReportData(t *testing.T) {
 			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
 				return &domain.Team{ID: teamID, Name: "Супер Команда"}, nil
 			},
-			GetEpicsByTeamIDAndStatusFunc: func(ctx context.Context, tID uuid.UUID, status domain.Status) ([]domain.Epic, error) {
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
 				return []domain.Epic{{ID: epicID, Number: "EP-42", TeamID: teamID, Status: domain.StatusScored}}, nil
 			},
 			GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
@@ -360,10 +444,16 @@ func TestEpicService_GetReportData(t *testing.T) {
 			GetRisksByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Risk, error) {
 				return []domain.Risk{}, nil
 			},
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{}, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return nil, nil
+			},
 		}
 
 		s := NewEpicService(log, repo)
-		report, err := s.GetReportData(ctx, teamID)
+		report, err := s.GetReportData(ctx, teamID, 2026, 3)
 		if err != nil {
 			t.Fatalf("ожидался успешный отчет, получена ошибка: %v", err)
 		}
@@ -378,7 +468,7 @@ func TestEpicService_GetReportData(t *testing.T) {
 			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
 				return &domain.Team{ID: teamID, Name: "Супер Команда"}, nil
 			},
-			GetEpicsByTeamIDAndStatusFunc: func(ctx context.Context, tID uuid.UUID, status domain.Status) ([]domain.Epic, error) {
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
 				return []domain.Epic{{ID: epicID, Number: "EP-42", TeamID: teamID, Status: domain.StatusScored}}, nil
 			},
 			GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
@@ -394,23 +484,92 @@ func TestEpicService_GetReportData(t *testing.T) {
 					},
 				}, nil
 			},
-			GetRiskScoresByRiskIDFunc: func(ctx context.Context, rID uuid.UUID) ([]domain.RiskScore, error) {
-				return []domain.RiskScore{}, nil
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{}, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return nil, nil
 			},
 		}
 
 		s := NewEpicService(log, repo)
-		report, err := s.GetReportData(ctx, teamID)
+		report, err := s.GetReportData(ctx, teamID, 2026, 3)
 		if err != nil {
-			t.Fatalf("ожидался отчет, получена ошибка: %v", err)
+			t.Fatalf("ожидался успешный отчет, получена ошибка: %v", err)
 		}
 
 		if report.Epics[0].Risks[0].Coefficient != 1.0 {
-			t.Errorf("ожидался коэффициент 1.0, получено: %f", report.Epics[0].Risks[0].Coefficient)
+			t.Errorf("ожидался коэффициент риска 1.0, получено: %f", report.Epics[0].Risks[0].Coefficient)
+		}
+	})
+
+	t.Run("ошибка при получении рисков", func(t *testing.T) {
+		dbErr := errors.New("risks error")
+		repo := &MockRepository{
+			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
+				return &domain.Team{ID: teamID, Name: "Супер Команда"}, nil
+			},
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+				return []domain.Epic{{ID: epicID, Number: "EP-42", TeamID: teamID, Status: domain.StatusScored}}, nil
+			},
+			GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
+				return []domain.EpicRoleScore{}, nil
+			},
+			GetRisksByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Risk, error) {
+				return nil, dbErr
+			},
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{}, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return nil, nil
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		_, err := s.GetReportData(ctx, teamID, 2026, 3)
+		if err != nil {
+			t.Fatalf("ожидался успешный отчет (ошибки рисков логгируются, но не прерывают отчет), получена ошибка: %v", err)
+		}
+	})
+
+	t.Run("ошибка при получении оценок рисков", func(t *testing.T) {
+		dbErr := errors.New("risk scores error")
+		repo := &MockRepository{
+			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
+				return &domain.Team{ID: teamID, Name: "Супер Команда"}, nil
+			},
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+				return []domain.Epic{{ID: epicID, Number: "EP-42", TeamID: teamID, Status: domain.StatusScored}}, nil
+			},
+			GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
+				return []domain.EpicRoleScore{}, nil
+			},
+			GetRisksByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Risk, error) {
+				return []domain.Risk{{ID: riskID, Description: "Риск"}}, nil
+			},
+			GetRiskScoresByRiskIDFunc: func(ctx context.Context, rID uuid.UUID) ([]domain.RiskScore, error) {
+				return nil, dbErr
+			},
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{}, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return nil, nil
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		report, err := s.GetReportData(ctx, teamID, 2026, 3)
+		if err != nil {
+			t.Fatalf("ожидался успешный отчет (ошибки оценок риска логгируются, но не прерывают отчет), получена ошибка: %v", err)
+		}
+
+		if len(report.Epics[0].Risks[0].Probabilities) != 0 {
+			t.Errorf("ожидалось 0 оценок рисков, получено: %d", len(report.Epics[0].Risks[0].Probabilities))
 		}
 	})
 }
-
 func TestEpicService_OtherMethods(t *testing.T) {
 	ctx := context.Background()
 	log := newDiscardLogger()

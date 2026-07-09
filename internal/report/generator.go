@@ -35,6 +35,11 @@ type riskLegendItem struct {
 // templateData is passed to the HTML template.
 type templateData struct {
 	TeamName           string
+	Year               int
+	Quarter            int
+	TotalCapacity      float64
+	RoleCapacities     []RoleCapacityReportData
+	Quotas             map[string]QuotaReportData
 	GeneratedFormatted string
 	Epics              []epicTemplateData
 }
@@ -81,6 +86,11 @@ func (g *Generator) GenerateReport(ctx context.Context, data ReportData) (string
 
 	td := templateData{
 		TeamName:           data.TeamName,
+		Year:               data.Year,
+		Quarter:            data.Quarter,
+		TotalCapacity:      data.TotalCapacity,
+		RoleCapacities:     data.RoleCapacities,
+		Quotas:             data.Quotas,
 		GeneratedFormatted: data.Generated.Format("02.01.2006 15:04"),
 		Epics:              epics,
 	}

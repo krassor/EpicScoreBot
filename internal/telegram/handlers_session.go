@@ -211,7 +211,7 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 			return
 		}
 
-		epic, err := epicBot.epicService.CreateEpic(ctx, sess.Data["number"], sess.Data["name"], desc, teamID)
+		epic, err := epicBot.epicService.CreateEpic(ctx, sess.Data["number"], sess.Data["name"], desc, teamID, 2026, 3, "feature", nil)
 		if err != nil {
 			if errors.Is(err, services.ErrEpicAlreadyExists) {
 				epicBot.deleteAndSend(ctx, msg, msgID, "❌ Эпик с таким номером уже существует.")

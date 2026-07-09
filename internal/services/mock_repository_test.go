@@ -45,7 +45,8 @@ type MockRepository struct {
 	RemoveUserTeamFunc         func(ctx context.Context, userID, teamID uuid.UUID) error
 
 	// Epics
-	CreateEpicFunc             func(ctx context.Context, number, name, description string, teamID uuid.UUID) (*domain.Epic, error)
+	CreateEpicFunc             func(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
+	GetEpicsByTeamYearQuarterFunc func(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
 	GetEpicByIDFunc            func(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error)
 	GetEpicByNumberFunc        func(ctx context.Context, number string) (*domain.Epic, error)
 	GetEpicsByStatusFunc       func(ctx context.Context, status domain.Status) ([]domain.Epic, error)
@@ -258,9 +259,9 @@ func (m *MockRepository) RemoveUserTeam(ctx context.Context, userID, teamID uuid
 	return nil
 }
 
-func (m *MockRepository) CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID) (*domain.Epic, error) {
+func (m *MockRepository) CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
 	if m.CreateEpicFunc != nil {
-		return m.CreateEpicFunc(ctx, number, name, description, teamID)
+		return m.CreateEpicFunc(ctx, number, name, description, teamID, year, quarter, epicType, evaluatingRoleIDs)
 	}
 	return nil, nil
 }
@@ -410,4 +411,27 @@ func (m *MockRepository) GetRiskScoresByRiskID(ctx context.Context, riskID uuid.
 		return m.GetRiskScoresByRiskIDFunc(ctx, riskID)
 	}
 	return nil, nil
+}
+
+func (m *MockRepository) GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+func (m *MockRepository) GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+	if m.GetEpicsByTeamYearQuarterFunc != nil {
+		return m.GetEpicsByTeamYearQuarterFunc(ctx, teamID, year, quarter)
+	}
+	return nil, nil
+}
+
+func (m *MockRepository) GetExpectedScorersCount(ctx context.Context, epicID uuid.UUID, teamID uuid.UUID) (int, error) {
+	return 0, nil
+}
+
+func (m *MockRepository) GetSubmittedEpicScorersCount(ctx context.Context, epicID uuid.UUID, teamID uuid.UUID) (int, error) {
+	return 0, nil
+}
+
+func (m *MockRepository) GetSubmittedRiskScorersCount(ctx context.Context, riskID uuid.UUID, epicID uuid.UUID, teamID uuid.UUID) (int, error) {
+	return 0, nil
 }
