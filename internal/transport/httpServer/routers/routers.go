@@ -61,6 +61,10 @@ func (r *Router) Mount(mux *chi.Mux) {
 					mux.Get("/admin/users/{id}", r.ganttHandler.GetUserDetails)
 					mux.Post("/admin/users", r.ganttHandler.CreateSingleUser)
 					mux.Put("/admin/users/{id}", r.ganttHandler.UpdateUser)
+
+					// Admin override scores
+					mux.Post("/admin/scores/epic", r.ganttHandler.AdminSubmitEpicScore)
+					mux.Post("/admin/scores/risk", r.ganttHandler.AdminSubmitRiskScore)
 				})
 
 

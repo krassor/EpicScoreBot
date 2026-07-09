@@ -669,8 +669,71 @@ func (h *GanttHandler) GetEpicScores(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	type UserInfo struct {
+		ID         string `json:"id"`
+		FirstName  string `json:"first_name"`
+		LastName   string `json:"last_name"`
+		TelegramID string `json:"telegram_id"`
+		Weight     int    `json:"weight"`
+	}
+
+	type RoleInfo struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+
+	type EnrichedEpicScore struct {
+		ID        uuid.UUID `json:"id"`
+		EpicID    uuid.UUID `json:"epic_id"`
+		UserID    uuid.UUID `json:"user_id"`
+		RoleID    uuid.UUID `json:"role_id"`
+		Score     int       `json:"score"`
+		CreatedAt time.Time `json:"created_at"`
+		User      UserInfo  `json:"user"`
+		Role      RoleInfo  `json:"role"`
+	}
+
+	var enrichedScores []EnrichedEpicScore
+	for _, s := range scores {
+		var uInfo UserInfo
+		user, errU := h.repo.GetUserByID(r.Context(), s.UserID)
+		if errU == nil && user != nil {
+			uInfo = UserInfo{
+				ID:         user.ID.String(),
+				FirstName:  user.FirstName,
+				LastName:   user.LastName,
+				TelegramID: user.TelegramID,
+				Weight:     user.Weight,
+			}
+		} else {
+			uInfo.ID = s.UserID.String()
+		}
+
+		var rInfo RoleInfo
+		role, errR := h.repo.GetRoleByID(r.Context(), s.RoleID)
+		if errR == nil && role != nil {
+			rInfo = RoleInfo{
+				ID:   role.ID.String(),
+				Name: role.Name,
+			}
+		} else {
+			rInfo.ID = s.RoleID.String()
+		}
+
+		enrichedScores = append(enrichedScores, EnrichedEpicScore{
+			ID:        s.ID,
+			EpicID:    s.EpicID,
+			UserID:    s.UserID,
+			RoleID:    s.RoleID,
+			Score:     s.Score,
+			CreatedAt: s.CreatedAt,
+			User:      uInfo,
+			Role:      rInfo,
+		})
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"scores":          scores,
+		"scores":          enrichedScores,
 		"scores_received": len(scores),
 		"scores_expected": expected,
 	})
@@ -731,17 +794,67 @@ func (h *GanttHandler) GetEpicRisks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type riskResp struct {
-		ID            string   `json:"id"`
-		Description   string   `json:"description"`
-		WeightedScore *float64 `json:"weighted_score"`
+	type UserInfo struct {
+		ID         string `json:"id"`
+		FirstName  string `json:"first_name"`
+		LastName   string `json:"last_name"`
+		TelegramID string `json:"telegram_id"`
+		Weight     int    `json:"weight"`
 	}
+
+	type EnrichedRiskScore struct {
+		ID          uuid.UUID `json:"id"`
+		RiskID      uuid.UUID `json:"risk_id"`
+		UserID      uuid.UUID `json:"user_id"`
+		Probability int       `json:"probability"`
+		Impact      int       `json:"impact"`
+		CreatedAt   time.Time `json:"created_at"`
+		User        UserInfo  `json:"user"`
+	}
+
+	type riskResp struct {
+		ID            string              `json:"id"`
+		Description   string              `json:"description"`
+		WeightedScore *float64            `json:"weighted_score"`
+		Scores        []EnrichedRiskScore `json:"scores"`
+	}
+
 	var resp []riskResp
 	for _, risk := range risks {
+		var enrichedRiskScores []EnrichedRiskScore
+		riskScores, errRS := h.repo.GetRiskScoresByRiskID(r.Context(), risk.ID)
+		if errRS == nil {
+			for _, rs := range riskScores {
+				var uInfo UserInfo
+				user, errU := h.repo.GetUserByID(r.Context(), rs.UserID)
+				if errU == nil && user != nil {
+					uInfo = UserInfo{
+						ID:         user.ID.String(),
+						FirstName:  user.FirstName,
+						LastName:   user.LastName,
+						TelegramID: user.TelegramID,
+						Weight:     user.Weight,
+					}
+				} else {
+					uInfo.ID = rs.UserID.String()
+				}
+				enrichedRiskScores = append(enrichedRiskScores, EnrichedRiskScore{
+					ID:          rs.ID,
+					RiskID:      rs.RiskID,
+					UserID:      rs.UserID,
+					Probability: rs.Probability,
+					Impact:      rs.Impact,
+					CreatedAt:   rs.CreatedAt,
+					User:        uInfo,
+				})
+			}
+		}
+
 		resp = append(resp, riskResp{
 			ID:            risk.ID.String(),
 			Description:   risk.Description,
 			WeightedScore: risk.WeightedScore,
+			Scores:        enrichedRiskScores,
 		})
 	}
 
