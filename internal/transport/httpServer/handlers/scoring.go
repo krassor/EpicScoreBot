@@ -41,8 +41,8 @@ func (h *GanttHandler) SubmitEpicScore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Score <= 0 {
-		writeError(w, http.StatusBadRequest, "score must be greater than 0")
+	if req.Score < 0 || req.Score > 500 {
+		writeError(w, http.StatusBadRequest, "score must be between 0 and 500")
 		return
 	}
 
