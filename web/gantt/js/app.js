@@ -10,6 +10,7 @@ import { initGanttRenderer } from './gantt-renderer.js';
 import { initAdminPanel } from './admin-panel.js';
 import { initScoringPanel } from './scoring-panel.js';
 import { initAIChat } from './ai-chat.js';
+import { initReportsPanel } from './reports-panel.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('DOMContentLoaded: Инициализация модулей...');
@@ -19,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
         { name: 'GanttRenderer', init: initGanttRenderer },
         { name: 'AdminPanel', init: initAdminPanel },
         { name: 'ScoringPanel', init: initScoringPanel },
+        { name: 'ReportsPanel', init: initReportsPanel },
         { name: 'AIChat', init: initAIChat }
     ];
 
