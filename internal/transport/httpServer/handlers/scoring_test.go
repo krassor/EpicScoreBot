@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,6 +129,58 @@ func TestSubmitEpicScore(t *testing.T) {
 	json.Unmarshal(rr.Body.Bytes(), &resp)
 	if resp["scores_received"].(float64) != 3 {
 		t.Errorf("expected 3 scores_received, got %v", resp["scores_received"])
+	}
+}
+
+func TestSubmitEpicScoreValidation(t *testing.T) {
+	userID := uuid.New()
+	roleID := uuid.New()
+	epicID := uuid.New()
+
+	tests := []struct {
+		name         string
+		score        int
+		expectedCode int
+	}{
+		{"zero_is_valid", 0, http.StatusOK},
+		{"five_hundred_is_valid", 500, http.StatusOK},
+		{"negative_is_invalid", -1, http.StatusBadRequest},
+		{"over_five_hundred_is_invalid", 501, http.StatusBadRequest},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &mockScoringRepo{
+				user: &domain.User{ID: userID, TelegramID: "12345"},
+				role: &domain.Role{ID: roleID, Name: "BE разработчик"},
+				epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()},
+			}
+			svc := &mockScoringSvc{repo: repo}
+			handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, config.BotConfig{})
+
+			body := fmt.Sprintf(`{"epic_id":"%s","score":%d}`, epicID.String(), tc.score)
+			req := httptest.NewRequest("POST", "/api/gantt/scores/epic", strings.NewReader(body))
+			session := &middleware.UserSession{TelegramID: "12345", Username: "test"}
+			req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+			rr := httptest.NewRecorder()
+
+			handler.SubmitEpicScore(rr, req)
+			if rr.Code != tc.expectedCode {
+				t.Errorf("for score %d expected %d, got %d. Body: %s", tc.score, tc.expectedCode, rr.Code, rr.Body.String())
+			}
+
+			if tc.expectedCode == http.StatusBadRequest {
+				var errResp struct {
+					Error string `json:"error"`
+				}
+				if err := json.NewDecoder(rr.Body).Decode(&errResp); err != nil {
+					t.Fatalf("failed to decode error response: %v", err)
+				}
+				if errResp.Error != "score must be between 0 and 500" {
+					t.Errorf("expected error message 'score must be between 0 and 500', got '%s'", errResp.Error)
+				}
+			}
+		})
 	}
 }
 

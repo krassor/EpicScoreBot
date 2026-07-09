@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -146,24 +148,51 @@ func TestAdminSubmitEpicScore(t *testing.T) {
 		}
 	})
 
-	t.Run("bad_request_invalid_score", func(t *testing.T) {
-		repo := &mockAdminScoresRepo{
-			user: &domain.User{ID: userID, TelegramID: "user_tg"},
-			role: &domain.Role{ID: roleID, Name: "BE разработчик"},
-			epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()},
+	t.Run("score_validation", func(t *testing.T) {
+		tests := []struct {
+			name         string
+			score        int
+			expectedCode int
+		}{
+			{"zero_is_valid", 0, http.StatusOK},
+			{"five_hundred_is_valid", 500, http.StatusOK},
+			{"negative_is_invalid", -1, http.StatusBadRequest},
+			{"over_five_hundred_is_invalid", 501, http.StatusBadRequest},
 		}
-		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
 
-		body := `{"epic_id":"` + epicID.String() + `","user_id":"` + userID.String() + `","score":0}`
-		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/epic", strings.NewReader(body))
-		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
-		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
-		rr := httptest.NewRecorder()
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				repo := &mockAdminScoresRepo{
+					user: &domain.User{ID: userID, TelegramID: "user_tg"},
+					role: &domain.Role{ID: roleID, Name: "BE разработчик"},
+					epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()},
+				}
+				svc := &mockAdminScoresSvc{repo: repo}
+				handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
 
-		handler.AdminSubmitEpicScore(rr, req)
-		if rr.Code != http.StatusBadRequest {
-			t.Errorf("expected 400 Bad Request, got %d", rr.Code)
+				body := fmt.Sprintf(`{"epic_id":"%s","user_id":"%s","score":%d}`, epicID.String(), userID.String(), tc.score)
+				req := httptest.NewRequest("POST", "/api/gantt/admin/scores/epic", strings.NewReader(body))
+				session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+				req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+				rr := httptest.NewRecorder()
+
+				handler.AdminSubmitEpicScore(rr, req)
+				if rr.Code != tc.expectedCode {
+					t.Errorf("for score %d expected %d, got %d. Body: %s", tc.score, tc.expectedCode, rr.Code, rr.Body.String())
+				}
+
+				if tc.expectedCode == http.StatusBadRequest {
+					var errResp struct {
+						Error string `json:"error"`
+					}
+					if err := json.NewDecoder(rr.Body).Decode(&errResp); err != nil {
+						t.Fatalf("failed to decode error response: %v", err)
+					}
+					if errResp.Error != "score must be between 0 and 500" {
+						t.Errorf("expected error message 'score must be between 0 and 500', got '%s'", errResp.Error)
+					}
+				}
+			})
 		}
 	})
 }
