@@ -660,12 +660,41 @@ func (h *GanttHandler) GetEpicScores(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	type MemberInfo struct {
+		ID         string `json:"id"`
+		FirstName  string `json:"first_name"`
+		LastName   string `json:"last_name"`
+		TelegramID string `json:"telegram_id"`
+		Weight     int    `json:"weight"`
+		RoleID     string `json:"role_id"`
+		RoleName   string `json:"role_name"`
+	}
+
 	epic, err := h.repo.GetEpicByID(r.Context(), epicID)
 	var expected int
+	var membersResp []MemberInfo
 	if err == nil && epic != nil {
 		members, errMem := h.repo.GetUsersByTeamID(r.Context(), epic.TeamID)
 		if errMem == nil {
 			expected = len(members)
+			for _, m := range members {
+				var roleID string
+				var roleName string
+				role, errR := h.repo.GetRoleByUserID(r.Context(), m.ID)
+				if errR == nil && role != nil {
+					roleID = role.ID.String()
+					roleName = role.Name
+				}
+				membersResp = append(membersResp, MemberInfo{
+					ID:         m.ID.String(),
+					FirstName:  m.FirstName,
+					LastName:   m.LastName,
+					TelegramID: m.TelegramID,
+					Weight:     m.Weight,
+					RoleID:     roleID,
+					RoleName:   roleName,
+				})
+			}
 		}
 	}
 
@@ -736,6 +765,7 @@ func (h *GanttHandler) GetEpicScores(w http.ResponseWriter, r *http.Request) {
 		"scores":          enrichedScores,
 		"scores_received": len(scores),
 		"scores_expected": expected,
+		"members":         membersResp,
 	})
 }
 
