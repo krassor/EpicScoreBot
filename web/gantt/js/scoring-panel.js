@@ -227,7 +227,7 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
     }
 
     const finalScoreText = epic.final_score !== null && epic.final_score !== undefined
-        ? `<div class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--color-role-be); font-size: 14px; padding: 6px 14px;">Итоговая оценка: ${epic.final_score} SP</div>`
+        ? `<div class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--color-role-be); font-size: 14px; padding: 6px 14px;">Итоговая оценка: ${epic.final_score} чд</div>`
         : `<div class="badge" style="background: var(--bg-tertiary); font-size: 14px; padding: 6px 14px;">Статус оценки: ${epic.status === 'NEW' ? 'Не начата' : 'В процессе'}</div>`;
 
     let progressHtml = '';
@@ -271,15 +271,10 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
                             ${rolesList.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
                         </select>
                     </div>
-                    <div class="form-group" style="margin-top: 10px;">
-                        <label>Выберите оценку (Fibonacci SP)</label>
-                        <div class="vote-options-grid">
-                            ${[1, 2, 3, 5, 8, 13, 21, 34, 55, 89].map(num => `
-                                <button class="btn-vote" data-value="${num}">${num}</button>
-                            `).join('')}
-                        </div>
+                    <div class="form-group" style="margin-top: 10px; display: flex; align-items: center;">
+                        <input type="number" id="input-epic-score" class="input" min="0" max="500" placeholder="0-500 чд" style="width: 120px; margin-right: 10px;">
+                        <button id="btn-submit-vote" class="btn btn-primary">Сохранить оценку</button>
                     </div>
-                    <button id="btn-submit-vote" class="btn btn-primary" style="width: 100%; margin-top: 10px;" disabled>Отправить оценку</button>
                     ${progressHtml}
                 ` : ''}
             </div>
@@ -291,7 +286,7 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
                     <thead>
                         <tr>
                             <th>Роль</th>
-                            <th>Оценка (SP)</th>
+                            <th>Оценка (чд)</th>
                         </tr>
                     </thead>
                     <tbody id="role-scores-tbody">
@@ -299,7 +294,7 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
                             roleScores.map(rs => `
                                 <tr>
                                     <td><strong>${rs.role_name || rs.role_id}</strong></td>
-                                    <td>${rs.weighted_avg || rs.score} SP</td>
+                                    <td>${rs.weighted_avg || rs.score} чд</td>
                                 </tr>
                             `).join('')
                         }
@@ -331,21 +326,19 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
                         let voteControlHtml = '';
                         if (isEditing) {
                             voteControlHtml = `
-                                <div class="vote-mini-grid">
-                                    ${[1, 2, 3, 5, 8, 13, 21, 34, 55, 89].map(num => `
-                                        <button class="btn-vote-mini ${selectedVal === num ? 'active' : ''}" data-user-id="${m.id}" data-value="${num}">${num}</button>
-                                    `).join('')}
+                                <div style="display: flex; align-items: center; justify-content: center;">
+                                    <input type="number" class="input admin-score-input" data-user-id="${m.id}" min="0" max="500" placeholder="чд" value="${selectedVal !== null ? selectedVal : ''}" style="width: 80px; text-align: center; margin-right: 8px;">
+                                    <button class="btn btn-primary btn-save-admin-epic" data-user-id="${m.id}" style="padding:4px 8px; font-size:12px;">Сохранить</button>
                                 </div>
                             `;
                         } else {
-                            voteControlHtml = `<span style="font-weight:600; color:var(--color-role-be);">${userScore.score} SP</span>`;
+                            voteControlHtml = `<span style="font-weight:600; color:var(--color-role-be);">${userScore.score} чд</span>`;
                         }
 
                         let actionsHtml = '';
                         if (isEditing) {
                             actionsHtml = `
                                 <div style="display:flex; gap:6px;">
-                                    <button class="btn btn-primary btn-save-admin-epic" data-user-id="${m.id}" ${selectedVal ? '' : 'disabled'} style="padding:4px 8px; font-size:12px;">Сохранить</button>
                                     ${hasVoted ? `<button class="btn btn-secondary btn-cancel-admin-epic" data-user-id="${m.id}" style="padding:4px 8px; font-size:12px;">Отмена</button>` : ''}
                                 </div>
                             `;
@@ -483,24 +476,26 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
     }
 
     if (epic.status === 'SCORING') {
-        let selectedVoteVal = null;
-        const voteBtns = container.querySelectorAll('.btn-vote');
         const submitBtn = document.getElementById('btn-submit-vote');
 
-        voteBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                voteBtns.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                selectedVoteVal = parseInt(btn.dataset.value, 10);
-                if (submitBtn) submitBtn.disabled = false;
-            });
-        });
-
         submitBtn?.addEventListener('click', async () => {
+            const input = document.getElementById('input-epic-score');
+            if (!input) return;
+            const valStr = input.value.trim();
+            if (valStr === '') {
+                showToast('Пожалуйста, введите оценку', 'error');
+                return;
+            }
+            const score = parseInt(valStr, 10);
+            if (isNaN(score) || score < 0 || score > 500) {
+                showToast('Оценка должна быть числом от 0 до 500', 'error');
+                return;
+            }
+
             try {
                 await apiPost('/scores/epic', {
                     epic_id: epic.id,
-                    score: selectedVoteVal
+                    score: score
                 });
                 showToast('Ваша оценка принята!', 'success');
                 // Reload details
@@ -535,22 +530,6 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
 
     // Admin listeners
     if (isAdmin) {
-        // Vote mini-grid button select
-        container.querySelectorAll('.btn-vote-mini').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const userId = btn.dataset.userId;
-                const val = parseInt(btn.dataset.value, 10);
-                adminEpicVotes[userId] = val;
-
-                const row = btn.closest('tr');
-                row.querySelectorAll('.btn-vote-mini').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-
-                const saveBtn = row.querySelector('.btn-save-admin-epic');
-                if (saveBtn) saveBtn.disabled = false;
-            });
-        });
-
         // Edit button
         container.querySelectorAll('.btn-edit-admin-epic').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -574,8 +553,19 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
         container.querySelectorAll('.btn-save-admin-epic').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const userId = btn.dataset.userId;
-                const score = adminEpicVotes[userId];
-                if (!score) return;
+                const row = btn.closest('tr');
+                const input = row.querySelector(`.admin-score-input[data-user-id="${userId}"]`);
+                if (!input) return;
+                const valStr = input.value.trim();
+                if (valStr === '') {
+                    showToast('Пожалуйста, введите оценку', 'error');
+                    return;
+                }
+                const score = parseInt(valStr, 10);
+                if (isNaN(score) || score < 0 || score > 500) {
+                    showToast('Оценка должна быть числом от 0 до 500', 'error');
+                    return;
+                }
 
                 try {
                     await apiPost('/admin/scores/epic', {
