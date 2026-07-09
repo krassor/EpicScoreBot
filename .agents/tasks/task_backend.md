@@ -307,3 +307,13 @@ GET    /api/teams/{id}/report/data → JSON-данные для отчёта
 ### 3. Тестирование
 * Написать unit-тесты в `internal/transport/httpServer/handlers/admin_scores_test.go` для покрытия новых эндпоинтов и проверки разграничения прав (для не-админов должен возвращаться статус `403 Forbidden`).
 
+---
+
+## Шаг 7. Изменение диапазона оценок эпика (0 - 500)
+
+Изменить логику валидации оценок эпиков на бэкенде:
+1. В хэндлере `SubmitEpicScore` в `internal/transport/httpServer/handlers/scoring.go` заменить проверку `req.Score <= 0` на `req.Score < 0 || req.Score > 500`. При некорректном значении возвращать `400 Bad Request` с текстом `"score must be between 0 and 500"`.
+2. В хэндлере `AdminSubmitEpicScore` в `internal/transport/httpServer/handlers/admin_scores.go` заменить аналогичную проверку `req.Score <= 0` на `req.Score < 0 || req.Score > 500` и возвращать ошибку с тем же текстом.
+3. Обновить unit-тесты в `internal/transport/httpServer/handlers/admin_scores_test.go` и других местах, чтобы проверить граничные значения `0` и `500` как валидные, а отрицательные и превышающие `500` — как некорректные.
+
+
