@@ -6,8 +6,12 @@ import { showToast } from './utils.js';
 
 let selectedEpic = null;
 let rolesList = [];
+let adminEpicVotes = {}; // Store temporary admin votes before save: { userId: score }
 
 export function initScoringPanel() {
+    // Inject custom styles for admin controls
+    injectStyles();
+
     // Listen for team changes to reload epics
     state.subscribe('selectedTeamId', (teamId) => {
         if (teamId) {
@@ -20,6 +24,83 @@ export function initScoringPanel() {
 
     // Load list of roles from backend
     loadRoles();
+}
+
+function injectStyles() {
+    if (document.getElementById('admin-scoring-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'admin-scoring-styles';
+    style.textContent = `
+        .btn-vote-mini {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--color-border);
+            color: var(--color-text);
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+        .btn-vote-mini:hover {
+            border-color: var(--color-primary);
+            background: rgba(79, 70, 229, 0.1);
+        }
+        .btn-vote-mini.active {
+            background: var(--color-primary);
+            border-color: var(--color-primary);
+            color: #fff;
+            box-shadow: 0 0 8px rgba(79, 70, 229, 0.4);
+        }
+        .admin-scores-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+        }
+        .admin-scores-table th, .admin-scores-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--color-border);
+            vertical-align: middle;
+        }
+        .admin-scores-table th {
+            color: var(--text-muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .admin-scores-table tr:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .vote-mini-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .risk-votes-list {
+            margin-top: 8px;
+            padding-left: 12px;
+            border-left: 2px solid var(--color-border);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 13px;
+        }
+        .risk-vote-member-item {
+            color: var(--color-text);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .risk-vote-member-badge {
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 async function loadRoles() {
@@ -111,6 +192,7 @@ function clearDetails() {
 
 async function selectEpic(epic) {
     selectedEpic = epic;
+    adminEpicVotes = {}; // Clear admin edits cache on epic selection
     const container = document.getElementById('scoring-details');
     if (!container) return;
 
@@ -134,6 +216,7 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
 
     const userProfile = state.get('userProfile');
     const isLeaderOrAdmin = userProfile && (userProfile.role === 'admin' || userProfile.role === 'superadmin' || userProfile.role === 'leader');
+    const isAdmin = userProfile && (userProfile.role === 'admin' || userProfile.role === 'superadmin');
 
     let actionButtonHtml = '';
     if (epic.status === 'NEW' && isLeaderOrAdmin) {
@@ -222,6 +305,65 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
             </div>
         </div>
 
+        ${isAdmin && epic.status === 'SCORING' ? `
+        <!-- Admin Overrides Table -->
+        <div class="scoring-section-card" style="margin-top: 12px;">
+            <h3>Панель администратора: Оценки участников</h3>
+            <table class="admin-scores-table">
+                <thead>
+                    <tr>
+                        <th>ФИО</th>
+                        <th>Роль</th>
+                        <th>Текущая оценка</th>
+                        <th>Управление</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${(scoresData.members || []).map(m => {
+                        const userScore = scoresData.scores?.find(s => s.user_id === m.id);
+                        const hasVoted = !!userScore;
+                        const isEditing = adminEpicVotes[m.id] !== undefined || !hasVoted;
+                        const selectedVal = adminEpicVotes[m.id] !== undefined ? adminEpicVotes[m.id] : (userScore ? userScore.score : null);
+
+                        let voteControlHtml = '';
+                        if (isEditing) {
+                            voteControlHtml = `
+                                <div class="vote-mini-grid">
+                                    ${[1, 2, 3, 5, 8, 13, 21, 34, 55, 89].map(num => `
+                                        <button class="btn-vote-mini ${selectedVal === num ? 'active' : ''}" data-user-id="${m.id}" data-value="${num}">${num}</button>
+                                    `).join('')}
+                                </div>
+                            `;
+                        } else {
+                            voteControlHtml = `<span style="font-weight:600; color:var(--color-role-be);">${userScore.score} SP</span>`;
+                        }
+
+                        let actionsHtml = '';
+                        if (isEditing) {
+                            actionsHtml = `
+                                <div style="display:flex; gap:6px;">
+                                    <button class="btn btn-primary btn-save-admin-epic" data-user-id="${m.id}" ${selectedVal ? '' : 'disabled'} style="padding:4px 8px; font-size:12px;">Сохранить</button>
+                                    ${hasVoted ? `<button class="btn btn-secondary btn-cancel-admin-epic" data-user-id="${m.id}" style="padding:4px 8px; font-size:12px;">Отмена</button>` : ''}
+                                </div>
+                            `;
+                        } else {
+                            actionsHtml = `<button class="btn btn-secondary btn-edit-admin-epic" data-user-id="${m.id}" style="padding:4px 8px; font-size:12px;">Изменить</button>`;
+                        }
+
+                        return `
+                            <tr>
+                                <td><strong>${m.first_name} ${m.last_name || ''}</strong>${m.telegram_id ? ` <span style="color:var(--text-muted); font-size:11px;">@${m.telegram_id}</span>` : ''}</td>
+                                <td><span class="badge" style="background:var(--bg-tertiary); font-size:11px;">${m.role_name || 'Без роли'}</span></td>
+                                <td>${voteControlHtml}</td>
+                                <td>${actionsHtml}</td>
+                            </tr>
+                        `;
+                    }).join('') || '<tr><td colspan="4" style="color: var(--text-muted); text-align: center; padding: 20px 0;">Нет участников в команде</td></tr>'}
+                </tbody>
+            </table>
+        </div>
+        ` : ''}
+
         <!-- Risks Section -->
         <div class="scoring-section-card" style="margin-top: 12px;">
             <h3>Оценка рисков</h3>
@@ -231,35 +373,99 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
                         const hasScore = risk.weighted_score !== null;
                         const scoreDisplay = hasScore ? `<span class="risk-score-value">Итоговый вес: ${risk.weighted_score}</span>` : '<span style="color: var(--text-muted)">Не оценен</span>';
                         
+                        // Render user scores for this risk
+                        const riskScoresHtml = risk.scores && risk.scores.length > 0
+                            ? `<div class="risk-votes-list">
+                                ${risk.scores.map(rs => {
+                                    const userName = `${rs.user?.first_name || ''} ${rs.user?.last_name || ''}`.trim() || rs.user?.telegram_id || 'Участник';
+                                    return `
+                                        <div class="risk-vote-member-item">
+                                            <span style="color: var(--text-muted);">${userName}:</span>
+                                            <span class="risk-vote-member-badge" style="color: var(--color-role-be)">P: ${rs.probability}</span>
+                                            <span class="risk-vote-member-badge" style="color: var(--color-role-fe)">I: ${rs.impact}</span>
+                                        </div>
+                                    `;
+                                }).join('')}
+                               </div>`
+                            : '<div style="color: var(--text-muted); font-size: 12px; margin-top: 4px; padding-left: 12px;">Оценок участников нет</div>';
+
+                        // Voter selectors for ordinary users
+                        const userRiskScore = risk.scores?.find(rs => rs.user_id === userProfile?.id);
+                        const hasUserScoredRisk = !!userRiskScore;
+
+                        let userRiskSelectorsHtml = '';
+                        if (!isAdmin && epic.status === 'SCORING' && !hasUserScoredRisk) {
+                            userRiskSelectorsHtml = `
+                                <div class="risk-vote-selectors">
+                                    <div class="risk-sel-group">
+                                        <label>Вероятность (1-4)</label>
+                                        <select class="select risk-prob" style="min-width: 0;">
+                                            <option value="1">1 - Низкая</option>
+                                            <option value="2">2 - Умеренная</option>
+                                            <option value="3">3 - Высокая</option>
+                                            <option value="4">4 - Критическая</option>
+                                        </select>
+                                    </div>
+                                    <div class="risk-sel-group">
+                                        <label>Влияние (1-4)</label>
+                                        <select class="select risk-imp" style="min-width: 0;">
+                                            <option value="1">1 - Незначительное</option>
+                                            <option value="2">2 - Умеренное</option>
+                                            <option value="3">3 - Серьезное</option>
+                                            <option value="4">4 - Катастрофическое</option>
+                                        </select>
+                                    </div>
+                                    <button class="btn btn-secondary btn-vote-risk" style="align-self: flex-end;">Оценить риск</button>
+                                </div>
+                            `;
+                        }
+
+                        // Voter selectors for admin overrides
+                        let adminRiskSelectorsHtml = '';
+                        if (isAdmin && epic.status === 'SCORING') {
+                            adminRiskSelectorsHtml = `
+                                <div class="risk-vote-selectors admin-risk-override" style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;">
+                                    <div class="risk-sel-group" style="flex: 1.5; min-width: 150px;">
+                                        <label>Участник</label>
+                                        <select class="select risk-admin-user" style="width: 100%;">
+                                            ${(scoresData.members || []).map(m => `<option value="${m.id}">${m.first_name} ${m.last_name || ''} (${m.role_name || '?'})</option>`).join('')}
+                                        </select>
+                                    </div>
+                                    <div class="risk-sel-group" style="flex: 1; min-width: 100px;">
+                                        <label>Вероятность (1-4)</label>
+                                        <select class="select risk-prob" style="width: 100%;">
+                                            <option value="1">1 - Низкая</option>
+                                            <option value="2">2 - Умеренная</option>
+                                            <option value="3">3 - Высокая</option>
+                                            <option value="4">4 - Критическая</option>
+                                        </select>
+                                    </div>
+                                    <div class="risk-sel-group" style="flex: 1; min-width: 100px;">
+                                        <label>Влияние (1-4)</label>
+                                        <select class="select risk-imp" style="width: 100%;">
+                                            <option value="1">1 - Незначительное</option>
+                                            <option value="2">2 - Умеренное</option>
+                                            <option value="3">3 - Серьезное</option>
+                                            <option value="4">4 - Катастрофическое</option>
+                                        </select>
+                                    </div>
+                                    <button class="btn btn-primary btn-vote-risk-admin" style="align-self: flex-end; padding: 6px 12px; font-size:13px;">Оценить за участника</button>
+                                </div>
+                            `;
+                        }
+
                         return `
-                            <div class="risk-vote-item" data-risk-id="${risk.id}">
+                            <div class="risk-vote-item" data-risk-id="${risk.id}" style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--color-border);">
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <div class="risk-vote-desc">${risk.description}</div>
+                                    <div class="risk-vote-desc" style="font-weight:600;">${risk.description}</div>
                                     <div>${scoreDisplay}</div>
                                 </div>
-                                ${epic.status === 'SCORING' && !hasScore ? `
-                                    <div class="risk-vote-selectors">
-                                        <div class="risk-sel-group">
-                                            <label>Вероятность (1-4)</label>
-                                            <select class="select risk-prob" style="min-width: 0;">
-                                                <option value="1">1 - Низкая</option>
-                                                <option value="2">2 - Умеренная</option>
-                                                <option value="3">3 - Высокая</option>
-                                                <option value="4">4 - Критическая</option>
-                                            </select>
-                                        </div>
-                                        <div class="risk-sel-group">
-                                            <label>Влияние (1-4)</label>
-                                            <select class="select risk-imp" style="min-width: 0;">
-                                                <option value="1">1 - Незначительное</option>
-                                                <option value="2">2 - Умеренное</option>
-                                                <option value="3">3 - Серьезное</option>
-                                                <option value="4">4 - Катастрофическое</option>
-                                            </select>
-                                        </div>
-                                        <button class="btn btn-secondary btn-vote-risk" style="align-self: flex-end;">Оценить риск</button>
-                                    </div>
-                                ` : ''}
+                                <div style="margin-top: 6px;">
+                                    <span style="font-size: 12px; color: var(--text-muted);">Оценки команды:</span>
+                                    ${riskScoresHtml}
+                                </div>
+                                ${userRiskSelectorsHtml}
+                                ${adminRiskSelectorsHtml}
                             </div>
                         `;
                     }).join('')
@@ -301,7 +507,7 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
             }
         });
 
-        // Risks vote buttons
+        // Risks vote buttons for normal users
         container.querySelectorAll('.btn-vote-risk').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 const item = e.target.closest('.risk-vote-item');
@@ -316,6 +522,90 @@ function renderEpicDetails(epic, scoresData, roleScores, risks) {
                         impact
                     });
                     showToast('Оценка риска принята!', 'success');
+                    selectEpic(epic);
+                } catch (err) {
+                    showToast('Не удалось оценить риск: ' + err.message, 'error');
+                }
+            });
+        });
+    }
+
+    // Admin listeners
+    if (isAdmin) {
+        // Vote mini-grid button select
+        container.querySelectorAll('.btn-vote-mini').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const userId = btn.dataset.userId;
+                const val = parseInt(btn.dataset.value, 10);
+                adminEpicVotes[userId] = val;
+
+                const row = btn.closest('tr');
+                row.querySelectorAll('.btn-vote-mini').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                const saveBtn = row.querySelector('.btn-save-admin-epic');
+                if (saveBtn) saveBtn.disabled = false;
+            });
+        });
+
+        // Edit button
+        container.querySelectorAll('.btn-edit-admin-epic').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const userId = btn.dataset.userId;
+                const userScore = scoresData.scores?.find(s => s.user_id === userId);
+                adminEpicVotes[userId] = userScore ? userScore.score : null;
+                renderEpicDetails(epic, scoresData, roleScores, risks);
+            });
+        });
+
+        // Cancel button
+        container.querySelectorAll('.btn-cancel-admin-epic').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const userId = btn.dataset.userId;
+                delete adminEpicVotes[userId];
+                renderEpicDetails(epic, scoresData, roleScores, risks);
+            });
+        });
+
+        // Save override button
+        container.querySelectorAll('.btn-save-admin-epic').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const userId = btn.dataset.userId;
+                const score = adminEpicVotes[userId];
+                if (!score) return;
+
+                try {
+                    await apiPost('/admin/scores/epic', {
+                        epic_id: epic.id,
+                        user_id: userId,
+                        score: score
+                    });
+                    showToast('Оценка успешно проставлена!', 'success');
+                    delete adminEpicVotes[userId];
+                    selectEpic(epic);
+                } catch (err) {
+                    showToast('Не удалось проставить оценку: ' + err.message, 'error');
+                }
+            });
+        });
+
+        // Admin risk override button
+        container.querySelectorAll('.btn-vote-risk-admin').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const item = e.target.closest('.risk-vote-item');
+                const riskId = item.dataset.riskId;
+                const userId = item.querySelector('.risk-admin-user').value;
+                const probability = parseInt(item.querySelector('.risk-prob').value, 10);
+                const impact = parseInt(item.querySelector('.risk-imp').value, 10);
+
+                try {
+                    await apiPost('/admin/scores/risk', {
+                        risk_id: riskId,
+                        user_id: userId,
+                        probability,
+                        impact
+                    });
+                    showToast('Оценка риска участника успешно сохранена!', 'success');
                     selectEpic(epic);
                 } catch (err) {
                     showToast('Не удалось оценить риск: ' + err.message, 'error');
