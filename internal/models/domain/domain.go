@@ -45,15 +45,19 @@ type User struct {
 
 // Epic represents a development epic to be scored.
 type Epic struct {
-	ID          uuid.UUID
-	Number      string
-	Name        string
-	Description string
-	TeamID      uuid.UUID
-	Status      Status
-	FinalScore  *float64 // nullable until scored
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID                uuid.UUID    `json:"id"`
+	Number            string       `json:"number"`
+	Name              string       `json:"name"`
+	Description       string       `json:"description"`
+	TeamID            uuid.UUID    `json:"team_id"`
+	Status            Status       `json:"status"`
+	FinalScore        *float64     `json:"final_score"`
+	Year              int          `json:"year"`
+	Quarter           int          `json:"quarter"`
+	Type              string       `json:"type"`
+	EvaluatingRoleIDs []uuid.UUID  `json:"evaluating_role_ids,omitempty"`
+	CreatedAt         time.Time    `json:"created_at"`
+	UpdatedAt         time.Time    `json:"updated_at"`
 }
 
 // Risk represents a risk associated with an epic.

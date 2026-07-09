@@ -143,6 +143,12 @@ func (epicBot *Bot) handleCallbackQuery(ctx context.Context, update *models.Upda
 		epicBot.sessions.clear(sk)
 		epicBot.editReply(rctx, msg.Chat.ID, msg.ID, "❌ Оценка отменена.")
 
+	case strings.HasPrefix(data, "report_year:"):
+		epicBot.handleReportYearSelected(rctx, msg, callback, data)
+
+	case strings.HasPrefix(data, "report_final:"):
+		epicBot.handleReportFinalSelected(rctx, msg, callback, data)
+
 	// adm_user_<action>_<userID> — user selected in picker
 	case strings.HasPrefix(data, "adm_user_"):
 		epicBot.handleAdmUserSelected(rctx, msg, callback, data)

@@ -9,27 +9,49 @@ import (
 )
 
 // CreateEpic inserts a new epic.
-func (r *Repository) CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID) (*domain.Epic, error) {
+func (r *Repository) CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
 	op := "Repository.CreateEpic"
 	epic := &domain.Epic{
-		ID:          uuid.New(),
-		Number:      number,
-		Name:        name,
-		Description: description,
-		TeamID:      teamID,
-		Status:      domain.StatusNew,
+		ID:                uuid.New(),
+		Number:            number,
+		Name:              name,
+		Description:       description,
+		TeamID:            teamID,
+		Status:            domain.StatusNew,
+		Year:              year,
+		Quarter:           quarter,
+		Type:              epicType,
+		EvaluatingRoleIDs: evaluatingRoleIDs,
 	}
 
-	query := `INSERT INTO epics (id, number, name, description, team_id, status)
-		VALUES ($1, $2, $3, $4, $5, $6)
+	tx, err := r.DB.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s: begin tx: %w", op, err)
+	}
+	defer tx.Rollback()
+
+	query := `INSERT INTO epics (id, number, name, description, team_id, status, year, quarter, type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at, updated_at`
-	err := r.DB.QueryRowContext(ctx, query,
+	err = tx.QueryRowContext(ctx, query,
 		epic.ID, epic.Number, epic.Name, epic.Description,
-		epic.TeamID, string(epic.Status)).
+		epic.TeamID, string(epic.Status), epic.Year, epic.Quarter, epic.Type).
 		Scan(&epic.CreatedAt, &epic.UpdatedAt)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
+		return nil, fmt.Errorf("%s: insert epic: %w", op, err)
 	}
+
+	for _, roleID := range evaluatingRoleIDs {
+		_, err = tx.ExecContext(ctx, `INSERT INTO epic_evaluation_roles (epic_id, role_id) VALUES ($1, $2)`, epic.ID, roleID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: insert evaluating role: %w", op, err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("%s: commit: %w", op, err)
+	}
+
 	return epic, nil
 }
 
@@ -38,14 +60,18 @@ func (r *Repository) GetEpicByID(ctx context.Context, epicID uuid.UUID) (*domain
 	op := "Repository.GetEpicByID"
 	var epic domain.Epic
 	query := `SELECT id, number, name, description, team_id, status,
-		final_score, created_at, updated_at
+		final_score, year, quarter, type, created_at, updated_at
 		FROM epics WHERE id = $1`
 	err := r.DB.QueryRowContext(ctx, query, epicID).
 		Scan(&epic.ID, &epic.Number, &epic.Name, &epic.Description,
 			&epic.TeamID, &epic.Status,
-			&epic.FinalScore, &epic.CreatedAt, &epic.UpdatedAt)
+			&epic.FinalScore, &epic.Year, &epic.Quarter, &epic.Type, &epic.CreatedAt, &epic.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	evals, err := r.GetEvaluatingRoleIDs(ctx, epic.ID)
+	if err == nil {
+		epic.EvaluatingRoleIDs = evals
 	}
 	return &epic, nil
 }
@@ -55,14 +81,18 @@ func (r *Repository) GetEpicByNumber(ctx context.Context, number string) (*domai
 	op := "Repository.GetEpicByNumber"
 	var epic domain.Epic
 	query := `SELECT id, number, name, description, team_id, status,
-		final_score, created_at, updated_at
+		final_score, year, quarter, type, created_at, updated_at
 		FROM epics WHERE number = $1`
 	err := r.DB.QueryRowContext(ctx, query, number).
 		Scan(&epic.ID, &epic.Number, &epic.Name, &epic.Description,
 			&epic.TeamID, &epic.Status,
-			&epic.FinalScore, &epic.CreatedAt, &epic.UpdatedAt)
+			&epic.FinalScore, &epic.Year, &epic.Quarter, &epic.Type, &epic.CreatedAt, &epic.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	evals, err := r.GetEvaluatingRoleIDs(ctx, epic.ID)
+	if err == nil {
+		epic.EvaluatingRoleIDs = evals
 	}
 	return &epic, nil
 }
@@ -72,7 +102,7 @@ func (r *Repository) GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.
 	op := "Repository.GetEpicsByTeamIDAndStatus"
 	var epics []domain.Epic
 	query := `SELECT id, number, name, description, team_id, status,
-		final_score, created_at, updated_at
+		final_score, year, quarter, type, created_at, updated_at
 		FROM epics WHERE team_id = $1 AND status = $2
 		ORDER BY number`
 	rows, err := r.DB.QueryContext(ctx, query, teamID, string(status))
@@ -84,9 +114,13 @@ func (r *Repository) GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.
 	for rows.Next() {
 		var e domain.Epic
 		if err := rows.Scan(&e.ID, &e.Number, &e.Name, &e.Description,
-			&e.TeamID, &e.Status,
-			&e.FinalScore, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			&e.TeamID, &e.Status, &e.FinalScore, &e.Year, &e.Quarter, &e.Type,
+			&e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		evals, err := r.GetEvaluatingRoleIDs(ctx, e.ID)
+		if err == nil {
+			e.EvaluatingRoleIDs = evals
 		}
 		epics = append(epics, e)
 	}
@@ -124,7 +158,7 @@ func (r *Repository) SetEpicFinalScore(ctx context.Context, epicID uuid.UUID, sc
 func (r *Repository) GetUnscoredEpicsByUser(ctx context.Context, userID uuid.UUID, teamID uuid.UUID) ([]domain.Epic, error) {
 	op := "Repository.GetUnscoredEpicsByUser"
 	query := `SELECT e.id, e.number, e.name, e.description,
-		e.team_id, e.status, e.final_score,
+		e.team_id, e.status, e.final_score, e.year, e.quarter, e.type,
 		e.created_at, e.updated_at
 		FROM epics e
 		WHERE e.team_id = $1 AND e.status = $2
@@ -156,9 +190,13 @@ func (r *Repository) GetUnscoredEpicsByUser(ctx context.Context, userID uuid.UUI
 	for rows.Next() {
 		var e domain.Epic
 		if err := rows.Scan(&e.ID, &e.Number, &e.Name, &e.Description,
-			&e.TeamID, &e.Status, &e.FinalScore,
+			&e.TeamID, &e.Status, &e.FinalScore, &e.Year, &e.Quarter, &e.Type,
 			&e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		evals, err := r.GetEvaluatingRoleIDs(ctx, e.ID)
+		if err == nil {
+			e.EvaluatingRoleIDs = evals
 		}
 		epics = append(epics, e)
 	}
@@ -170,7 +208,7 @@ func (r *Repository) GetAllEpics(ctx context.Context) ([]domain.Epic, error) {
 	op := "Repository.GetAllEpics"
 	var epics []domain.Epic
 	query := `SELECT id, number, name, description, team_id, status,
-		final_score, created_at, updated_at
+		final_score, year, quarter, type, created_at, updated_at
 		FROM epics ORDER BY number`
 	rows, err := r.DB.QueryContext(ctx, query)
 	if err != nil {
@@ -181,9 +219,13 @@ func (r *Repository) GetAllEpics(ctx context.Context) ([]domain.Epic, error) {
 	for rows.Next() {
 		var e domain.Epic
 		if err := rows.Scan(&e.ID, &e.Number, &e.Name, &e.Description,
-			&e.TeamID, &e.Status, &e.FinalScore,
+			&e.TeamID, &e.Status, &e.FinalScore, &e.Year, &e.Quarter, &e.Type,
 			&e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		evals, err := r.GetEvaluatingRoleIDs(ctx, e.ID)
+		if err == nil {
+			e.EvaluatingRoleIDs = evals
 		}
 		epics = append(epics, e)
 	}
@@ -195,7 +237,7 @@ func (r *Repository) GetEpicsByStatus(ctx context.Context, status domain.Status)
 	op := "Repository.GetEpicsByStatus"
 	var epics []domain.Epic
 	query := `SELECT id, number, name, description, team_id, status,
-		final_score, created_at, updated_at
+		final_score, year, quarter, type, created_at, updated_at
 		FROM epics WHERE status = $1 ORDER BY number`
 	rows, err := r.DB.QueryContext(ctx, query, string(status))
 	if err != nil {
@@ -206,9 +248,13 @@ func (r *Repository) GetEpicsByStatus(ctx context.Context, status domain.Status)
 	for rows.Next() {
 		var e domain.Epic
 		if err := rows.Scan(&e.ID, &e.Number, &e.Name, &e.Description,
-			&e.TeamID, &e.Status, &e.FinalScore,
+			&e.TeamID, &e.Status, &e.FinalScore, &e.Year, &e.Quarter, &e.Type,
 			&e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		evals, err := r.GetEvaluatingRoleIDs(ctx, e.ID)
+		if err == nil {
+			e.EvaluatingRoleIDs = evals
 		}
 		epics = append(epics, e)
 	}
@@ -253,4 +299,46 @@ func (r *Repository) StartEpicScoring(ctx context.Context, epicID uuid.UUID) err
 		return fmt.Errorf("%s: commit: %w", op, err)
 	}
 	return nil
+}
+
+// GetEvaluatingRoleIDs returns all role IDs configured to evaluate the epic.
+func (r *Repository) GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error) {
+	op := "Repository.GetEvaluatingRoleIDs"
+	var ids []uuid.UUID
+	query := `SELECT role_id FROM epic_evaluation_roles WHERE epic_id = $1`
+	err := r.DB.SelectContext(ctx, &ids, query, epicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	return ids, nil
+}
+
+// GetEpicsByTeamYearQuarter returns all epics of a team for a specific year and quarter.
+func (r *Repository) GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+	op := "Repository.GetEpicsByTeamYearQuarter"
+	var epics []domain.Epic
+	query := `SELECT id, number, name, description, team_id, status,
+		final_score, year, quarter, type, created_at, updated_at
+		FROM epics WHERE team_id = $1 AND year = $2 AND quarter = $3
+		ORDER BY number`
+	rows, err := r.DB.QueryContext(ctx, query, teamID, year, quarter)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var e domain.Epic
+		if err := rows.Scan(&e.ID, &e.Number, &e.Name, &e.Description,
+			&e.TeamID, &e.Status, &e.FinalScore, &e.Year, &e.Quarter, &e.Type,
+			&e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		evals, err := r.GetEvaluatingRoleIDs(ctx, e.ID)
+		if err == nil {
+			e.EvaluatingRoleIDs = evals
+		}
+		epics = append(epics, e)
+	}
+	return epics, nil
 }

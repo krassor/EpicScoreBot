@@ -354,3 +354,92 @@ func (r *Repository) GetRiskScoresByUserID(ctx context.Context, userID uuid.UUID
 	}
 	return scores, nil
 }
+
+func (r *Repository) GetExpectedScorersCount(ctx context.Context, epicID uuid.UUID, teamID uuid.UUID) (int, error) {
+	op := "Repository.GetExpectedScorersCount"
+	var hasRoles bool
+	err := r.DB.GetContext(ctx, &hasRoles, `SELECT EXISTS(SELECT 1 FROM epic_evaluation_roles WHERE epic_id = $1)`, epicID)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+
+	var count int
+	if !hasRoles {
+		query := `SELECT COUNT(DISTINCT user_id) FROM user_teams WHERE team_id = $1`
+		err = r.DB.GetContext(ctx, &count, query, teamID)
+	} else {
+		query := `SELECT COUNT(DISTINCT ut.user_id)
+			FROM user_teams ut
+			JOIN user_roles ur ON ut.user_id = ur.user_id
+			WHERE ut.team_id = $1 AND ur.role_id IN (
+				SELECT role_id FROM epic_evaluation_roles WHERE epic_id = $2
+			)`
+		err = r.DB.GetContext(ctx, &count, query, teamID, epicID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+	return count, nil
+}
+
+func (r *Repository) GetSubmittedEpicScorersCount(ctx context.Context, epicID uuid.UUID, teamID uuid.UUID) (int, error) {
+	op := "Repository.GetSubmittedEpicScorersCount"
+	var hasRoles bool
+	err := r.DB.GetContext(ctx, &hasRoles, `SELECT EXISTS(SELECT 1 FROM epic_evaluation_roles WHERE epic_id = $1)`, epicID)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+
+	var count int
+	if !hasRoles {
+		query := `SELECT COUNT(DISTINCT es.user_id)
+			FROM epic_scores es
+			JOIN user_teams ut ON es.user_id = ut.user_id
+			WHERE es.epic_id = $1 AND ut.team_id = $2`
+		err = r.DB.GetContext(ctx, &count, query, epicID, teamID)
+	} else {
+		query := `SELECT COUNT(DISTINCT es.user_id)
+			FROM epic_scores es
+			JOIN user_teams ut ON es.user_id = ut.user_id
+			JOIN user_roles ur ON ut.user_id = ur.user_id
+			WHERE es.epic_id = $1 AND ut.team_id = $2 AND ur.role_id IN (
+				SELECT role_id FROM epic_evaluation_roles WHERE epic_id = $1
+			)`
+		err = r.DB.GetContext(ctx, &count, query, epicID, teamID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+	return count, nil
+}
+
+func (r *Repository) GetSubmittedRiskScorersCount(ctx context.Context, riskID uuid.UUID, epicID uuid.UUID, teamID uuid.UUID) (int, error) {
+	op := "Repository.GetSubmittedRiskScorersCount"
+	var hasRoles bool
+	err := r.DB.GetContext(ctx, &hasRoles, `SELECT EXISTS(SELECT 1 FROM epic_evaluation_roles WHERE epic_id = $1)`, epicID)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+
+	var count int
+	if !hasRoles {
+		query := `SELECT COUNT(DISTINCT rs.user_id)
+			FROM risk_scores rs
+			JOIN user_teams ut ON rs.user_id = ut.user_id
+			WHERE rs.risk_id = $1 AND ut.team_id = $2`
+		err = r.DB.GetContext(ctx, &count, query, riskID, teamID)
+	} else {
+		query := `SELECT COUNT(DISTINCT rs.user_id)
+			FROM risk_scores rs
+			JOIN user_teams ut ON rs.user_id = ut.user_id
+			JOIN user_roles ur ON ut.user_id = ur.user_id
+			WHERE rs.risk_id = $1 AND ut.team_id = $2 AND ur.role_id IN (
+				SELECT role_id FROM epic_evaluation_roles WHERE epic_id = $3
+			)`
+		err = r.DB.GetContext(ctx, &count, query, riskID, teamID, epicID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+	return count, nil
+}

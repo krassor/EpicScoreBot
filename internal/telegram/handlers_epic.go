@@ -370,6 +370,23 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 		return
 	}
 
+	evalRoleIDs, err := epicBot.epicService.GetEvaluatingRoleIDs(ctx, epic.ID)
+	if err == nil && len(evalRoleIDs) > 0 {
+		evalRoleSet := make(map[uuid.UUID]bool)
+		for _, rid := range evalRoleIDs {
+			evalRoleSet[rid] = true
+		}
+
+		var filteredMembers []domain.User
+		for _, u := range teamMembers {
+			role, err := epicBot.roleService.GetRoleByUserID(ctx, u.ID)
+			if err == nil && role != nil && evalRoleSet[role.ID] {
+				filteredMembers = append(filteredMembers, u)
+			}
+		}
+		teamMembers = filteredMembers
+	}
+
 	log.Debug(
 		"team members found",
 		slog.Int("count", len(teamMembers)),

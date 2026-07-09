@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"EpicScoreBot/internal/models/domain"
@@ -471,9 +472,7 @@ func (epicBot *Bot) handleAdmTeamSelected(
 		if sess != nil {
 			msgID = sess.MessageID
 		}
-		epicBot.sessions.clear(sk)
-
-		epicBot.generateAndSendReport(ctx, msg, teamID, msgID)
+		epicBot.showReportYearPicker(ctx, msg, teamID, msgID)
 
 	default:
 		epicBot.sendReply(ctx, msg, "❌ Неизвестное действие.")
@@ -482,12 +481,16 @@ func (epicBot *Bot) handleAdmTeamSelected(
 
 // generateAndSendReport fetches scored epics for the team and generates a PDF report.
 func (epicBot *Bot) generateAndSendReport(ctx context.Context, msg *models.Message, teamID uuid.UUID, msgID int) {
-	op := "bot.generateAndSendReport"
-	log := epicBot.log.With(slog.String("op", op), slog.String("team_id", teamID.String()))
+	epicBot.generateAndSendReportExt(ctx, msg, teamID, 2026, 3, msgID)
+}
+
+func (epicBot *Bot) generateAndSendReportExt(ctx context.Context, msg *models.Message, teamID uuid.UUID, year, quarter int, msgID int) {
+	op := "bot.generateAndSendReportExt"
+	log := epicBot.log.With(slog.String("op", op), slog.String("team_id", teamID.String()), slog.Int("year", year), slog.Int("quarter", quarter))
 
 	epicBot.editOrSend(ctx, msg, msgID, "🔄 Формирование отчета...")
 
-	reportData, err := epicBot.epicService.GetReportData(ctx, teamID)
+	reportData, err := epicBot.epicService.GetReportData(ctx, teamID, year, quarter)
 	if err != nil {
 		log.Error("failed to get report data", sl.Err(err))
 		epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка при формировании отчета: %v", err))
@@ -495,7 +498,7 @@ func (epicBot *Bot) generateAndSendReport(ctx context.Context, msg *models.Messa
 	}
 
 	if len(reportData.Epics) == 0 {
-		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Нет оцененных эпиков для формирования отчета.")
+		epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Нет оцененных эпиков в Q%d %d для формирования отчета.", quarter, year))
 		return
 	}
 
@@ -510,7 +513,7 @@ func (epicBot *Bot) generateAndSendReport(ctx context.Context, msg *models.Messa
 		_ = epicBot.deleteMessage(ctx, msg.Chat.ID, msgID)
 	}
 
-	caption := fmt.Sprintf("📊 Отчет по команде «%s»", reportData.TeamName)
+	caption := fmt.Sprintf("📊 Отчет по команде «%s» за Q%d %d", reportData.TeamName, quarter, year)
 	if err := epicBot.sendDocument(ctx, msg, pdfPath, caption); err != nil {
 		log.Error("failed to send pdf document", sl.Err(err))
 		epicBot.sendReply(ctx, msg, "❌ Ошибка отправки PDF файла.")
@@ -882,4 +885,82 @@ func (epicBot *Bot) sendEpicNotifications(ctx context.Context, msg *models.Messa
 	}
 
 	epicBot.deleteAndSend(ctx, msg, msgID, adminResp.String())
+}
+
+func (epicBot *Bot) showReportYearPicker(ctx context.Context, msg *models.Message, teamID uuid.UUID, msgID int) {
+	years := []int{2026, 2027}
+	var keyboard [][]models.InlineKeyboardButton
+	for _, y := range years {
+		keyboard = append(keyboard, []models.InlineKeyboardButton{
+			{
+				Text:         fmt.Sprintf("📅 %d", y),
+				CallbackData: fmt.Sprintf("report_year:%s:%d", teamID.String(), y),
+			},
+		})
+	}
+	keyboard = append(keyboard, []models.InlineKeyboardButton{
+		{
+			Text:         "❌ Отмена",
+			CallbackData: "adm_cancel",
+		},
+	})
+	
+	text := "📅 *Выберите год для отчета:*"
+	kb := &models.InlineKeyboardMarkup{InlineKeyboard: keyboard}
+	_ = epicBot.editMarkdownWithKeyboard(ctx, msg.Chat.ID, msgID, text, kb)
+}
+
+func (epicBot *Bot) handleReportYearSelected(ctx context.Context, msg *models.Message, callback *models.CallbackQuery, data string) {
+	parts := strings.Split(data, ":")
+	if len(parts) != 3 {
+		epicBot.sendReply(ctx, msg, "❌ Неверные данные.")
+		return
+	}
+	teamID, err := uuid.Parse(parts[1])
+	if err != nil {
+		epicBot.sendReply(ctx, msg, "❌ Неверный ID команды.")
+		return
+	}
+	yearStr := parts[2]
+
+	var keyboard [][]models.InlineKeyboardButton
+	for q := 1; q <= 4; q++ {
+		keyboard = append(keyboard, []models.InlineKeyboardButton{
+			{
+				Text:         fmt.Sprintf("Квартал %d", q),
+				CallbackData: fmt.Sprintf("report_final:%s:%s:%d", teamID.String(), yearStr, q),
+			},
+		})
+	}
+	keyboard = append(keyboard, []models.InlineKeyboardButton{
+		{
+			Text:         "❌ Отмена",
+			CallbackData: "adm_cancel",
+		},
+	})
+	
+	text := fmt.Sprintf("🗓 *Выберите квартал для %s года:*", yearStr)
+	kb := &models.InlineKeyboardMarkup{InlineKeyboard: keyboard}
+	_ = epicBot.editMarkdownWithKeyboard(ctx, msg.Chat.ID, callback.Message.Message.ID, text, kb)
+}
+
+func (epicBot *Bot) handleReportFinalSelected(ctx context.Context, msg *models.Message, callback *models.CallbackQuery, data string) {
+	parts := strings.Split(data, ":")
+	if len(parts) != 4 {
+		epicBot.sendReply(ctx, msg, "❌ Неверные данные.")
+		return
+	}
+	teamID, err := uuid.Parse(parts[1])
+	if err != nil {
+		epicBot.sendReply(ctx, msg, "❌ Неверный ID команды.")
+		return
+	}
+	year, _ := strconv.Atoi(parts[2])
+	quarter, _ := strconv.Atoi(parts[3])
+
+	// Clear session
+	sk := sessionKey{ChatID: msg.Chat.ID, ThreadID: msg.MessageThreadID, Username: callback.From.Username}
+	epicBot.sessions.clear(sk)
+
+	epicBot.generateAndSendReportExt(ctx, msg, teamID, year, quarter, callback.Message.Message.ID)
 }

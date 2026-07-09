@@ -129,12 +129,12 @@ func (s *Service) TryCompleteRiskScoring(ctx context.Context, riskID uuid.UUID) 
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	teamMembers, err := s.repo.CountTeamMembers(ctx, epic.TeamID)
+	teamMembers, err := s.repo.GetExpectedScorersCount(ctx, epic.ID, epic.TeamID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	riskScoreCount, err := s.repo.CountRiskScores(ctx, riskID)
+	riskScoreCount, err := s.repo.GetSubmittedRiskScorersCount(ctx, riskID, epic.ID, epic.TeamID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
@@ -182,12 +182,12 @@ func (s *Service) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) 
 		return nil
 	}
 
-	teamMembers, err := s.repo.CountTeamMembers(ctx, epic.TeamID)
+	teamMembers, err := s.repo.GetExpectedScorersCount(ctx, epicID, epic.TeamID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	epicScoreCount, err := s.repo.CountEpicScores(ctx, epicID)
+	epicScoreCount, err := s.repo.GetSubmittedEpicScorersCount(ctx, epicID, epic.TeamID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}

@@ -27,9 +27,27 @@ type EpicReportData struct {
 	FinalScore float64 // total score adjusted by risk coefficients
 }
 
+type RoleCapacityReportData struct {
+	RoleName string
+	Capacity float64
+	Planned  float64
+	Diff     float64
+}
+
+type QuotaReportData struct {
+	LimitPercent  float64
+	ActualPercent float64
+	Status        string
+}
+
 // ReportData is the top-level data structure for a team report.
 type ReportData struct {
-	TeamName  string
-	Epics     []EpicReportData
-	Generated time.Time
+	TeamName       string
+	Year           int
+	Quarter        int
+	TotalCapacity  float64
+	RoleCapacities []RoleCapacityReportData
+	Epics          []EpicReportData
+	Quotas         map[string]QuotaReportData
+	Generated      time.Time
 }

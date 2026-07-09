@@ -47,6 +47,7 @@ func (r *Router) Mount(mux *chi.Mux) {
 
 				mux.Get("/profile", r.ganttHandler.GetProfile)
 				mux.Get("/roles", r.ganttHandler.GetRoles)
+				mux.Get("/reports/capacity", r.ganttHandler.GetCapacityReport)
 
 				// Admin endpoints
 				mux.Post("/teams", r.ganttHandler.CreateTeam)

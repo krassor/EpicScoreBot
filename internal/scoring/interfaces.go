@@ -19,6 +19,9 @@ type Repository interface {
 	CountRiskScores(ctx context.Context, riskID uuid.UUID) (int, error)
 	SetRiskWeightedScore(ctx context.Context, riskID uuid.UUID, score float64) error
 	CountEpicScores(ctx context.Context, epicID uuid.UUID) (int, error)
+	GetExpectedScorersCount(ctx context.Context, epicID uuid.UUID, teamID uuid.UUID) (int, error)
+	GetSubmittedEpicScorersCount(ctx context.Context, epicID uuid.UUID, teamID uuid.UUID) (int, error)
+	GetSubmittedRiskScorersCount(ctx context.Context, riskID uuid.UUID, epicID uuid.UUID, teamID uuid.UUID) (int, error)
 	GetDistinctRoleIDsForEpicScores(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error)
 	UpsertEpicRoleScore(ctx context.Context, epicID, roleID uuid.UUID, weightedAvg float64) error
 	GetRisksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
