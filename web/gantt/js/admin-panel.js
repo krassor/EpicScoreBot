@@ -25,6 +25,7 @@ export function initAdminPanel() {
         try {
             renderCheckboxList('single-user-roles-container', roles, 'role_ids');
             renderCheckboxList('edit-user-roles-container', roles, 'role_ids');
+            renderCheckboxList('epic-evaluating-roles-container', roles, 'evaluating_role_ids');
         } catch (e) {
             console.error('Ошибка в подписке на roles:', e);
         }
@@ -48,6 +49,11 @@ export function initAdminPanel() {
             loadUsers();
         }
     });
+
+    const epicYearInput = document.getElementById('epic-year');
+    if (epicYearInput && !epicYearInput.value) {
+        epicYearInput.value = new Date().getFullYear();
+    }
 
     try {
         setupFormListeners();
@@ -282,11 +288,32 @@ function setupFormListeners() {
         const number = document.getElementById('epic-number').value.trim();
         const name = document.getElementById('epic-name').value.trim();
         const description = document.getElementById('epic-desc').value.trim();
+        const year = parseInt(document.getElementById('epic-year').value, 10);
+        const quarter = parseInt(document.getElementById('epic-quarter').value, 10);
+        const type = document.getElementById('epic-type').value;
+
+        // Сбор выбранных ролей-оценщиков
+        const roleCbs = document.querySelectorAll('#epic-evaluating-roles-container input[type="checkbox"]:checked');
+        const evaluatingRoleIds = Array.from(roleCbs).map(cb => cb.value);
 
         try {
-            await apiPost('/epics', { team_id: teamId, number, name, description });
+            await apiPost('/epics', { 
+                team_id: teamId, 
+                number, 
+                name, 
+                description,
+                year,
+                quarter,
+                type,
+                evaluating_role_ids: evaluatingRoleIds
+            });
             showToast(`Эпик "${number}: ${name}" успешно создан!`, 'success');
             epicForm.reset();
+            
+            const epicYearInput = document.getElementById('epic-year');
+            if (epicYearInput) {
+                epicYearInput.value = new Date().getFullYear();
+            }
             
             if (teamId === state.get('selectedTeamId')) {
                 reloadEpics(teamId);
