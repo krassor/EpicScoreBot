@@ -280,3 +280,30 @@ GET    /api/teams/{id}/report/data → JSON-данные для отчёта
 |-------------|----------|
 | **Frontend** | Предоставляет API-контракты для Gantt UI и будущего веб-интерфейса |
 | **DevOps** | Контейнер собирается через Dockerfile, конфиг монтируется через volume |
+
+---
+
+## Шаг 6. Возможность проставления оценок администратором за участников
+
+Реализовать API-механизм для проставления оценок эпиков и рисков администратором/суперадминистратором вместо любого из участников команды.
+
+### 1. Новые REST API эндпоинты
+* **`POST /api/gantt/admin/scores/epic`** — запись оценки эпика от лица участника:
+  * Доступ: только роли `admin` или `superadmin` (через `RoleAuth` middleware).
+  * Request Body: `{ "epic_id": "uuid", "user_id": "uuid", "score": int }`.
+  * Поведение: определяет роль целевого пользователя `user_id` и сохраняет оценку в таблицу `epic_scores` через `repo.CreateEpicScore`, затем запускает каскадный пересчет `TryCompleteEpicScoring`.
+* **`POST /api/gantt/admin/scores/risk`** — запись оценки риска от лица участника:
+  * Доступ: только роли `admin` или `superadmin`.
+  * Request Body: `{ "risk_id": "uuid", "user_id": "uuid", "probability": int, "impact": int }`.
+  * Поведение: сохраняет оценку в таблицу `risk_scores` через `repo.CreateRiskScore` и запускает каскадный пересчет `TryCompleteRiskScoring`.
+
+### 2. Расширение существующих GET-эндпоинтов
+* **`GET /api/gantt/epics/{epic_id}/scores`** (хэндлер `GetEpicScores`):
+  * Добавить в JSON-ответ массив `members` — список всех участников команды, привязанной к эпику.
+  * Для каждого участника возвращать: `user_id`, `first_name`, `last_name`, `role_id`, `role_name`, а также `score` (текущая оценка за данный эпик, если она проставлена, иначе `null`).
+* **`GET /api/gantt/epics/{epic_id}/risks`** (хэндлер `GetEpicRisks`):
+  * Для каждого возвращаемого риска добавить поле `scores` — массив сырых оценок участников за данный риск (содержит `user_id`, `probability`, `impact`).
+
+### 3. Тестирование
+* Написать unit-тесты в `internal/transport/httpServer/handlers/admin_scores_test.go` для покрытия новых эндпоинтов и проверки разграничения прав (для не-админов должен возвращаться статус `403 Forbidden`).
+
