@@ -213,6 +213,9 @@ async function selectEpic(epic) {
 function renderEpicDetails(epic, scoresData, roleScores, risks) {
     const container = document.getElementById('scoring-details');
     if (!container) return;
+    scoresData = scoresData || {};
+    roleScores = roleScores || [];
+    risks = risks || [];
 
     const userProfile = state.get('userProfile');
     const isLeaderOrAdmin = userProfile && (userProfile.role === 'admin' || userProfile.role === 'superadmin' || userProfile.role === 'leader');
