@@ -449,6 +449,27 @@ log "=== Deploy completed ==="
 
 ---
 
+## Шаг 7. Деплой квартального планирования, квот, вместимости и роли PO/BA
+
+### 1. Описание задачи
+Обеспечить выкатку и проверку работоспособности новой функциональности на VPS `85.239.57.254`.
+
+### 2. Сценарий развертывания
+1. Выполнить резервную копию базы данных перед деплоем:
+   `/home/EpicScoreBot/scripts/backup/automated_backup.sh`
+2. Обновить локальный репозиторий из ветки `main` (или `master` при наличии):
+   `git pull origin main` (или `git merge` изменений).
+3. Убедиться, что применилась новая миграция БД `006_quarterly_planning.sql`.
+4. Пересобрать и перезапустить контейнер бэкенда:
+   `docker compose build --no-cache app-backend-service-epic-score-bot`
+   `docker compose up -d --no-deps app-backend-service-epic-score-bot`
+5. Проверить работоспособность:
+   * Вызвать `/ping` и `/health`.
+   * Убедиться в доступности API `GET /api/gantt/reports/capacity`.
+   * Проверить работу бота в Telegram (команда `/report`).
+
+---
+
 ## Зависимости от других субагентов
 
 | Зависимость | Описание |
