@@ -179,10 +179,11 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 
 	for _, e := range epics {
 		epicData := report.EpicReportData{
-			Number:     e.Number,
-			Name:       e.Name,
-			RoleScores: []report.RoleScoreData{},
-			Risks:      []report.RiskReportData{},
+			Number:        e.Number,
+			Name:          e.Name,
+			RoleScores:    []report.RoleScoreData{},
+			RoleScoresMap: make(map[string]float64),
+			Risks:         []report.RiskReportData{},
 		}
 
 		if e.FinalScore != nil {
@@ -213,6 +214,7 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 					RoleName:    roleName,
 					WeightedAvg: rs.WeightedAvg,
 				})
+				epicData.RoleScoresMap[roleName] = rs.WeightedAvg
 				totalScore += rs.WeightedAvg
 				rolePlanned[roleName] += rs.WeightedAvg
 			}

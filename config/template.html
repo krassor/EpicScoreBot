@@ -184,22 +184,69 @@
     Общая доступная емкость команды: <strong>{{printf "%.2f" .TotalCapacity}} чд</strong>
   </div>
 
-  <div class="section-title">Доступная емкость и запланированная трудоемкость ролей</div>
+  <div class="section-title">Трудоемкость ролей по задачам (матрица планирования)</div>
   <table style="margin-bottom: 25px;">
-    <tr>
-      <th>Роль</th>
-      <th>Доступно (емкость), чд</th>
-      <th>Запланировано (трудоемкость), чд</th>
-      <th>Разница (недо-/перепланирование), чд</th>
-    </tr>
-    {{range .RoleCapacities}}
-    <tr>
-      <td>{{.RoleName}}</td>
-      <td>{{printf "%.2f" .Capacity}}</td>
-      <td>{{printf "%.2f" .Planned}}</td>
-      <td class="{{if lt .Diff 0.0}}negative-diff{{else}}positive-diff{{end}}">{{printf "%.2f" .Diff}}</td>
-    </tr>
-    {{end}}
+    <thead>
+      <tr>
+        <th style="text-align: left;">Задача</th>
+        <th style="text-align: center; width: 90px;">Тип</th>
+        {{range .RoleCapacities}}
+        <th style="text-align: center;">{{.RoleName}}</th>
+        {{end}}
+        <th style="text-align: center; width: 80px;">Итого (чд)</th>
+        <th style="text-align: center; width: 80px;">С рисками (чд)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{$roleCapacities := .RoleCapacities}}
+      {{range .Epics}}
+      {{$epic := .}}
+      <tr>
+        <td style="text-align: left;"><strong>#{{$epic.Number}}</strong> {{$epic.Name}}</td>
+        <td style="text-align: center;">
+          <span style="font-size: 10px; padding: 2px 4px; border: 1px solid #ccc; border-radius: 3px; background: #eee;">{{$epic.Type}}</span>
+        </td>
+        {{range $roleCapacities}}
+        {{$score := index $epic.RoleScoresMap .RoleName}}
+        <td style="text-align: center;">
+          {{if $score}}{{printf "%.1f" $score}}{{else}}-{{end}}
+        </td>
+        {{end}}
+        <td style="text-align: center; font-weight: bold;">{{printf "%.1f" $epic.TotalScore}}</td>
+        <td style="text-align: center; font-weight: bold; color: #e15759;">{{printf "%.0f" $epic.FinalScore}}</td>
+      </tr>
+      {{end}}
+
+      <!-- Итог: Запланировано -->
+      <tr class="total-row">
+        <td colspan="2" style="text-align: left;">Запланировано (трудоемкость), чд</td>
+        {{range .RoleCapacities}}
+        <td style="text-align: center;">{{printf "%.1f" .Planned}}</td>
+        {{end}}
+        <td style="text-align: center;">{{printf "%.1f" $.TotalPlanned}}</td>
+        <td style="text-align: center; color: #e15759;">{{printf "%.0f" $.TotalFinalPlanned}}</td>
+      </tr>
+
+      <!-- Итог: Доступно -->
+      <tr class="total-row" style="background: #fff; border-top: 1px solid #e0e0e0;">
+        <td colspan="2" style="text-align: left;">Доступно (емкость), чд</td>
+        {{range .RoleCapacities}}
+        <td style="text-align: center;">{{printf "%.1f" .Capacity}}</td>
+        {{end}}
+        <td style="text-align: center;">{{printf "%.1f" $.TotalCapacity}}</td>
+        <td></td>
+      </tr>
+
+      <!-- Итог: Разница -->
+      <tr class="total-row" style="background: #fff; border-top: 1px solid #e0e0e0;">
+        <td colspan="2" style="text-align: left;">Разница (недо-/перепланирование), чд</td>
+        {{range .RoleCapacities}}
+        <td style="text-align: center;" class="{{if lt .Diff 0.0}}negative-diff{{else}}positive-diff{{end}}">{{printf "%.1f" .Diff}}</td>
+        {{end}}
+        <td style="text-align: center;" class="{{if lt $.TotalDiff 0.0}}negative-diff{{else}}positive-diff{{end}}">{{printf "%.1f" $.TotalDiff}}</td>
+        <td></td>
+      </tr>
+    </tbody>
   </table>
 
   <div class="section-title">Соблюдение квот по типам задач</div>
