@@ -145,60 +145,45 @@ function renderCapacityTable(data) {
         return;
     }
 
-    // Собираем все уникальные эпики
     const sortedEpics = [...epics].sort((a, b) => a.number.localeCompare(b.number));
 
     let html = `
         <table class="admin-table" style="width: 100%; border-collapse: collapse;">
             <thead>
                 <tr>
-                    <th style="text-align: left;">Роль</th>
-                    <th style="text-align: center;">Доступно (чд)</th>
+                    <th style="text-align: left; min-width: 180px;">Задача</th>
+                    <th style="text-align: center; width: 120px;">Тип</th>
     `;
 
-    // Добавляем колонки для каждого эпика
-    sortedEpics.forEach(epic => {
-        const typeClass = `badge-type-${epic.type}`;
-        // Добавим класс стиля для бейджей типов, если нужно
-        html += `
-            <th style="text-align: center; min-width: 100px;" title="${epic.name} (${epic.status})">
-                <div style="font-size: 11px; color: var(--text-muted); font-weight: normal; margin-bottom: 2px;">${epic.type}</div>
-                <div>${epic.number}</div>
-            </th>
-        `;
+    // Добавляем роли как колонки в шапку
+    roleCapacities.forEach(rc => {
+        html += `<th style="text-align: center; min-width: 100px;">${rc.role_name}</th>`;
     });
 
     html += `
-                    <th style="text-align: center;">Запланировано (чд)</th>
-                    <th style="text-align: center;">Разница (чд)</th>
+                    <th style="text-align: center; width: 110px;">Итого (чд)</th>
+                    <th style="text-align: center; width: 110px;">С рисками (чд)</th>
                 </tr>
             </thead>
             <tbody>
     `;
 
-    // Вычисляем суммарные показатели по колонкам
-    let totalCapacity = data.total_capacity || 0;
-    let totalPlannedSum = 0;
-    const epicSums = {};
+    // Заполняем строки (эпики)
     sortedEpics.forEach(epic => {
-        epicSums[epic.id] = 0;
-    });
-
-    // Отрисовываем строки для каждой роли
-    roleCapacities.forEach(rc => {
-        const isOverplanned = rc.diff < 0;
-        const diffStyle = isOverplanned ? 'color: var(--color-danger); font-weight: bold;' : 'color: var(--color-success);';
-        
         html += `
             <tr>
-                <td style="font-weight: 500;">${rc.role_name}</td>
-                <td style="text-align: center; font-weight: 500;">${rc.capacity.toFixed(1)}</td>
+                <td style="font-weight: 500; text-align: left;">
+                    <span style="color: var(--color-primary); font-weight: bold; margin-right: 6px;">#${epic.number}</span>
+                    <span>${epic.name}</span>
+                </td>
+                <td style="text-align: center;">
+                    <span class="badge badge-type-${epic.type}" style="font-size: 11px;">${epic.type}</span>
+                </td>
         `;
 
-        // Оценки по эпикам
-        sortedEpics.forEach(epic => {
+        // Оценки по ролям для данного эпика
+        roleCapacities.forEach(rc => {
             const score = epic.role_scores ? (epic.role_scores[rc.role_name] || 0) : 0;
-            epicSums[epic.id] += score;
             html += `
                 <td style="text-align: center; color: ${score > 0 ? 'var(--color-text)' : 'var(--color-text-muted)'};">
                     ${score > 0 ? score.toFixed(1) : '-'}
@@ -206,38 +191,79 @@ function renderCapacityTable(data) {
             `;
         });
 
-        totalPlannedSum += rc.planned;
+        // Посчитаем итоговые оценки по эпику
+        let epicTotalRaw = 0;
+        roleCapacities.forEach(rc => {
+            epicTotalRaw += epic.role_scores ? (epic.role_scores[rc.role_name] || 0) : 0;
+        });
 
         html += `
-                <td style="text-align: center; font-weight: 500;">${rc.planned.toFixed(1)}</td>
-                <td style="text-align: center; ${diffStyle}">${rc.diff.toFixed(1)}</td>
+                <td style="text-align: center; font-weight: bold;">${epicTotalRaw.toFixed(1)}</td>
+                <td style="text-align: center; font-weight: bold; color: var(--color-primary);">${epic.final_score.toFixed(0)}</td>
             </tr>
         `;
     });
 
-    // Отрисовываем итоговую строку
+    // Итоговая строка: Запланировано (Planned)
+    html += `
+        <tr style="border-top: 2px solid var(--color-border); background-color: rgba(255, 255, 255, 0.02); font-weight: bold;">
+            <td colspan="2" style="text-align: left; padding-left: 12px;">Запланировано (трудоемкость), чд</td>
+    `;
+    let totalPlannedSum = 0;
+    roleCapacities.forEach(rc => {
+        totalPlannedSum += rc.planned;
+        html += `<td style="text-align: center;">${rc.planned.toFixed(1)}</td>`;
+    });
+    // Суммарные итоговые оценки по всем эпикам
+    let totalRawScoreSum = 0;
+    let totalFinalScoreSum = 0;
+    sortedEpics.forEach(epic => {
+        let epicTotalRaw = 0;
+        roleCapacities.forEach(rc => {
+            epicTotalRaw += epic.role_scores ? (epic.role_scores[rc.role_name] || 0) : 0;
+        });
+        totalRawScoreSum += epicTotalRaw;
+        totalFinalScoreSum += epic.final_score;
+    });
+
+    html += `
+            <td style="text-align: center;">${totalRawScoreSum.toFixed(1)}</td>
+            <td style="text-align: center; color: var(--color-primary);">${totalFinalScoreSum.toFixed(0)}</td>
+        </tr>
+    `;
+
+    // Итоговая строка: Доступно (Capacity)
+    let totalCapacity = data.total_capacity || 0;
+    html += `
+        <tr style="background-color: rgba(255, 255, 255, 0.02); font-weight: bold;">
+            <td colspan="2" style="text-align: left; padding-left: 12px;">Доступно (емкость), чд</td>
+    `;
+    roleCapacities.forEach(rc => {
+        html += `<td style="text-align: center;">${rc.capacity.toFixed(1)}</td>`;
+    });
+    html += `
+            <td style="text-align: center;">${totalCapacity.toFixed(1)}</td>
+            <td></td>
+        </tr>
+    `;
+
+    // Итоговая строка: Разница (Diff)
+    html += `
+        <tr style="background-color: rgba(255, 255, 255, 0.02); font-weight: bold; border-bottom: 2px solid var(--color-border);">
+            <td colspan="2" style="text-align: left; padding-left: 12px;">Разница (недо-/перепланирование), чд</td>
+    `;
+    roleCapacities.forEach(rc => {
+        const isOverplanned = rc.diff < 0;
+        const diffStyle = isOverplanned ? 'color: var(--color-danger); font-weight: bold;' : 'color: var(--color-success); font-weight: bold;';
+        html += `<td style="text-align: center; ${diffStyle}">${rc.diff.toFixed(1)}</td>`;
+    });
     const totalDiff = totalCapacity - totalPlannedSum;
     const isTotalOverplanned = totalDiff < 0;
     const totalDiffStyle = isTotalOverplanned ? 'color: var(--color-danger); font-weight: bold;' : 'color: var(--color-success); font-weight: bold;';
-
     html += `
-            <tr style="border-top: 2px solid var(--color-border); background-color: rgba(255, 255, 255, 0.02); font-weight: bold;">
-                <td>Итого</td>
-                <td style="text-align: center;">${totalCapacity.toFixed(1)}</td>
-    `;
-
-    // Суммы по эпикам в итоговой строке
-    sortedEpics.forEach(epic => {
-        const sum = epicSums[epic.id] || 0;
-        html += `
-            <td style="text-align: center;">${sum > 0 ? sum.toFixed(1) : '-'}</td>
-        `;
-    });
-
-    html += `
-                <td style="text-align: center;">${totalPlannedSum.toFixed(1)}</td>
-                <td style="text-align: center; ${totalDiffStyle}">${totalDiff.toFixed(1)}</td>
-            </tr>
+            <td style="text-align: center; ${totalDiffStyle}">${totalDiff.toFixed(1)}</td>
+            <td></td>
+        </tr>
         </tbody>
     </table>
     `;

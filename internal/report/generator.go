@@ -38,6 +38,9 @@ type templateData struct {
 	Year               int
 	Quarter            int
 	TotalCapacity      float64
+	TotalPlanned       float64
+	TotalFinalPlanned  float64
+	TotalDiff          float64
 	RoleCapacities     []RoleCapacityReportData
 	Quotas             map[string]QuotaReportData
 	GeneratedFormatted string
@@ -84,11 +87,24 @@ func (g *Generator) GenerateReport(ctx context.Context, data ReportData) (string
 		})
 	}
 
+	var totalPlanned float64
+	for _, rc := range data.RoleCapacities {
+		totalPlanned += rc.Planned
+	}
+
+	var totalFinalPlanned float64
+	for _, e := range epics {
+		totalFinalPlanned += e.FinalScore
+	}
+
 	td := templateData{
 		TeamName:           data.TeamName,
 		Year:               data.Year,
 		Quarter:            data.Quarter,
 		TotalCapacity:      data.TotalCapacity,
+		TotalPlanned:       totalPlanned,
+		TotalFinalPlanned:  totalFinalPlanned,
+		TotalDiff:          data.TotalCapacity - totalPlanned,
 		RoleCapacities:     data.RoleCapacities,
 		Quotas:             data.Quotas,
 		GeneratedFormatted: data.Generated.Format("02.01.2006 15:04"),

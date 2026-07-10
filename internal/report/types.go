@@ -19,12 +19,13 @@ type RiskReportData struct {
 
 // EpicReportData holds all report data for a single epic.
 type EpicReportData struct {
-	Number     string
-	Name       string
-	RoleScores []RoleScoreData
-	TotalScore float64 // sum of role weighted averages
-	Risks      []RiskReportData
-	FinalScore float64 // total score adjusted by risk coefficients
+	Number        string
+	Name          string
+	RoleScores    []RoleScoreData
+	RoleScoresMap map[string]float64 // Map for easy template lookups by role name
+	TotalScore    float64            // sum of role weighted averages
+	Risks         []RiskReportData
+	FinalScore    float64            // total score adjusted by risk coefficients
 }
 
 type RoleCapacityReportData struct {
