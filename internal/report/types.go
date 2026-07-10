@@ -21,6 +21,7 @@ type RiskReportData struct {
 type EpicReportData struct {
 	Number        string
 	Name          string
+	Type          string
 	RoleScores    []RoleScoreData
 	RoleScoresMap map[string]float64 // Map for easy template lookups by role name
 	TotalScore    float64            // sum of role weighted averages
