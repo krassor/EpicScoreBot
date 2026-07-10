@@ -181,6 +181,7 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 		epicData := report.EpicReportData{
 			Number:        e.Number,
 			Name:          e.Name,
+			Type:          e.Type,
 			RoleScores:    []report.RoleScoreData{},
 			RoleScoresMap: make(map[string]float64),
 			Risks:         []report.RiskReportData{},
