@@ -147,6 +147,16 @@ func (h *GanttHandler) GetCapacityReport(w http.ResponseWriter, r *http.Request)
 			// Get role-level scores
 			roleScores, err := h.repo.GetEpicRoleScoresByEpicID(r.Context(), e.ID)
 			if err == nil {
+				var baseScore float64
+				for _, rs := range roleScores {
+					baseScore += rs.WeightedAvg
+				}
+
+				riskFactor := 1.0
+				if baseScore > 0 && e.Status == domain.StatusScored && e.FinalScore != nil {
+					riskFactor = *e.FinalScore / baseScore
+				}
+
 				for _, rs := range roleScores {
 					roleName := rs.RoleID.String()
 					if rName, exists := roleNames[rs.RoleID]; exists {
@@ -157,8 +167,9 @@ func (h *GanttHandler) GetCapacityReport(w http.ResponseWriter, r *http.Request)
 							roleNames[rs.RoleID] = r.Name
 						}
 					}
-					item.RoleScores[roleName] = rs.WeightedAvg
-					rolePlanned[roleName] += rs.WeightedAvg
+					scaledScore := rs.WeightedAvg * riskFactor
+					item.RoleScores[roleName] = scaledScore
+					rolePlanned[roleName] += scaledScore
 				}
 			}
 		}

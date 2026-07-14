@@ -200,6 +200,16 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 		// Role scores
 		roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, e.ID)
 		if err == nil {
+			var baseScore float64
+			for _, rs := range roleScores {
+				baseScore += rs.WeightedAvg
+			}
+
+			riskFactor := 1.0
+			if baseScore > 0 && e.FinalScore != nil {
+				riskFactor = *e.FinalScore / baseScore
+			}
+
 			var totalScore float64
 			for _, rs := range roleScores {
 				roleName := rs.RoleID.String()
@@ -211,13 +221,14 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 						roleNames[rs.RoleID] = r.Name
 					}
 				}
+				scaledScore := rs.WeightedAvg * riskFactor
 				epicData.RoleScores = append(epicData.RoleScores, report.RoleScoreData{
 					RoleName:    roleName,
-					WeightedAvg: rs.WeightedAvg,
+					WeightedAvg: scaledScore,
 				})
-				epicData.RoleScoresMap[roleName] = rs.WeightedAvg
-				totalScore += rs.WeightedAvg
-				rolePlanned[roleName] += rs.WeightedAvg
+				epicData.RoleScoresMap[roleName] = scaledScore
+				totalScore += scaledScore
+				rolePlanned[roleName] += scaledScore
 			}
 			epicData.TotalScore = totalScore
 		} else {
