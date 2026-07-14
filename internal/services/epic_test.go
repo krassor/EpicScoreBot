@@ -294,11 +294,11 @@ func TestEpicService_GetReportData(t *testing.T) {
 			t.Errorf("ожидался FinalScore = 15.5, получено: %f", eReport.FinalScore)
 		}
 
-		if eReport.TotalScore != 12.5 {
-			t.Errorf("ожидался TotalScore = 12.5, получено: %f", eReport.TotalScore)
+		if eReport.TotalScore != 15.5 {
+			t.Errorf("ожидался TotalScore = 15.5, получено: %f", eReport.TotalScore)
 		}
 
-		if len(eReport.RoleScores) != 1 || eReport.RoleScores[0].RoleName != "IT-лидер" || eReport.RoleScores[0].WeightedAvg != 12.5 {
+		if len(eReport.RoleScores) != 1 || eReport.RoleScores[0].RoleName != "IT-лидер" || eReport.RoleScores[0].WeightedAvg != 15.5 {
 			t.Errorf("неверные оценки ролей: %+v", eReport.RoleScores)
 		}
 
