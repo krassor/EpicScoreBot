@@ -27,7 +27,7 @@ var defaultRoleOrder = map[string]int{
 type roleTask struct {
 	roleID    uuid.UUID
 	roleName  string
-	days      int
+	workDays  int
 	sortOrder int
 }
 
@@ -116,8 +116,7 @@ func (s *Service) GenerateTasksForEpic(
 		if err != nil {
 			return nil, fmt.Errorf("%s: get role: %w", op, err)
 		}
-		//7.0/5.0 - this coefficient is a compensation for 2 holidays in a week
-		days := max(1, int(math.Ceil(rs.WeightedAvg*finalCoeff*7.0/5.0)))
+		workDays := max(1, int(math.Ceil(rs.WeightedAvg*finalCoeff)))
 		order, ok := defaultRoleOrder[role.Name]
 		if !ok {
 			order = 99
@@ -125,7 +124,7 @@ func (s *Service) GenerateTasksForEpic(
 		roleTasks = append(roleTasks, roleTask{
 			roleID:    rs.RoleID,
 			roleName:  role.Name,
-			days:      days,
+			workDays:  workDays,
 			sortOrder: order,
 		})
 	}
@@ -138,12 +137,13 @@ func (s *Service) GenerateTasksForEpic(
 		return 0
 	})
 
+	adjustedStartDate := moveToWorkDay(startDate)
 	// Create parent task (epic).
 	parentTask := &domain.GanttTask{
 		EpicID:    epicID,
 		Name:      fmt.Sprintf("%s: %s", epic.Number, epic.Name),
-		StartDate: startDate,
-		EndDate:   startDate, // will be recalculated
+		StartDate: adjustedStartDate,
+		EndDate:   adjustedStartDate, // will be recalculated
 		SortOrder: 0,
 		IsParent:  true,
 	}
@@ -156,18 +156,20 @@ func (s *Service) GenerateTasksForEpic(
 	var result []domain.GanttTask
 	result = append(result, *parentTask)
 
-	cursor := startDate
+	cursor := adjustedStartDate
+	parentEndDate := adjustedStartDate
 	groups := groupBySortOrder(roleTasks)
 	for _, group := range groups {
 		var groupEnd time.Time
 		for _, rt := range group {
-			childEnd := cursor.AddDate(0, 0, rt.days)
+			childStart := cursor
+			childEnd := addWorkDays(cursor, rt.workDays)
 			roleID := rt.roleID
 			child := &domain.GanttTask{
 				EpicID:       epicID,
 				RoleID:       &roleID,
 				Name:         rt.roleName,
-				StartDate:    cursor,
+				StartDate:    childStart,
 				EndDate:      childEnd,
 				SortOrder:    rt.sortOrder,
 				IsParent:     false,
@@ -184,18 +186,21 @@ func (s *Service) GenerateTasksForEpic(
 				groupEnd = childEnd
 			}
 		}
-		cursor = groupEnd
+		if parentEndDate.Before(groupEnd) {
+			parentEndDate = groupEnd
+		}
+		cursor = moveToWorkDay(groupEnd.AddDate(0, 0, 1))
 	}
 
 	// Update parent task dates.
 	if err := s.repo.UpdateGanttTaskDates(
-		ctx, parentTask.ID, startDate, cursor,
+		ctx, parentTask.ID, adjustedStartDate, parentEndDate,
 	); err != nil {
 		return nil, fmt.Errorf(
 			"%s: update parent dates: %w", op, err,
 		)
 	}
-	result[0].EndDate = cursor
+	result[0].EndDate = parentEndDate
 
 	s.log.Info("generated gantt tasks",
 		slog.String("epicID", epicID.String()),
@@ -235,8 +240,12 @@ func (s *Service) UpdateTaskDates(
 ) error {
 	op := "gantt.UpdateTaskDates"
 
+	workDays := max(1, countWorkDays(startDate, endDate))
+	adjustedStart := moveToWorkDay(startDate)
+	adjustedEnd := addWorkDays(adjustedStart, workDays)
+
 	if err := s.repo.UpdateGanttTaskDates(
-		ctx, taskID, startDate, endDate,
+		ctx, taskID, adjustedStart, adjustedEnd,
 	); err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}
@@ -332,15 +341,15 @@ func (s *Service) recalcSiblingDates(
 	}
 
 	// Lay out sequentially.
-	cursor := parent.StartDate
+	parentStartDate := moveToWorkDay(parent.StartDate)
+	cursor := parentStartDate
+	parentEndDate := parentStartDate
 	for _, g := range groups {
 		var groupEnd time.Time
 		for i := range g.children {
-			duration := g.children[i].EndDate.Sub(
-				g.children[i].StartDate,
-			)
+			workDays := max(1, countWorkDays(g.children[i].StartDate, g.children[i].EndDate))
 			newStart := cursor
-			newEnd := newStart.Add(duration)
+			newEnd := addWorkDays(newStart, workDays)
 			g.children[i].StartDate = newStart
 			g.children[i].EndDate = newEnd
 			if err := s.repo.UpdateGanttTaskDates(
@@ -354,18 +363,22 @@ func (s *Service) recalcSiblingDates(
 				groupEnd = newEnd
 			}
 		}
-		cursor = groupEnd
+		if parentEndDate.Before(groupEnd) {
+			parentEndDate = groupEnd
+		}
+		cursor = moveToWorkDay(groupEnd.AddDate(0, 0, 1))
 	}
 
 	// Update parent.
 	if err := s.repo.UpdateGanttTaskDates(
-		ctx, parentID, parent.StartDate, cursor,
+		ctx, parentID, parentStartDate, parentEndDate,
 	); err != nil {
 		return nil, fmt.Errorf(
 			"%s: update parent: %w", op, err,
 		)
 	}
-	parent.EndDate = cursor
+	parent.StartDate = parentStartDate
+	parent.EndDate = parentEndDate
 
 	// Return updated task list.
 	var result []domain.GanttTask
@@ -406,4 +419,54 @@ func (s *Service) recalcParentDates(
 	return s.repo.UpdateGanttTaskDates(
 		ctx, parentID, minStart, maxEnd,
 	)
+}
+
+// toMidnight returns a time with the same date as t but set to midnight (00:00:00).
+func toMidnight(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
+// moveToWorkDay moves the date to Monday if it falls on Saturday or Sunday.
+func moveToWorkDay(t time.Time) time.Time {
+	switch t.Weekday() {
+	case time.Saturday:
+		return t.AddDate(0, 0, 2)
+	case time.Sunday:
+		return t.AddDate(0, 0, 1)
+	default:
+		return t
+	}
+}
+
+// addWorkDays adds days - 1 working days to start.
+func addWorkDays(start time.Time, days int) time.Time {
+	curr := moveToWorkDay(start)
+	if days <= 1 {
+		return curr
+	}
+	remaining := days - 1
+	for remaining > 0 {
+		curr = curr.AddDate(0, 0, 1)
+		if curr.Weekday() != time.Saturday && curr.Weekday() != time.Sunday {
+			remaining--
+		}
+	}
+	return curr
+}
+
+// countWorkDays counts the number of working days between start and end inclusive.
+func countWorkDays(start, end time.Time) int {
+	s := toMidnight(start)
+	e := toMidnight(end)
+	if s.After(e) {
+		return 0
+	}
+	count := 0
+	for !s.After(e) {
+		if s.Weekday() != time.Saturday && s.Weekday() != time.Sunday {
+			count++
+		}
+		s = s.AddDate(0, 0, 1)
+	}
+	return count
 }
