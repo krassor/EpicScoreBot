@@ -499,6 +499,125 @@ func TestRecalcSiblingDates(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskDates(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+
+	parentID := uuid.New()
+	taskID := uuid.New()
+
+	task := &domain.GanttTask{
+		ID:           taskID,
+		ParentTaskID: &parentID,
+		StartDate:    time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC), // Fri Jul 10
+		EndDate:      time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC),
+		IsParent:     false,
+	}
+
+	mockRepo := &MockRepository{
+		GetGanttTaskByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.GanttTask, error) {
+			if id == taskID {
+				return task, nil
+			}
+			return nil, errors.New("not found")
+		},
+		UpdateGanttTaskDatesFunc: func(ctx context.Context, id uuid.UUID, start, end time.Time) error {
+			task.StartDate = start
+			task.EndDate = end
+			return nil
+		},
+		GetGanttChildTasksFunc: func(ctx context.Context, pid uuid.UUID) ([]domain.GanttTask, error) {
+			return []domain.GanttTask{*task}, nil
+		},
+	}
+
+	service := New(logger, mockRepo)
+
+	// Update task dates (moving to Saturday -> should move to Monday, with 2 workDays duration -> Monday to Tuesday)
+	err := service.UpdateTaskDates(ctx, taskID, 
+		time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC), // Sat Jul 11 (becomes Mon Jul 13)
+		time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC), // Tue Jul 14 (Mon Jul 13 to Tue Jul 14 is 2 workDays)
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !task.StartDate.Equal(time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("expected adjusted start Mon Jul 13, got %v", task.StartDate)
+	}
+	if !task.EndDate.Equal(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("expected adjusted end Tue Jul 14, got %v", task.EndDate)
+	}
+}
+
+func TestReorderTask(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+
+	parentID := uuid.New()
+	taskID := uuid.New()
+
+	parentTask := &domain.GanttTask{
+		ID:        parentID,
+		StartDate: time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC),
+		IsParent:  true,
+	}
+
+	task := &domain.GanttTask{
+		ID:           taskID,
+		ParentTaskID: &parentID,
+		StartDate:    time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC),
+		EndDate:      time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC),
+		IsParent:     false,
+		SortOrder:    2,
+	}
+
+	mockRepo := &MockRepository{
+		GetGanttTaskByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.GanttTask, error) {
+			if id == taskID {
+				return task, nil
+			}
+			if id == parentID {
+				return parentTask, nil
+			}
+			return nil, errors.New("not found")
+		},
+		UpdateGanttTaskSortOrderFunc: func(ctx context.Context, id uuid.UUID, order int) error {
+			task.SortOrder = order
+			return nil
+		},
+		GetGanttChildTasksFunc: func(ctx context.Context, pid uuid.UUID) ([]domain.GanttTask, error) {
+			return []domain.GanttTask{*task}, nil
+		},
+		UpdateGanttTaskDatesFunc: func(ctx context.Context, id uuid.UUID, start, end time.Time) error {
+			if id == taskID {
+				task.StartDate = start
+				task.EndDate = end
+			}
+			if id == parentID {
+				parentTask.StartDate = start
+				parentTask.EndDate = end
+			}
+			return nil
+		},
+	}
+
+	service := New(logger, mockRepo)
+
+	updated, err := service.ReorderTask(ctx, taskID, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updated) != 2 {
+		t.Fatalf("expected 2 updated tasks, got %d", len(updated))
+	}
+	if task.SortOrder != 1 {
+		t.Errorf("expected sort order 1, got %d", task.SortOrder)
+	}
+}
+
 func floatPtr(f float64) *float64 {
 	return &f
 }
