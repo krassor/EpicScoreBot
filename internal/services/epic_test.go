@@ -800,3 +800,123 @@ func TestEpicService_OtherMethods(t *testing.T) {
 		}
 	})
 }
+
+func TestEpicService_CreateStory(t *testing.T) {
+	ctx := context.Background()
+	log := newDiscardLogger()
+	parentID := uuid.New()
+	teamID := uuid.New()
+
+	repo := &MockRepository{
+		GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
+			if id == parentID {
+				return &domain.Epic{
+					ID:                parentID,
+					Number:            "E-100",
+					TeamID:            teamID,
+					Year:              2026,
+					Quarter:           3,
+					Type:              "feature",
+					EvaluatingRoleIDs: []uuid.UUID{uuid.New()},
+				}, nil
+			}
+			return nil, sql.ErrNoRows
+		},
+		CountStoriesByEpicIDFunc: func(ctx context.Context, pid uuid.UUID) (int, error) {
+			return 2, nil
+		},
+		CreateStoryFunc: func(ctx context.Context, parentID uuid.UUID, number, name, description string, tID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
+			return &domain.Epic{
+				ID:                uuid.New(),
+				Number:            number,
+				Name:              name,
+				Description:       description,
+				TeamID:            tID,
+				Year:              year,
+				Quarter:           quarter,
+				Type:              epicType,
+				ParentEpicID:      &parentID,
+				EvaluatingRoleIDs: evaluatingRoleIDs,
+			}, nil
+		},
+	}
+
+	s := NewEpicService(log, repo)
+	story, err := s.CreateStory(ctx, parentID, "Сторя 3", "Описание стори")
+	if err != nil {
+		t.Fatalf("ожидалось успешное создание, получена ошибка: %v", err)
+	}
+
+	if story.Number != "E-100-S3" {
+		t.Errorf("ожидался номер E-100-S3, получен: %s", story.Number)
+	}
+	if *story.ParentEpicID != parentID {
+		t.Errorf("ожидался parentID %v, получен: %v", parentID, story.ParentEpicID)
+	}
+}
+
+func TestEpicService_DeleteStory(t *testing.T) {
+	ctx := context.Background()
+	log := newDiscardLogger()
+	storyID := uuid.New()
+	parentID := uuid.New()
+
+	t.Run("успешное удаление", func(t *testing.T) {
+		repo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
+				if id == storyID {
+					return &domain.Epic{
+						ID:           storyID,
+						ParentEpicID: &parentID,
+					}, nil
+				}
+				if id == parentID {
+					return &domain.Epic{
+						ID:     parentID,
+						Status: domain.StatusNew,
+					}, nil
+				}
+				return nil, sql.ErrNoRows
+			},
+			DeleteEpicFunc: func(ctx context.Context, id uuid.UUID) error {
+				if id != storyID {
+					t.Errorf("неверный ID для удаления: %v", id)
+				}
+				return nil
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		err := s.DeleteStory(ctx, storyID)
+		if err != nil {
+			t.Fatalf("ожидалось успешное удаление, получена ошибка: %v", err)
+		}
+	})
+
+	t.Run("ошибка удаления — эпик родитель не в NEW", func(t *testing.T) {
+		repo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
+				if id == storyID {
+					return &domain.Epic{
+						ID:           storyID,
+						ParentEpicID: &parentID,
+					}, nil
+				}
+				if id == parentID {
+					return &domain.Epic{
+						ID:     parentID,
+						Status: domain.StatusScoring,
+					}, nil
+				}
+				return nil, sql.ErrNoRows
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		err := s.DeleteStory(ctx, storyID)
+		if err == nil {
+			t.Fatal("ожидалась ошибка, получен nil")
+		}
+	})
+}
+

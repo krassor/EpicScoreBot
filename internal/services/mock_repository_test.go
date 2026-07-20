@@ -46,6 +46,7 @@ type MockRepository struct {
 
 	// Epics
 	CreateEpicFunc             func(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
+	CreateStoryFunc            func(ctx context.Context, parentEpicID uuid.UUID, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
 	GetEpicsByTeamYearQuarterFunc func(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
 	GetEpicByIDFunc            func(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error)
 	GetEpicByNumberFunc        func(ctx context.Context, number string) (*domain.Epic, error)
@@ -54,6 +55,7 @@ type MockRepository struct {
 	GetUnscoredEpicsByUserFunc func(ctx context.Context, userID, teamID uuid.UUID) ([]domain.Epic, error)
 	UpdateEpicStatusFunc       func(ctx context.Context, epicID uuid.UUID, status domain.Status) error
 	DeleteEpicFunc             func(ctx context.Context, epicID uuid.UUID) error
+	StartEpicScoringFunc       func(ctx context.Context, epicID uuid.UUID) error
 	GetEpicsByTeamIDAndStatusFunc func(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
 	GetStoriesByEpicIDFunc        func(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 	CountStoriesByEpicIDFunc      func(ctx context.Context, epicID uuid.UUID) (int, error)
@@ -268,6 +270,13 @@ func (m *MockRepository) CreateEpic(ctx context.Context, number, name, descripti
 	return nil, nil
 }
 
+func (m *MockRepository) CreateStory(ctx context.Context, parentEpicID uuid.UUID, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
+	if m.CreateStoryFunc != nil {
+		return m.CreateStoryFunc(ctx, parentEpicID, number, name, description, teamID, year, quarter, epicType, evaluatingRoleIDs)
+	}
+	return nil, nil
+}
+
 func (m *MockRepository) GetEpicByID(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error) {
 	if m.GetEpicByIDFunc != nil {
 		return m.GetEpicByIDFunc(ctx, epicID)
@@ -313,6 +322,13 @@ func (m *MockRepository) UpdateEpicStatus(ctx context.Context, epicID uuid.UUID,
 func (m *MockRepository) DeleteEpic(ctx context.Context, epicID uuid.UUID) error {
 	if m.DeleteEpicFunc != nil {
 		return m.DeleteEpicFunc(ctx, epicID)
+	}
+	return nil
+}
+
+func (m *MockRepository) StartEpicScoring(ctx context.Context, epicID uuid.UUID) error {
+	if m.StartEpicScoringFunc != nil {
+		return m.StartEpicScoringFunc(ctx, epicID)
 	}
 	return nil
 }

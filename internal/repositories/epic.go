@@ -55,6 +55,54 @@ func (r *Repository) CreateEpic(ctx context.Context, number, name, description s
 	return epic, nil
 }
 
+// CreateStory inserts a new story linked to a parent epic.
+func (r *Repository) CreateStory(ctx context.Context, parentEpicID uuid.UUID, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
+	op := "Repository.CreateStory"
+	epic := &domain.Epic{
+		ID:                uuid.New(),
+		Number:            number,
+		Name:              name,
+		Description:       description,
+		TeamID:            teamID,
+		Status:            domain.StatusNew,
+		Year:              year,
+		Quarter:           quarter,
+		Type:              epicType,
+		EvaluatingRoleIDs: evaluatingRoleIDs,
+		ParentEpicID:      &parentEpicID,
+	}
+
+	tx, err := r.DB.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s: begin tx: %w", op, err)
+	}
+	defer tx.Rollback()
+
+	query := `INSERT INTO epics (id, number, name, description, team_id, status, year, quarter, type, parent_epic_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		RETURNING created_at, updated_at`
+	err = tx.QueryRowContext(ctx, query,
+		epic.ID, epic.Number, epic.Name, epic.Description,
+		epic.TeamID, string(epic.Status), epic.Year, epic.Quarter, epic.Type, epic.ParentEpicID).
+		Scan(&epic.CreatedAt, &epic.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("%s: insert story: %w", op, err)
+	}
+
+	for _, roleID := range evaluatingRoleIDs {
+		_, err = tx.ExecContext(ctx, `INSERT INTO epic_evaluation_roles (epic_id, role_id) VALUES ($1, $2)`, epic.ID, roleID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: insert evaluating role: %w", op, err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("%s: commit: %w", op, err)
+	}
+
+	return epic, nil
+}
+
 // GetEpicByID returns an epic by ID.
 func (r *Repository) GetEpicByID(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error) {
 	op := "Repository.GetEpicByID"
