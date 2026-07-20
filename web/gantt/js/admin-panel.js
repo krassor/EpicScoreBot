@@ -326,19 +326,18 @@ function setupFormListeners() {
     // Выбор команды для рисков (динамическая загрузка эпиков)
     const riskTeamSelect = document.getElementById('risk-team-select');
     const riskEpicSelect = document.getElementById('risk-epic-select');
+    const riskStorySelect = document.getElementById('risk-story-select');
     
     riskTeamSelect?.addEventListener('change', async (e) => {
         const teamId = e.target.value;
-        if (!teamId) {
-            riskEpicSelect.innerHTML = '<option value="">Сначала выберите команду...</option>';
-            riskEpicSelect.disabled = true;
-            return;
-        }
+        riskEpicSelect.innerHTML = '<option value="">Сначала выберите команду...</option>';
+        riskEpicSelect.disabled = true;
+        riskStorySelect.innerHTML = '<option value="">Сначала выберите эпик...</option>';
+        riskStorySelect.disabled = true;
+        if (!teamId) return;
 
         try {
             riskEpicSelect.innerHTML = '<option value="">Загрузка эпиков...</option>';
-            riskEpicSelect.disabled = true;
-            
             const data = await apiGet(`/epics?team_id=${teamId}&all=true`);
             const epics = data.epics || [];
             
@@ -359,21 +358,56 @@ function setupFormListeners() {
         }
     });
 
+    // Динамическая загрузка сторей (историй) при выборе эпика
+    riskEpicSelect?.addEventListener('change', async (e) => {
+        const epicId = e.target.value;
+        riskStorySelect.innerHTML = '<option value="">Сначала выберите эпик...</option>';
+        riskStorySelect.disabled = true;
+        if (!epicId) return;
+
+        try {
+            riskStorySelect.innerHTML = '<option value="">Загрузка историй...</option>';
+            const stories = await apiGet(`/epics/${epicId}/stories`);
+            
+            riskStorySelect.innerHTML = '<option value="">Выберите историю (сторю)...</option>';
+            if (!stories || stories.length === 0) {
+                riskStorySelect.innerHTML = '<option value="">Нет историй в этом эпике</option>';
+            } else {
+                stories.forEach(story => {
+                    const opt = document.createElement('option');
+                    opt.value = story.id;
+                    opt.textContent = `${story.number}: ${story.name}`;
+                    riskStorySelect.appendChild(opt);
+                });
+                riskStorySelect.disabled = false;
+            }
+        } catch (err) {
+            showToast('Не удалось загрузить истории: ' + err.message, 'error');
+        }
+    });
+
     // Форма добавления риска
     const riskForm = document.getElementById('form-create-risk');
     riskForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const epicId = riskEpicSelect.value;
+        const storyId = riskStorySelect.value;
         const description = document.getElementById('risk-desc').value.trim();
 
+        if (!storyId) {
+            showToast('Пожалуйста, выберите историю', 'error');
+            return;
+        }
+
         try {
-            await apiPost('/risks', { description, epic_id: epicId });
-            showToast('Риск успешно добавлен к эпику!', 'success');
+            await apiPost('/risks', { description, epic_id: storyId });
+            showToast('Риск успешно добавлен к истории!', 'success');
             riskForm.reset();
             riskEpicSelect.innerHTML = '<option value="">Сначала выберите команду...</option>';
             riskEpicSelect.disabled = true;
+            riskStorySelect.innerHTML = '<option value="">Сначала выберите эпик...</option>';
+            riskStorySelect.disabled = true;
         } catch (err) {
-            showToast('Не удалось создать риск: ' + err.message, 'error');
+            showToast('Не удалось добавить риск: ' + err.message, 'error');
         }
     });
 

@@ -281,145 +281,77 @@ function renderDetails() {
         </div>
     `;
 
-    if (currentStories.length > 0) {
-        // Epic has stories: Render 3-level split screen
-        html += `
-            <div class="scoring-panel-grid" style="margin-top: 20px;">
-                <!-- Left Column: Stories list & Admin Create Form -->
-                <div class="scoring-section-card">
-                    <h3>Стори эпика (${currentStories.length})</h3>
-                    <div class="stories-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; padding-right: 4px;">
-                        ${currentStories.map(story => {
-                            const isSelected = selectedStory && selectedStory.id === story.id;
-                            const statusClass = story.status.toLowerCase();
-                            let statusText = 'Новый';
-                            if (story.status === 'SCORING') statusText = 'Оценка';
-                            if (story.status === 'SCORED') statusText = 'Оценен';
+    // Render 3-level split screen with stories
+    html += `
+        <div class="scoring-panel-grid" style="margin-top: 20px;">
+            <!-- Left Column: Stories list & Admin Create Form -->
+            <div class="scoring-section-card">
+                <h3>Истории (стори) эпика (${currentStories.length})</h3>
+                <div class="stories-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; padding-right: 4px;">
+                    ${currentStories.length === 0 ? `
+                        <div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">
+                            Нет историй (сторей) в этом эпике.
+                        </div>
+                    ` : currentStories.map(story => {
+                        const isSelected = selectedStory && selectedStory.id === story.id;
+                        const statusClass = story.status.toLowerCase();
+                        let statusText = 'Новый';
+                        if (story.status === 'SCORING') statusText = 'Оценка';
+                        if (story.status === 'SCORED') statusText = 'Оценен';
 
-                            const scoreBadge = story.final_score !== null && story.final_score !== undefined
-                                ? `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: var(--color-role-be); font-size: 11px;">${story.final_score} чд</span>`
-                                : `<span class="badge ${statusClass}" style="font-size: 11px;">${statusText}</span>`;
+                        const scoreBadge = story.final_score !== null && story.final_score !== undefined
+                            ? `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: var(--color-role-be); font-size: 11px;">${story.final_score} чд</span>`
+                            : `<span class="badge ${statusClass}" style="font-size: 11px;">${statusText}</span>`;
 
-                            const deleteBtn = isAdmin ? `
-                                <button class="btn-delete-story" data-story-id="${story.id}" title="Удалить сторю" style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; font-size: 14px; display: flex; align-items: center; justify-content: center; transition: color 0.2s;">
-                                    ❌
-                                </button>
-                            ` : '';
+                        const deleteBtn = isAdmin ? `
+                            <button class="btn-delete-story" data-story-id="${story.id}" title="Удалить историю" style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; font-size: 14px; display: flex; align-items: center; justify-content: center; transition: color 0.2s;">
+                                ❌
+                            </button>
+                        ` : '';
 
-                            return `
-                                <div class="story-item ${isSelected ? 'active' : ''}" data-story-id="${story.id}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: ${isSelected ? 'rgba(79, 70, 229, 0.15)' : 'var(--bg-tertiary)'}; border: 1px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border)'}; border-radius: 6px; cursor: pointer; transition: all 0.2s;">
-                                    <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; margin-right: 8px;">
-                                        <div style="font-weight: 600; font-size: 13px; color: var(--color-text); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
-                                            ${story.number}: ${story.name}
-                                        </div>
-                                        <div style="font-size: 11px; color: var(--text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
-                                            ${story.description || 'Нет описания'}
-                                        </div>
+                        return `
+                            <div class="story-item ${isSelected ? 'active' : ''}" data-story-id="${story.id}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: ${isSelected ? 'rgba(79, 70, 229, 0.15)' : 'var(--bg-tertiary)'}; border: 1px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border)'}; border-radius: 6px; cursor: pointer; transition: all 0.2s;">
+                                <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; margin-right: 8px;">
+                                    <div style="font-weight: 600; font-size: 13px; color: var(--color-text); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
+                                        ${story.number}: ${story.name}
                                     </div>
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        ${scoreBadge}
-                                        ${deleteBtn}
+                                    <div style="font-size: 11px; color: var(--text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
+                                        ${story.description || 'Нет описания'}
                                     </div>
                                 </div>
-                            `;
-                        }).join('')}
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    ${scoreBadge}
+                                    ${deleteBtn}
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+
+                ${isAdmin && selectedEpic.status === 'NEW' ? `
+                    <div class="create-story-section" style="margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 16px;">
+                        <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--color-text);">Создать новую историю (сторю)</h4>
+                        <div class="form-group" style="margin-bottom: 8px;">
+                            <input type="text" id="new-story-name" class="input" placeholder="Название истории" style="width: 100%;">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 8px;">
+                            <textarea id="new-story-desc" class="input" placeholder="Описание истории" style="width: 100%; min-height: 60px; resize: vertical; font-family: inherit;"></textarea>
+                        </div>
+                        <button id="btn-create-story" class="btn btn-primary" style="width: 100%; padding: 8px 12px; font-size: 13px;">Добавить историю</button>
                     </div>
-
-                    ${isAdmin && selectedEpic.status === 'NEW' ? `
-                        <div class="create-story-section" style="margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 16px;">
-                            <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--color-text);">Создать новую сторю</h4>
-                            <div class="form-group" style="margin-bottom: 8px;">
-                                <input type="text" id="new-story-name" class="input" placeholder="Название стори" style="width: 100%;">
-                            </div>
-                            <div class="form-group" style="margin-bottom: 8px;">
-                                <textarea id="new-story-desc" class="input" placeholder="Описание стори" style="width: 100%; min-height: 60px; resize: vertical; font-family: inherit;"></textarea>
-                            </div>
-                            <button id="btn-create-story" class="btn btn-primary" style="width: 100%; padding: 8px 12px; font-size: 13px;">Добавить сторю</button>
-                        </div>
-                    ` : ''}
-                </div>
-
-                <!-- Right Column: Selected Story Details -->
-                <div class="scoring-section-card" id="story-details-card">
-                    ${selectedStory ? renderStoryDetailsHtml(selectedStory, selectedStoryScores, selectedStoryRoleScores, selectedStoryRisks) : `
-                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 200px; color: var(--text-muted);">
-                            <span>👈 Выберите стори для оценки</span>
-                        </div>
-                    `}
-                </div>
-            </div>
-        `;
-    } else {
-        // Epic has no stories: Render legacy single epic details
-        html += `
-            <div class="scoring-panel-grid" style="margin-top: 20px;">
-                <!-- Left block: Voting and progress -->
-                <div class="scoring-section-card">
-                    <h3>Оценить Эпик</h3>
-                    ${selectedEpic.status === 'NEW' ? '<div style="color: var(--text-muted); text-align: center; padding: 20px 0;">Оценка еще не запущена. Ожидайте запуска лидером команды.</div>' : ''}
-                    ${selectedEpic.status === 'SCORED' ? '<div style="color: var(--color-role-be); text-align: center; padding: 20px 0; font-weight: 600;">Оценка завершена! Все участники проголосовали.</div>' : ''}
-                    
-                    ${selectedEpic.status === 'SCORING' ? `
-                        <div class="form-group">
-                            <label for="vote-role-select">Ваша роль в этой оценке</label>
-                            <select id="vote-role-select" class="select" style="width: 100%;">
-                                ${rolesList.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
-                            </select>
-                        </div>
-                        <div class="form-group" style="margin-top: 10px; display: flex; align-items: center;">
-                            <input type="number" id="input-epic-score" class="input" min="0" max="500" placeholder="0-500 чд" style="width: 120px; margin-right: 10px;">
-                            <button id="btn-submit-vote" class="btn btn-primary">Сохранить оценку</button>
-                        </div>
-                        ${renderProgressHtml(selectedEpicScores)}
-                    ` : ''}
-                </div>
-
-                <!-- Right block: Role averages table -->
-                <div class="scoring-section-card">
-                    <h3>Оценки по ролям</h3>
-                    <table class="scores-table">
-                        <thead>
-                            <tr>
-                                <th>Роль</th>
-                                <th>Оценка (чд)</th>
-                            </tr>
-                        </thead>
-                        <tbody id="role-scores-tbody">
-                            ${renderRoleScoresTableRows(selectedEpicRoleScores)}
-                        </tbody>
-                    </table>
-                </div>
+                ` : ''}
             </div>
 
-            ${isAdmin && selectedEpic.status === 'SCORING' ? `
-            <!-- Admin Overrides Table -->
-            <div class="scoring-section-card" style="margin-top: 12px;">
-                <h3>Панель администратора: Оценки участников</h3>
-                <table class="admin-scores-table">
-                    <thead>
-                        <tr>
-                            <th>ФИО</th>
-                            <th>Роль</th>
-                            <th>Текущая оценка</th>
-                            <th>Управление</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${renderAdminScoresTableRows(selectedEpic, selectedEpicScores)}
-                    </tbody>
-                </table>
+            <!-- Right Column: Selected Story Details -->
+            <div class="scoring-section-card" id="story-details-card">
+                ${selectedStory ? renderStoryDetailsHtml(selectedStory, selectedStoryScores, selectedStoryRoleScores, selectedStoryRisks) : `
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 200px; color: var(--text-muted); text-align: center;">
+                        <span>👈 Выберите историю (сторю) слева для голосования и оценки рисков</span>
+                    </div>
+                `}
             </div>
-            ` : ''}
-
-            <!-- Risks Section -->
-            <div class="scoring-section-card" style="margin-top: 12px;">
-                <h3>Оценка рисков</h3>
-                <div id="scoring-risks-container">
-                    ${renderRisksHtml(selectedEpic, selectedEpicScores, selectedEpicRisks)}
-                </div>
-            </div>
-        `;
-    }
+        </div>
+    `;
 
     container.innerHTML = html;
     bindEvents(isAdmin, isLeaderOrAdmin);
@@ -692,7 +624,7 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
         ${adminPanelHtml}
 
         <div style="margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 16px;">
-            <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Оценка рисков стори</h4>
+            <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Оценка рисков истории (стори)</h4>
             <div id="scoring-risks-container-story">
                 ${renderRisksHtml(story, scoresData, risks)}
             </div>
@@ -735,7 +667,7 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
             const description = descInput.value.trim();
 
             if (!name) {
-                showToast('Пожалуйста, введите название стори', 'error');
+                showToast('Пожалуйста, введите название истории', 'error');
                 return;
             }
 
@@ -744,10 +676,10 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                     name,
                     description
                 });
-                showToast('Стори успешно добавлена!', 'success');
+                showToast('История успешно добавлена!', 'success');
                 await loadEpicData();
             } catch (err) {
-                showToast('Не удалось создать сторю: ' + err.message, 'error');
+                showToast('Не удалось создать историю: ' + err.message, 'error');
             }
         });
     }
@@ -758,17 +690,17 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 const storyId = btn.dataset.storyId;
-                if (!confirm('Вы уверены, что хотите удалить эту сторю?')) return;
+                if (!confirm('Вы уверены, что хотите удалить эту историю?')) return;
 
                 try {
                     await apiDelete(`/stories/${storyId}`);
-                    showToast('Стори успешно удалена!', 'success');
+                    showToast('История успешно удалена!', 'success');
                     if (selectedStory && selectedStory.id === storyId) {
                         selectedStory = null;
                     }
                     await loadEpicData();
                 } catch (err) {
-                    showToast('Не удалось удалить сторю: ' + err.message, 'error');
+                    showToast('Не удалось удалить историю: ' + err.message, 'error');
                 }
             });
         });
@@ -826,7 +758,7 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                     epic_id: selectedStory.id,
                     score: score
                 });
-                showToast('Ваша оценка стори принята!', 'success');
+                showToast('Ваша оценка истории принята!', 'success');
                 await loadEpicData();
             } catch (err) {
                 showToast('Не удалось отправить оценку: ' + err.message, 'error');
@@ -944,7 +876,7 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
 
 async function startEpicScoring(epicId) {
     if (currentStories.length === 0) {
-        alert('Невозможно запустить оценку: у эпика нет ни одной стори.');
+        alert('Невозможно запустить оценку: у эпика нет ни одной истории (стори).');
         return;
     }
 
