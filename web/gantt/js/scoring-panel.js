@@ -37,6 +37,13 @@ export function initScoringPanel() {
 
     // Load list of roles from backend
     loadRoles();
+
+    // Listen for story creation from admin panel to hot-reload current epic details
+    window.addEventListener('story-created', async (e) => {
+        if (selectedEpic && selectedEpic.id === e.detail.epicId) {
+            await loadEpicData();
+        }
+    });
 }
 
 function injectStyles() {
