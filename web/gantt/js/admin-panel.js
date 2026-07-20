@@ -66,6 +66,7 @@ export function initAdminPanel() {
 function populateTeamSelects(teams) {
     const selects = [
         document.getElementById('epic-team-select'),
+        document.getElementById('story-team-select'),
         document.getElementById('risk-team-select'),
         document.getElementById('import-team-select')
     ];
@@ -320,6 +321,65 @@ function setupFormListeners() {
             }
         } catch (err) {
             showToast('Не удалось создать эпик: ' + err.message, 'error');
+        }
+    });
+
+    // Выбор команды для историй в админке
+    const storyTeamSelect = document.getElementById('story-team-select');
+    const storyEpicSelect = document.getElementById('story-epic-select');
+    
+    storyTeamSelect?.addEventListener('change', async (e) => {
+        const teamId = e.target.value;
+        storyEpicSelect.innerHTML = '<option value="">Сначала выберите команду...</option>';
+        storyEpicSelect.disabled = true;
+        if (!teamId) return;
+
+        try {
+            storyEpicSelect.innerHTML = '<option value="">Загрузка эпиков...</option>';
+            const data = await apiGet(`/epics?team_id=${teamId}&all=true`);
+            const epics = data.epics || [];
+            
+            storyEpicSelect.innerHTML = '<option value="">Выберите эпик...</option>';
+            if (epics.length === 0) {
+                storyEpicSelect.innerHTML = '<option value="">Нет эпиков в этой команде</option>';
+            } else {
+                epics.forEach(epic => {
+                    const opt = document.createElement('option');
+                    opt.value = epic.id;
+                    opt.textContent = `${epic.number}: ${epic.name}`;
+                    storyEpicSelect.appendChild(opt);
+                });
+                storyEpicSelect.disabled = false;
+            }
+        } catch (err) {
+            showToast('Не удалось загрузить эпики: ' + err.message, 'error');
+        }
+    });
+
+    // Форма создания истории в админке
+    const adminStoryForm = document.getElementById('form-create-story-admin');
+    adminStoryForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const epicId = storyEpicSelect.value;
+        const name = document.getElementById('story-name').value.trim();
+        const description = document.getElementById('story-desc').value.trim();
+
+        if (!epicId) {
+            showToast('Пожалуйста, выберите эпик', 'error');
+            return;
+        }
+
+        try {
+            await apiPost(`/epics/${epicId}/stories`, { name, description });
+            showToast('История успешно создана!', 'success');
+            adminStoryForm.reset();
+            storyEpicSelect.innerHTML = '<option value="">Сначала выберите команду...</option>';
+            storyEpicSelect.disabled = true;
+            
+            // Оповещаем другие панели о создании истории
+            window.dispatchEvent(new CustomEvent('story-created', { detail: { epicId } }));
+        } catch (err) {
+            showToast('Не удалось создать историю: ' + err.message, 'error');
         }
     });
 
