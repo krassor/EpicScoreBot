@@ -44,6 +44,8 @@ func (epicBot *Bot) commandHandler(ctx context.Context, update *models.Update) e
 		return epicBot.handleAssignTeam(ctx, msg)
 	case "addepic":
 		return epicBot.handleAddEpic(ctx, msg)
+	case "addstory":
+		return epicBot.handleAddStory(ctx, msg)
 	case "addrisk":
 		return epicBot.handleAddRisk(ctx, msg)
 	case "startscore":
@@ -127,6 +129,7 @@ func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 		sb.WriteString("/adduser — добавить пользователя\n")
 		sb.WriteString("/assignrole — назначить роль пользователю\n")
 		sb.WriteString("/addepic — создать эпик\n")
+		sb.WriteString("/addstory — создать сторю\n")
 		sb.WriteString("/addrisk — добавить риск к эпику\n")
 		sb.WriteString("/startscore — запустить оценку эпика\n")
 		sb.WriteString("/epicstatus — статус оценки эпика\n")

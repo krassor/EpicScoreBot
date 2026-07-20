@@ -577,6 +577,17 @@ func (epicBot *Bot) handleAdmEpicSelected(
 		epicBot.sessions.clear(sk)
 		epicBot.sendEpicNotifications(ctx, msg, epicID, msgID)
 
+	case "addstory":
+		epicBot.sessions.set(sk, &Session{
+			Step:      StepAddStoryName,
+			ThreadID:  msg.MessageThreadID,
+			Username:  callback.From.Username,
+			MessageID: msgID,
+			Data:      map[string]string{"epicID": epicID.String()},
+		})
+		epicBot.editOrSend(ctx, msg, msgID,
+			fmt.Sprintf("📝 Добавление стори к эпику #%s «%s».\nВведите название стори:", epic.Number, epic.Name))
+
 	case "addrisk":
 		epicBot.sessions.set(sk, &Session{
 			Step:      StepAddRiskDesc,

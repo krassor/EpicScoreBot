@@ -27,6 +27,14 @@ func (epicBot *Bot) handleAddEpic(ctx context.Context, msg *models.Message) erro
 	return epicBot.showTeamPickerInitial(ctx, msg, "addepic")
 }
 
+func (epicBot *Bot) handleAddStory(ctx context.Context, msg *models.Message) error {
+	if !epicBot.isAdmin(msg) {
+		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
+		return err
+	}
+	return epicBot.showEpicPickerInitial(ctx, msg, "addstory", string(domain.StatusNew))
+}
+
 // ─── /addrisk — inline keyboard then session ──────────────────────────────
 
 func (epicBot *Bot) handleAddRisk(ctx context.Context, msg *models.Message) error {
@@ -302,6 +310,90 @@ func (epicBot *Bot) showEpicResults(ctx context.Context, msg *models.Message, ep
 		return
 	}
 
+	// If this epic has stories, show stories results
+	stories, err := epicBot.epicService.GetStoriesByEpicID(ctx, epic.ID)
+	if err == nil && len(stories) > 0 {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "📊 *Результаты эпика \\#%s «%s»*\n", escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name))
+		fmt.Fprintf(&sb, "Статус: %s\n\n", escapeMarkdownV2(string(epic.Status)))
+
+		roleScores, err := epicBot.epicService.GetEpicRoleScoresByEpicID(ctx, epic.ID)
+		if err == nil && len(roleScores) > 0 {
+			sb.WriteString("📋 *Оценки по ролям \\(агрегированные\\):*\n")
+			for _, rs := range roleScores {
+				role, err := epicBot.roleService.GetRoleByID(ctx, rs.RoleID)
+				roleName := rs.RoleID.String()
+				if err == nil {
+					roleName = role.Name
+				}
+				fmt.Fprintf(&sb, "  • %s: %s\n", escapeMarkdownV2(roleName), escapeMarkdownV2(fmt.Sprintf("%.2f", rs.WeightedAvg)))
+			}
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString("📖 *Список сторей:*\n")
+		for _, story := range stories {
+			fmt.Fprintf(&sb, "  • *%s «%s»*\n", escapeMarkdownV2(story.Number), escapeMarkdownV2(story.Name))
+			fmt.Fprintf(&sb, "    Статус: %s\n", escapeMarkdownV2(string(story.Status)))
+
+			// Vote progress for story effort
+			teamMembers, _ := epicBot.userService.GetUsersByTeamID(ctx, story.TeamID)
+			evalRoleIDs, _ := epicBot.epicService.GetEvaluatingRoleIDs(ctx, story.ID)
+			if len(evalRoleIDs) > 0 {
+				evalRoleSet := make(map[uuid.UUID]bool)
+				for _, rid := range evalRoleIDs {
+					evalRoleSet[rid] = true
+				}
+				var filteredMembers []domain.User
+				for _, u := range teamMembers {
+					role, err := epicBot.roleService.GetRoleByUserID(ctx, u.ID)
+					if err == nil && role != nil && evalRoleSet[role.ID] {
+						filteredMembers = append(filteredMembers, u)
+					}
+				}
+				teamMembers = filteredMembers
+			}
+			scoredEpic, _ := epicBot.epicService.GetUsersWhoScoredEpic(ctx, story.ID)
+			fmt.Fprintf(&sb, "    Голоса: %d/%d\n", len(scoredEpic), len(teamMembers))
+
+			if story.FinalScore != nil {
+				fmt.Fprintf(&sb, "    Итоговая оценка: *%s*\n", escapeMarkdownV2(fmt.Sprintf("%.0f", *story.FinalScore)))
+			}
+
+			// Story risks
+			risks, err := epicBot.riskService.GetRisksByEpicID(ctx, story.ID)
+			if err == nil && len(risks) > 0 {
+				sb.WriteString("    Риски:\n")
+				for _, risk := range risks {
+					scoredRisk, _ := epicBot.riskService.GetUsersWhoScoredRisk(ctx, risk.ID)
+					coeff := ""
+					if risk.WeightedScore != nil {
+						c := scoring.RiskCoefficient(*risk.WeightedScore)
+						coeff = fmt.Sprintf(" \\(оценка: %s, коэфф: %s\\)",
+							escapeMarkdownV2(fmt.Sprintf("%.2f", *risk.WeightedScore)),
+							escapeMarkdownV2(fmt.Sprintf("%.2f", c)))
+					}
+					fmt.Fprintf(&sb, "      - %s \\[%s, голоса: %d/%d\\]%s\n",
+						escapeMarkdownV2(risk.Description),
+						escapeMarkdownV2(string(risk.Status)),
+						len(scoredRisk),
+						len(teamMembers),
+						coeff)
+				}
+			}
+			sb.WriteString("\n")
+		}
+
+		if epic.FinalScore != nil {
+			fmt.Fprintf(&sb, "🏆 *Итоговая оценка эпика: %s*\n", escapeMarkdownV2(fmt.Sprintf("%.0f", *epic.FinalScore)))
+		} else {
+			sb.WriteString("⏳ Итоговая оценка эпика ещё не рассчитана\\.\n")
+		}
+
+		epicBot.sendMarkdown(ctx, msg, sb.String())
+		return
+	}
+
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "📊 *Результаты эпика \\#%s «%s»*\n", escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name))
 	fmt.Fprintf(&sb, "Статус: %s\n\n", escapeMarkdownV2(string(epic.Status)))
@@ -363,6 +455,91 @@ func (epicBot *Bot) showEpicStatusReport(ctx context.Context, msg *models.Messag
 		"epic found",
 		slog.String("epic", epic.Number),
 	)
+
+	// If this epic has stories, show stories status
+	stories, err := epicBot.epicService.GetStoriesByEpicID(ctx, epic.ID)
+	if err == nil && len(stories) > 0 {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "📊 *Статус оценки эпика \\#%s «%s»*\n\n",
+			escapeMarkdownV2(epic.Number), escapeMarkdownV2(epic.Name))
+
+		for _, story := range stories {
+			fmt.Fprintf(&sb, "📖 *Стори %s «%s»* \\[%s\\]\n",
+				escapeMarkdownV2(story.Number), escapeMarkdownV2(story.Name), escapeMarkdownV2(string(story.Status)))
+
+			// Vote progress for story effort
+			teamMembers, _ := epicBot.userService.GetUsersByTeamID(ctx, story.TeamID)
+			evalRoleIDs, _ := epicBot.epicService.GetEvaluatingRoleIDs(ctx, story.ID)
+			if len(evalRoleIDs) > 0 {
+				evalRoleSet := make(map[uuid.UUID]bool)
+				for _, rid := range evalRoleIDs {
+					evalRoleSet[rid] = true
+				}
+				var filteredMembers []domain.User
+				for _, u := range teamMembers {
+					role, err := epicBot.roleService.GetRoleByUserID(ctx, u.ID)
+					if err == nil && role != nil && evalRoleSet[role.ID] {
+						filteredMembers = append(filteredMembers, u)
+					}
+				}
+				teamMembers = filteredMembers
+			}
+			scoredEpic, _ := epicBot.epicService.GetUsersWhoScoredEpic(ctx, story.ID)
+			scoredSet := make(map[uuid.UUID]bool)
+			for _, u := range scoredEpic {
+				scoredSet[u.ID] = true
+			}
+
+			fmt.Fprintf(&sb, "👉 *Ждём оценку трудоёмкости от:* \\(%d/%d\\)\n", len(scoredEpic), len(teamMembers))
+			missingEffort := 0
+			for _, u := range teamMembers {
+				if !scoredSet[u.ID] {
+					fmt.Fprintf(&sb, "  • %s %s \\(@%s\\)\n",
+						escapeMarkdownV2(u.FirstName), escapeMarkdownV2(u.LastName), escapeMarkdownV2(u.TelegramID))
+					missingEffort++
+				}
+			}
+			if missingEffort == 0 {
+				sb.WriteString("  ✅ Все оценили\n")
+			}
+
+			// Story risks
+			risks, err := epicBot.riskService.GetRisksByEpicID(ctx, story.ID)
+			if err == nil && len(risks) > 0 {
+				sb.WriteString("👉 *Риски:*\n")
+				for _, risk := range risks {
+					scoredRisk, _ := epicBot.riskService.GetUsersWhoScoredRisk(ctx, risk.ID)
+					riskScoredSet := make(map[uuid.UUID]bool)
+					for _, u := range scoredRisk {
+						riskScoredSet[u.ID] = true
+					}
+					fmt.Fprintf(&sb, "  - *%s* \\(ждут: ", escapeMarkdownV2(risk.Description))
+					riskMissing := 0
+					var riskMissingUsers []string
+					for _, u := range teamMembers {
+						if !riskScoredSet[u.ID] {
+							riskMissingUsers = append(riskMissingUsers, fmt.Sprintf("%s %s \\(@%s\\)",
+								escapeMarkdownV2(u.FirstName), escapeMarkdownV2(u.LastName), escapeMarkdownV2(u.TelegramID)))
+							riskMissing++
+						}
+					}
+					if riskMissing == 0 {
+						sb.WriteString("✅ все оценили\\)\n")
+					} else {
+						sb.WriteString(fmt.Sprintf("%d/%d\\):\n", len(scoredRisk), len(teamMembers)))
+						for _, uText := range riskMissingUsers {
+							fmt.Fprintf(&sb, "    • %s\n", uText)
+						}
+					}
+				}
+			}
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString("Для оценки используйте команду /score\n")
+		epicBot.sendMarkdown(ctx, msg, sb.String())
+		return
+	}
 
 	teamMembers, err := epicBot.userService.GetUsersByTeamID(ctx, epic.TeamID)
 	if err != nil {
@@ -474,22 +651,31 @@ func (epicBot *Bot) execStartScore(ctx context.Context, msg *models.Message, epi
 			fmt.Sprintf("⚠️ Эпик #%s уже в статусе %s.", epic.Number, string(epic.Status)))
 		return
 	}
-	if err := epicBot.epicService.UpdateEpicStatus(ctx, epic.ID, domain.StatusScoring); err != nil {
-		epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка смены статуса эпика: %v", err))
-		return
-	}
-	risks, err := epicBot.riskService.GetRisksByEpicID(ctx, epic.ID)
+
+	stories, err := epicBot.epicService.GetStoriesByEpicID(ctx, epicID)
 	if err != nil {
-		epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка получения рисков: %v", err))
+		epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка при получении сторей: %v", err))
 		return
 	}
-	for _, risk := range risks {
-		if err := epicBot.riskService.UpdateRiskStatus(ctx, risk.ID, domain.StatusScoring); err != nil {
-			epicBot.log.Error("failed to update risk status",
-				slog.String("riskID", risk.ID.String()), sl.Err(err))
+	if len(stories) == 0 {
+		epicBot.sendReply(ctx, msg, "❌ У эпика должна быть минимум одна сторя для запуска оценки!")
+		return
+	}
+
+	if err := epicBot.epicService.StartEpicScoring(ctx, epic.ID); err != nil {
+		epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка запуска оценки эпика: %v", err))
+		return
+	}
+
+	totalRisks := 0
+	for _, story := range stories {
+		risks, err := epicBot.riskService.GetRisksByEpicID(ctx, story.ID)
+		if err == nil {
+			totalRisks += len(risks)
 		}
 	}
+
 	epicBot.sendReply(ctx, msg,
-		fmt.Sprintf("🚀 Эпик #%s «%s» и %d рисков отправлены на оценку!",
-			epic.Number, epic.Name, len(risks)))
+		fmt.Sprintf("🚀 Эпик #%s «%s» (содержит %d сторей и %d рисков) отправлен на оценку!",
+			epic.Number, epic.Name, len(stories), totalRisks))
 }

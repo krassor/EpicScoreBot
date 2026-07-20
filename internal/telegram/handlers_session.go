@@ -223,6 +223,40 @@ func (epicBot *Bot) handleSessionInput(update *models.Update) {
 		epicBot.deleteAndSend(ctx, msg, msgID,
 			fmt.Sprintf("✅ Эпик #%s «%s» создан (статус: NEW)", epic.Number, epic.Name))
 
+	// ── /addstory interactive steps ────────────────────────────────────
+
+	case StepAddStoryName:
+		sess.Data["storyName"] = text
+		sess.Step = StepAddStoryDesc
+		epicBot.sessions.set(sk, sess)
+		epicBot.editOrSend(ctx, msg, msgID, "📝 Введите описание стори (или напишите «-» чтобы пропустить):")
+
+	case StepAddStoryDesc:
+		desc := text
+		if desc == "-" {
+			desc = ""
+		}
+		epicIDStr := sess.Data["epicID"]
+		epicBot.sessions.clear(sk)
+		epicID, err := uuid.Parse(epicIDStr)
+		if err != nil {
+			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка: неверный ID эпика.")
+			return
+		}
+
+		story, err := epicBot.epicService.CreateStory(ctx, epicID, sess.Data["storyName"], desc)
+		if err != nil {
+			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка создания стори: %v", err))
+			return
+		}
+		parentEpic, _ := epicBot.epicService.GetEpicByID(ctx, epicID)
+		parentNum := epicIDStr
+		if parentEpic != nil {
+			parentNum = parentEpic.Number
+		}
+		epicBot.deleteAndSend(ctx, msg, msgID,
+			fmt.Sprintf("✅ Сторя #%s «%s» создана для эпика #%s", story.Number, story.Name, parentNum))
+
 	// ── /addrisk interactive steps ─────────────────────────────────────
 
 	case StepAddRiskDesc:

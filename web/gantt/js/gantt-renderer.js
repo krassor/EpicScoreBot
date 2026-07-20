@@ -9,9 +9,9 @@ let reorderEpicTasks = [];
 
 const roleColorMap = {
     'Аналитик': 'analyst',
-    'BE разработчик': 'developer',
-    'FE разработчик': 'developer',
-    'Mobile разработчик': 'developer',
+    'BE разработчик': 'be',
+    'FE разработчик': 'fe',
+    'Mobile разработчик': 'mobile',
     'Тестировщик': 'qa',
     'IT-лидер': 'leader',
 };
@@ -49,20 +49,49 @@ function renderGantt(tasks) {
 
     emptyState.classList.add('hidden');
 
+    // Build a map for easy parent lookups to determine hierarchy depth
+    const taskMap = {};
+    tasks.forEach(t => {
+        taskMap[t.id] = t;
+    });
+
+    const getTaskLevel = (t) => {
+        const parentId = t.parent_task_id || t.parent_id;
+        if (!parentId) return 1; // Epic level
+
+        const parent = taskMap[parentId];
+        if (!parent) return 2; // Sibling story level
+
+        const grandParentId = parent.parent_task_id || parent.parent_id;
+        if (!grandParentId) return 2; // Story level
+
+        return 3; // Role task level
+    };
+
     // Convert to Frappe Gantt format
-    const ganttTasks = tasks.map(t => ({
-        id: t.id,
-        name: t.name,
-        start: t.start_date || t.start,
-        end: t.end_date || t.end,
-        progress: t.progress * 100, // Frappe Gantt expects 0-100
-        dependencies: t.dependencies || '',
-        custom_class: t.custom_class || getTaskClass(t),
-        _is_parent: t.is_parent,
-        _parent_id: t.parent_task_id || t.parent_id,
-        _sort_order: t.sort_order,
-        _role_id: t.role_id,
-    }));
+    const ganttTasks = tasks.map(t => {
+        const level = getTaskLevel(t);
+        let displayName = t.name;
+        if (level === 2) {
+            displayName = `\u00a0\u00a0└─\u00a0${t.name}`;
+        } else if (level === 3) {
+            displayName = `\u00a0\u00a0\u00a0\u00a0└─\u00a0${t.name}`;
+        }
+
+        return {
+            id: t.id,
+            name: displayName,
+            start: t.start_date || t.start,
+            end: t.end_date || t.end,
+            progress: t.progress * 100, // Frappe Gantt expects 0-100
+            dependencies: t.dependencies || '',
+            custom_class: t.custom_class || getTaskClass(t),
+            _is_parent: t.is_parent,
+            _parent_id: t.parent_task_id || t.parent_id,
+            _sort_order: t.sort_order,
+            _role_id: t.role_id,
+        };
+    });
 
     container.innerHTML = '';
     
@@ -110,7 +139,12 @@ function renderGantt(tasks) {
 }
 
 function getTaskClass(task) {
-    if (task.is_parent) return 'gantt-epic';
+    if (task.is_parent) {
+        if (task.parent_task_id || task.parent_id) {
+            return 'gantt-story';
+        }
+        return 'gantt-epic';
+    }
     
     // Extrapolate role name from task name if role_id is not directly resolved
     // Usually name matches role: "Аналитик", "BE разработчик", etc.

@@ -82,6 +82,16 @@ func (epicBot *Bot) handleCallbackQuery(ctx context.Context, update *models.Upda
 		}
 		epicBot.showEpicInfo(rctx, msg, epicID)
 
+	// back_to_stories_<parentEpicID> — return to stories list of the epic
+	case strings.HasPrefix(data, "back_to_stories_"):
+		parentEpicIDStr := strings.TrimPrefix(data, "back_to_stories_")
+		parentEpicID, err := uuid.Parse(parentEpicIDStr)
+		if err != nil {
+			epicBot.sendCallbackAlert(rctx, callback, "❌ Ошибка парсинга ID родительского эпика")
+			return
+		}
+		epicBot.showEpicStoriesList(rctx, msg, username, parentEpicID, "")
+
 	// epic_<epicID> — show scoring options for an epic
 	case strings.HasPrefix(data, "epic_"):
 		epicIDStr := strings.TrimPrefix(data, "epic_")
@@ -270,6 +280,12 @@ func (epicBot *Bot) showEpicScoreOptions(ctx context.Context, msg *models.Messag
 		return
 	}
 
+	stories, err := epicBot.epicService.GetStoriesByEpicID(ctx, epicID)
+	if err == nil && len(stories) > 0 {
+		epicBot.showEpicStoriesList(ctx, msg, username, epicID, "")
+		return
+	}
+
 	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
 	if err != nil {
 		if _, botErr := epicBot.sendReply(ctx, msg, "❌ Пользователь не найден."); botErr != nil {
@@ -446,7 +462,22 @@ func (epicBot *Bot) showEpicRisks(ctx context.Context, msg *models.Message, user
 		return
 	}
 
+	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
+	isStory := err == nil && epic != nil && epic.ParentEpicID != nil
+
 	if len(risks) == 0 {
+		if isStory {
+			text := successText
+			if text == "" {
+				text = fmt.Sprintf("✅ Все риски стори #%s уже оценены.", epic.Number)
+			}
+			kb := inlineKeyboard(inlineRow(inlineBtn("◀️ Назад к сторям", fmt.Sprintf("back_to_stories_%s", epic.ParentEpicID.String()))))
+			if err := epicBot.editWithKeyboard(ctx, msg.Chat.ID, msg.ID, text, kb); err != nil {
+				log.Error("failed to edit message", sl.Err(err))
+			}
+			return
+		}
+
 		if _, botErr := epicBot.sendReply(ctx, msg, "✅ Все риски этого эпика уже оценены."); botErr != nil {
 			log.Error("failed to send reply", sl.Err(botErr))
 		}
@@ -466,7 +497,14 @@ func (epicBot *Bot) showEpicRisks(ctx context.Context, msg *models.Message, user
 			fmt.Sprintf("risk_%s", risk.ID.String()),
 		)))
 	}
-	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
+	if isStory {
+		rows = append(rows, inlineRow(
+			inlineBtn("◀️ Назад к сторям", fmt.Sprintf("back_to_stories_%s", epic.ParentEpicID.String())),
+			inlineBtn("❌ Отмена", "score_cancel"),
+		))
+	} else {
+		rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "score_cancel")))
+	}
 	kb := inlineKeyboard(rows...)
 
 	text := "⚠️ Неоценённые риски:\nВыберите риск для оценки:"
@@ -699,5 +737,59 @@ func (epicBot *Bot) sendCallbackAlert(ctx context.Context, callback *models.Call
 		ShowAlert:       true,
 	}); err != nil {
 		log.Error("failed to send callback alert", sl.Err(err))
+	}
+}
+
+// showEpicStoriesList displays the list of stories for a given parent epic with their individual scoring statuses.
+func (epicBot *Bot) showEpicStoriesList(ctx context.Context, msg *models.Message, username string, epicID uuid.UUID, successText string) {
+	op := "bot.showEpicStoriesList()"
+	log := epicBot.log.With(slog.String("op", op))
+
+	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
+	if err != nil {
+		epicBot.sendReply(ctx, msg, "❌ Эпик не найден.")
+		return
+	}
+
+	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
+	if err != nil {
+		epicBot.sendReply(ctx, msg, "❌ Пользователь не найден.")
+		return
+	}
+
+	stories, err := epicBot.epicService.GetStoriesByEpicID(ctx, epicID)
+	if err != nil {
+		epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка при получении сторей: %v", err))
+		return
+	}
+
+	var rows [][]models.InlineKeyboardButton
+	for _, story := range stories {
+		effortScored, _ := epicBot.epicService.HasUserScoredEpic(ctx, story.ID, user.ID)
+		unscoredRisks, _ := epicBot.riskService.GetUnscoredRisksByUser(ctx, user.ID, story.ID)
+
+		statusIcon := "📝"
+		if effortScored && len(unscoredRisks) == 0 {
+			statusIcon = "✅"
+		} else if effortScored {
+			statusIcon = "⚠️"
+		}
+
+		rows = append(rows, inlineRow(inlineBtn(
+			fmt.Sprintf("%s %s %s", statusIcon, story.Number, story.Name),
+			fmt.Sprintf("epic_%s", story.ID.String()),
+		)))
+	}
+
+	rows = append(rows, inlineRow(inlineBtn("◀️ Назад к эпикам", fmt.Sprintf("team_%s", epic.TeamID.String()))))
+	kb := inlineKeyboard(rows...)
+
+	text := fmt.Sprintf("📋 Стори эпика #%s «%s»:", epic.Number, epic.Name)
+	if successText != "" {
+		text = successText + "\n\n" + text
+	}
+
+	if err := epicBot.editWithKeyboard(ctx, msg.Chat.ID, msg.ID, text, kb); err != nil {
+		log.Error("failed to edit message", sl.Err(err))
 	}
 }
