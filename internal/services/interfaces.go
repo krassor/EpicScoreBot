@@ -65,6 +65,8 @@ type Repository interface {
 	UpdateEpicStatus(ctx context.Context, epicID uuid.UUID, status domain.Status) error
 	DeleteEpic(ctx context.Context, epicID uuid.UUID) error
 	GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
+	GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
+	CountStoriesByEpicID(ctx context.Context, epicID uuid.UUID) (int, error)
 
 	// Risks
 	CreateRisk(ctx context.Context, description string, epicID uuid.UUID) (*domain.Risk, error)

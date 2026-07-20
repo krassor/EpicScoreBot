@@ -56,6 +56,7 @@ type Epic struct {
 	Quarter           int          `json:"quarter"`
 	Type              string       `json:"type"`
 	EvaluatingRoleIDs []uuid.UUID  `json:"evaluating_role_ids,omitempty"`
+	ParentEpicID      *uuid.UUID   `json:"parent_epic_id,omitempty" db:"parent_epic_id"`
 	CreatedAt         time.Time    `json:"created_at"`
 	UpdatedAt         time.Time    `json:"updated_at"`
 }

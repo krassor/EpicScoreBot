@@ -31,6 +31,7 @@ type MockRepository struct {
 	DeleteGanttTasksByEpicIDFunc  func(ctx context.Context, epicID uuid.UUID) error
 	HasGanttTasksForEpicFunc      func(ctx context.Context, epicID uuid.UUID) (bool, error)
 	GetRisksByEpicIDFunc          func(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
+	GetStoriesByEpicIDFunc        func(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 }
 
 func (m *MockRepository) GetEpicByID(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error) {
@@ -138,6 +139,12 @@ func (m *MockRepository) HasGanttTasksForEpic(ctx context.Context, epicID uuid.U
 func (m *MockRepository) GetRisksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error) {
 	if m.GetRisksByEpicIDFunc != nil {
 		return m.GetRisksByEpicIDFunc(ctx, epicID)
+	}
+	return nil, nil
+}
+func (m *MockRepository) GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error) {
+	if m.GetStoriesByEpicIDFunc != nil {
+		return m.GetStoriesByEpicIDFunc(ctx, epicID)
 	}
 	return nil, nil
 }

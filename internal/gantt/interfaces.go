@@ -37,4 +37,5 @@ type Repository interface {
 	DeleteGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID) error
 	HasGanttTasksForEpic(ctx context.Context, epicID uuid.UUID) (bool, error)
 	GetRisksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
+	GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 }
