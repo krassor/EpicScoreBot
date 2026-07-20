@@ -27,4 +27,5 @@ type Repository interface {
 	GetRisksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
 	SetEpicFinalScore(ctx context.Context, epicID uuid.UUID, score float64) error
 	GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
+	GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
 }

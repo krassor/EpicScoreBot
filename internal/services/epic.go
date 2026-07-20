@@ -236,9 +236,22 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 		}
 
 		// Risks
-		risks, err := s.repo.GetRisksByEpicID(ctx, e.ID)
+		var risks []domain.Risk
+		stories, err := s.repo.GetStoriesByEpicID(ctx, e.ID)
 		if err == nil {
-			for _, r := range risks {
+			for _, story := range stories {
+				storyRisks, err := s.repo.GetRisksByEpicID(ctx, story.ID)
+				if err == nil {
+					risks = append(risks, storyRisks...)
+				}
+			}
+		}
+		epicRisks, err := s.repo.GetRisksByEpicID(ctx, e.ID)
+		if err == nil {
+			risks = append(risks, epicRisks...)
+		}
+
+		for _, r := range risks {
 				riskScores, err := s.repo.GetRiskScoresByRiskID(ctx, r.ID)
 
 				var probs []int
@@ -267,9 +280,6 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 					Coefficient:   coeff,
 				})
 			}
-		} else {
-			log.Error("failed to get risks", sl.Err(err), slog.String("epic_id", e.ID.String()))
-		}
 
 		epicReportItems = append(epicReportItems, epicData)
 	}
@@ -336,3 +346,116 @@ func (s *epicService) GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID
 func (s *epicService) GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
 	return s.repo.GetEpicsByTeamYearQuarter(ctx, teamID, year, quarter)
 }
+
+func (s *epicService) CreateStory(ctx context.Context, epicID uuid.UUID, name, description string) (*domain.Epic, error) {
+	op := "epicService.CreateStory"
+	log := s.log.With(slog.String("op", op), slog.String("epic_id", epicID.String()))
+
+	parent, err := s.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		log.Error("failed to get parent epic", sl.Err(err))
+		return nil, err
+	}
+
+	if parent.ParentEpicID != nil {
+		log.Warn("cannot decompose a story")
+		return nil, errors.New("cannot decompose a story")
+	}
+
+	count, err := s.repo.CountStoriesByEpicID(ctx, epicID)
+	if err != nil {
+		log.Error("failed to count stories", sl.Err(err))
+		return nil, err
+	}
+
+	storyNumber := fmt.Sprintf("%s-S%d", parent.Number, count+1)
+
+	story, err := s.repo.CreateStory(ctx, epicID, storyNumber, name, description, parent.TeamID, parent.Year, parent.Quarter, parent.Type, parent.EvaluatingRoleIDs)
+	if err != nil {
+		log.Error("failed to create story", sl.Err(err))
+		return nil, err
+	}
+
+	log.Info("story created successfully", slog.String("story_id", story.ID.String()), slog.String("number", storyNumber))
+	return story, nil
+}
+
+func (s *epicService) GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error) {
+	return s.repo.GetStoriesByEpicID(ctx, epicID)
+}
+
+func (s *epicService) DeleteStory(ctx context.Context, storyID uuid.UUID) error {
+	op := "epicService.DeleteStory"
+	log := s.log.With(slog.String("op", op), slog.String("story_id", storyID.String()))
+
+	story, err := s.repo.GetEpicByID(ctx, storyID)
+	if err != nil {
+		log.Error("failed to get story", sl.Err(err))
+		return nil
+	}
+
+	if story.ParentEpicID == nil {
+		return errors.New("cannot delete epic via DeleteStory")
+	}
+
+	parent, err := s.repo.GetEpicByID(ctx, *story.ParentEpicID)
+	if err == nil && parent.Status != domain.StatusNew {
+		log.Warn("cannot delete story of non-new epic", slog.String("parent_status", string(parent.Status)))
+		return errors.New("cannot delete story of an epic that is already in progress or scored")
+	}
+
+	err = s.repo.DeleteEpic(ctx, storyID)
+	if err != nil {
+		log.Error("failed to delete story", sl.Err(err))
+		return err
+	}
+
+	log.Info("story deleted successfully")
+	return nil
+}
+
+func (s *epicService) StartEpicScoring(ctx context.Context, epicID uuid.UUID) error {
+	op := "epicService.StartEpicScoring"
+	log := s.log.With(slog.String("op", op), slog.String("epic_id", epicID.String()))
+
+	epic, err := s.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		log.Error("failed to get epic", sl.Err(err))
+		return err
+	}
+
+	if epic.ParentEpicID != nil {
+		return errors.New("cannot start scoring of a story directly, start parent epic scoring")
+	}
+
+	if epic.Status != domain.StatusNew {
+		return fmt.Errorf("epic already in status %s", epic.Status)
+	}
+
+	stories, err := s.repo.GetStoriesByEpicID(ctx, epicID)
+	if err != nil {
+		log.Error("failed to get stories", sl.Err(err))
+		return err
+	}
+
+	if len(stories) == 0 {
+		return errors.New("epic must have at least one story")
+	}
+
+	if err := s.repo.UpdateEpicStatus(ctx, epicID, domain.StatusScoring); err != nil {
+		log.Error("failed to update parent epic status", sl.Err(err))
+		return err
+	}
+
+	for _, story := range stories {
+		if err := s.repo.StartEpicScoring(ctx, story.ID); err != nil {
+			log.Error("failed to start story scoring", slog.String("story_id", story.ID.String()), sl.Err(err))
+			return err
+		}
+	}
+
+	log.Info("scoring started successfully for epic and all its stories")
+	return nil
+}
+
+

@@ -52,6 +52,7 @@ type Repository interface {
 
 	// Epics
 	CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
+	CreateStory(ctx context.Context, parentEpicID uuid.UUID, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
 	GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error)
 	GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
 	GetExpectedScorersCount(ctx context.Context, epicID uuid.UUID, teamID uuid.UUID) (int, error)
@@ -64,6 +65,7 @@ type Repository interface {
 	GetUnscoredEpicsByUser(ctx context.Context, userID, teamID uuid.UUID) ([]domain.Epic, error)
 	UpdateEpicStatus(ctx context.Context, epicID uuid.UUID, status domain.Status) error
 	DeleteEpic(ctx context.Context, epicID uuid.UUID) error
+	StartEpicScoring(ctx context.Context, epicID uuid.UUID) error
 	GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
 	GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 	CountStoriesByEpicID(ctx context.Context, epicID uuid.UUID) (int, error)
@@ -129,6 +131,10 @@ type EpicService interface {
 	GetReportData(ctx context.Context, teamID uuid.UUID, year, quarter int) (*report.ReportData, error)
 	GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error)
 	GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
+	CreateStory(ctx context.Context, epicID uuid.UUID, name, description string) (*domain.Epic, error)
+	GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
+	DeleteStory(ctx context.Context, storyID uuid.UUID) error
+	StartEpicScoring(ctx context.Context, epicID uuid.UUID) error
 }
 
 // RiskService defines the business logic for risks.

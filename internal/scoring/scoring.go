@@ -251,10 +251,69 @@ func (s *Service) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) 
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	s.log.Info("epic scoring completed",
+	s.log.Info("epic/story scoring completed",
 		slog.String("epicID", epicID.String()),
 		slog.Float64("baseScore", epicBaseScore),
 		slog.Float64("finalScore", finalScore))
+
+	// If this is a story, check if all sibling stories are scored and aggregate them to the parent epic
+	if epic.ParentEpicID != nil {
+		parentID := *epic.ParentEpicID
+		stories, err := s.repo.GetStoriesByEpicID(ctx, parentID)
+		if err != nil {
+			return fmt.Errorf("%s: get stories for parent: %w", op, err)
+		}
+
+		allCompleted := true
+		var parentFinalScore float64
+		roleTotals := make(map[uuid.UUID]float64)
+
+		for _, story := range stories {
+			actualStory := story
+			if story.ID == epic.ID {
+				actualStory = *epic
+				actualStory.Status = domain.StatusScored
+				actualStory.FinalScore = &finalScore
+			} else {
+				st, err := s.repo.GetEpicByID(ctx, story.ID)
+				if err != nil {
+					return fmt.Errorf("%s: get actual story status: %w", op, err)
+				}
+				actualStory = *st
+			}
+
+			if actualStory.Status != domain.StatusScored || actualStory.FinalScore == nil {
+				allCompleted = false
+				break
+			}
+			parentFinalScore += *actualStory.FinalScore
+
+			// Aggregate role scores for this story
+			storyRoleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, actualStory.ID)
+			if err == nil {
+				for _, rs := range storyRoleScores {
+					roleTotals[rs.RoleID] += rs.WeightedAvg
+				}
+			}
+		}
+
+		if allCompleted {
+			// Save aggregated role scores for the parent epic (needed for reports)
+			for roleID, totalAvg := range roleTotals {
+				if err := s.repo.UpsertEpicRoleScore(ctx, parentID, roleID, totalAvg); err != nil {
+					return fmt.Errorf("%s: upsert parent role score: %w", op, err)
+				}
+			}
+
+			if err := s.repo.SetEpicFinalScore(ctx, parentID, parentFinalScore); err != nil {
+				return fmt.Errorf("%s: set parent final score: %w", op, err)
+			}
+
+			s.log.Info("parent epic scoring completed",
+				slog.String("parentID", parentID.String()),
+				slog.Float64("finalScore", parentFinalScore))
+		}
+	}
 
 	return nil
 }

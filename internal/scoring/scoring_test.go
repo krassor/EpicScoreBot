@@ -2,6 +2,7 @@ package scoring
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"log/slog"
@@ -32,6 +33,7 @@ type MockRepository struct {
 	GetRisksByEpicIDFunc                func(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
 	SetEpicFinalScoreFunc               func(ctx context.Context, epicID uuid.UUID, score float64) error
 	GetStoriesByEpicIDFunc              func(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
+	GetEpicRoleScoresByEpicIDFunc       func(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
 }
 
 func (m *MockRepository) GetEpicScoresByEpicIDAndRoleID(ctx context.Context, epicID, roleID uuid.UUID) ([]domain.EpicScore, error) {
@@ -152,6 +154,14 @@ func (m *MockRepository) GetStoriesByEpicID(ctx context.Context, epicID uuid.UUI
 	}
 	return nil, nil
 }
+
+func (m *MockRepository) GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error) {
+	if m.GetEpicRoleScoresByEpicIDFunc != nil {
+		return m.GetEpicRoleScoresByEpicIDFunc(ctx, epicID)
+	}
+	return nil, nil
+}
+
 
 func TestCalculateEpicRoleAvg(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -896,3 +906,116 @@ func TestRiskCoefficient(t *testing.T) {
 		})
 	}
 }
+
+func TestTryCompleteEpicScoring_StoryCascade(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+
+	parentID := uuid.New()
+	storyID1 := uuid.New()
+	storyID2 := uuid.New()
+	teamID := uuid.New()
+	roleID := uuid.New()
+
+	epicFinalScoreCalled := false
+	upsertRoleScoreCalled := false
+
+	mockRepo := &MockRepository{
+		GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
+			if id == storyID1 {
+				return &domain.Epic{
+					ID:           storyID1,
+					TeamID:       teamID,
+					Status:       domain.StatusScoring,
+					ParentEpicID: &parentID,
+				}, nil
+			}
+			if id == storyID2 {
+				s2Score := 20.0
+				return &domain.Epic{
+					ID:         storyID2,
+					TeamID:     teamID,
+					Status:     domain.StatusScored,
+					FinalScore: &s2Score,
+				}, nil
+			}
+			if id == parentID {
+				return &domain.Epic{
+					ID:     parentID,
+					TeamID: teamID,
+					Status: domain.StatusScoring,
+				}, nil
+			}
+			return nil, sql.ErrNoRows
+		},
+		GetExpectedScorersCountFunc: func(ctx context.Context, eID, tID uuid.UUID) (int, error) {
+			return 1, nil
+		},
+		GetSubmittedEpicScorersCountFunc: func(ctx context.Context, eID, tID uuid.UUID) (int, error) {
+			return 1, nil
+		},
+		GetDistinctRoleIDsForEpicScoresFunc: func(ctx context.Context, eID uuid.UUID) ([]uuid.UUID, error) {
+			return []uuid.UUID{roleID}, nil
+		},
+		GetEpicScoresByEpicIDAndRoleIDFunc: func(ctx context.Context, eID, rID uuid.UUID) ([]domain.EpicScore, error) {
+			return []domain.EpicScore{{UserID: uuid.New(), Score: 10}}, nil
+		},
+		GetUserByIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.User, error) {
+			return &domain.User{ID: uID, Weight: 100}, nil
+		},
+		UpsertEpicRoleScoreFunc: func(ctx context.Context, eID, rID uuid.UUID, score float64) error {
+			if eID == parentID {
+				upsertRoleScoreCalled = true
+				if score != 25.0 {
+					t.Errorf("parent role score aggregation mismatch, got %v, want 25.0", score)
+				}
+			}
+			return nil
+		},
+		GetRisksByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Risk, error) {
+			return []domain.Risk{}, nil
+		},
+		SetEpicFinalScoreFunc: func(ctx context.Context, eID uuid.UUID, score float64) error {
+			if eID == parentID {
+				epicFinalScoreCalled = true
+				if score != 30.0 {
+					t.Errorf("parent final score aggregation mismatch, got %v, want 30.0", score)
+				}
+			}
+			return nil
+		},
+		GetStoriesByEpicIDFunc: func(ctx context.Context, pID uuid.UUID) ([]domain.Epic, error) {
+			if pID != parentID {
+				return nil, nil
+			}
+			s2Score := 20.0
+			return []domain.Epic{
+				{ID: storyID1, Status: domain.StatusScoring, ParentEpicID: &parentID},
+				{ID: storyID2, Status: domain.StatusScored, FinalScore: &s2Score, ParentEpicID: &parentID},
+			}, nil
+		},
+		GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
+			if eID == storyID1 {
+				return []domain.EpicRoleScore{{EpicID: storyID1, RoleID: roleID, WeightedAvg: 10.0}}, nil
+			}
+			if eID == storyID2 {
+				return []domain.EpicRoleScore{{EpicID: storyID2, RoleID: roleID, WeightedAvg: 15.0}}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	s := New(logger, mockRepo)
+	err := s.TryCompleteEpicScoring(ctx, storyID1)
+	if err != nil {
+		t.Fatalf("TryCompleteEpicScoring failed: %v", err)
+	}
+
+	if !epicFinalScoreCalled {
+		t.Error("expected parent SetEpicFinalScore to be called")
+	}
+	if !upsertRoleScoreCalled {
+		t.Error("expected parent UpsertEpicRoleScore to be called")
+	}
+}
+
