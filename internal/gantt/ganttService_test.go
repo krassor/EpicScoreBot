@@ -628,3 +628,103 @@ func TestReorderTask(t *testing.T) {
 func floatPtr(f float64) *float64 {
 	return &f
 }
+
+func TestGenerateTasksForEpic_WithStories(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+
+	epicID := uuid.New()
+	storyID1 := uuid.New()
+	roleID1 := uuid.New()
+	roleID2 := uuid.New()
+
+	mockEpic := &domain.Epic{
+		ID:     epicID,
+		Number: "E-100",
+		Name:   "Parent Epic",
+	}
+
+	mockStories := []domain.Epic{
+		{
+			ID:           storyID1,
+			Number:       "E-100-S1",
+			Name:         "Story 1",
+			ParentEpicID: &epicID,
+		},
+	}
+
+	mockRoleScores := []domain.EpicRoleScore{
+		{
+			EpicID:      storyID1,
+			RoleID:      roleID1,
+			WeightedAvg: 3.0,
+		},
+		{
+			EpicID:      storyID1,
+			RoleID:      roleID2,
+			WeightedAvg: 2.0,
+		},
+	}
+
+	mockRepo := &MockRepository{
+		GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
+			if id == epicID {
+				return mockEpic, nil
+			}
+			return &mockStories[0], nil
+		},
+		HasGanttTasksForEpicFunc: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			return false, nil
+		},
+		GetStoriesByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.Epic, error) {
+			return mockStories, nil
+		},
+		GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.EpicRoleScore, error) {
+			if id == storyID1 {
+				return mockRoleScores, nil
+			}
+			return nil, nil
+		},
+		GetRisksByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.Risk, error) {
+			return nil, nil
+		},
+		GetRoleByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Role, error) {
+			if id == roleID1 {
+				return &domain.Role{ID: roleID1, Name: "Аналитик"}, nil
+			}
+			return &domain.Role{ID: roleID2, Name: "BE разработчик"}, nil
+		},
+		CreateGanttTaskFunc: func(ctx context.Context, task *domain.GanttTask) (*domain.GanttTask, error) {
+			task.ID = uuid.New()
+			return task, nil
+		},
+		UpdateGanttTaskDatesFunc: func(ctx context.Context, id uuid.UUID, start, end time.Time) error {
+			return nil
+		},
+	}
+
+	service := New(logger, mockRepo)
+
+	start := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
+	tasks, err := service.GenerateTasksForEpic(ctx, epicID, start)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(tasks) != 4 {
+		t.Fatalf("expected 4 tasks, got %d", len(tasks))
+	}
+
+	if tasks[0].IsParent != true || tasks[0].ParentTaskID != nil {
+		t.Errorf("invalid parent epic task: %+v", tasks[0])
+	}
+
+	if tasks[1].IsParent != true || *tasks[1].ParentTaskID != tasks[0].ID {
+		t.Errorf("invalid story task: %+v", tasks[1])
+	}
+
+	if tasks[2].IsParent != false || *tasks[2].ParentTaskID != tasks[1].ID {
+		t.Errorf("invalid child role task 1: %+v", tasks[2])
+	}
+}
+

@@ -78,6 +78,9 @@ func (r *Router) Mount(mux *chi.Mux) {
 				mux.Get("/epics/{epic_id}/scores", r.ganttHandler.GetEpicScores)
 				mux.Get("/epics/{epic_id}/role-scores", r.ganttHandler.GetEpicRoleScores)
 				mux.Get("/epics/{epic_id}/risks", r.ganttHandler.GetEpicRisks)
+				mux.Get("/epics/{epic_id}/stories", r.ganttHandler.GetStories)
+				mux.Post("/epics/{epic_id}/stories", r.ganttHandler.CreateStory)
+				mux.Delete("/stories/{story_id}", r.ganttHandler.DeleteStory)
 
 				// AI chat endpoint
 				mux.Post("/ask-ai", r.ganttHandler.AskAI)
