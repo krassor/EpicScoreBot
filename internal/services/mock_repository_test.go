@@ -55,6 +55,8 @@ type MockRepository struct {
 	UpdateEpicStatusFunc       func(ctx context.Context, epicID uuid.UUID, status domain.Status) error
 	DeleteEpicFunc             func(ctx context.Context, epicID uuid.UUID) error
 	GetEpicsByTeamIDAndStatusFunc func(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
+	GetStoriesByEpicIDFunc        func(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
+	CountStoriesByEpicIDFunc      func(ctx context.Context, epicID uuid.UUID) (int, error)
 
 	// Risks
 	CreateRiskFunc             func(ctx context.Context, description string, epicID uuid.UUID) (*domain.Risk, error)
@@ -435,3 +437,18 @@ func (m *MockRepository) GetSubmittedEpicScorersCount(ctx context.Context, epicI
 func (m *MockRepository) GetSubmittedRiskScorersCount(ctx context.Context, riskID uuid.UUID, epicID uuid.UUID, teamID uuid.UUID) (int, error) {
 	return 0, nil
 }
+
+func (m *MockRepository) GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error) {
+	if m.GetStoriesByEpicIDFunc != nil {
+		return m.GetStoriesByEpicIDFunc(ctx, epicID)
+	}
+	return nil, nil
+}
+
+func (m *MockRepository) CountStoriesByEpicID(ctx context.Context, epicID uuid.UUID) (int, error) {
+	if m.CountStoriesByEpicIDFunc != nil {
+		return m.CountStoriesByEpicIDFunc(ctx, epicID)
+	}
+	return 0, nil
+}
+
