@@ -110,14 +110,29 @@
 
 /* Custom Task Colors based on Role */
 .gantt .gantt-epic .bar {
-    fill: var(--color-epic);
+    fill: var(--color-epic, #4f46e5);
+    rx: 6px;
 }
 .gantt .gantt-epic .bar-progress {
-    fill: #4f46e5;
+    fill: #3730a3;
+    rx: 6px;
 }
 .gantt .gantt-epic .bar-label {
     font-weight: 700;
     font-size: 13px;
+}
+
+.gantt .gantt-story .bar {
+    fill: var(--color-story); /* Purple for stories */
+    rx: 4px;
+}
+.gantt .gantt-story .bar-progress {
+    fill: #7c3aed;
+    rx: 4px;
+}
+.gantt .gantt-story .bar-label {
+    font-weight: 600;
+    font-size: 12px;
 }
 
 .gantt .gantt-analyst .bar {
@@ -127,11 +142,25 @@
     fill: #1d4ed8;
 }
 
-.gantt .gantt-developer .bar {
+.gantt .gantt-be .bar {
     fill: var(--color-role-be);
 }
-.gantt .gantt-developer .bar-progress {
+.gantt .gantt-be .bar-progress {
     fill: #047857;
+}
+
+.gantt .gantt-fe .bar {
+    fill: var(--color-role-fe);
+}
+.gantt .gantt-fe .bar-progress {
+    fill: #d97706;
+}
+
+.gantt .gantt-mobile .bar {
+    fill: var(--color-role-mobile);
+}
+.gantt .gantt-mobile .bar-progress {
+    fill: #db2777;
 }
 
 .gantt .gantt-qa .bar {
