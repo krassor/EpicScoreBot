@@ -88,57 +88,15 @@ func (s *Service) GenerateTasksForEpic(
 		}
 	}
 
-	roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, epicID)
+	// Get stories of this epic
+	stories, err := s.repo.GetStoriesByEpicID(ctx, epicID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: get role scores: %w", op, err)
+		return nil, fmt.Errorf("%s: get stories: %w", op, err)
 	}
-	if len(roleScores) == 0 {
-		return nil, fmt.Errorf("%s: no role scores for epic %s", op, epicID)
-	}
-
-	risks, err := s.repo.GetRisksByEpicID(ctx, epicID)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
-	}
-
-	finalCoeff := 1.0
-	for _, risk := range risks {
-		if risk.WeightedScore != nil {
-			coeff := RiskCoefficient(*risk.WeightedScore)
-			finalCoeff *= coeff
-		}
-	}
-
-	// Build role info for each score.
-	var roleTasks []roleTask
-	for _, rs := range roleScores {
-		role, err := s.repo.GetRoleByID(ctx, rs.RoleID)
-		if err != nil {
-			return nil, fmt.Errorf("%s: get role: %w", op, err)
-		}
-		workDays := max(1, int(math.Ceil(rs.WeightedAvg*finalCoeff)))
-		order, ok := defaultRoleOrder[role.Name]
-		if !ok {
-			order = 99
-		}
-		roleTasks = append(roleTasks, roleTask{
-			roleID:    rs.RoleID,
-			roleName:  role.Name,
-			workDays:  workDays,
-			sortOrder: order,
-		})
-	}
-
-	// Sort by default order.
-	slices.SortFunc(roleTasks, func(a, b roleTask) int {
-		if a.sortOrder != b.sortOrder {
-			return a.sortOrder - b.sortOrder
-		}
-		return 0
-	})
 
 	adjustedStartDate := moveToWorkDay(startDate)
-	// Create parent task (epic).
+
+	// Create parent task (epic)
 	parentTask := &domain.GanttTask{
 		EpicID:    epicID,
 		Name:      fmt.Sprintf("%s: %s", epic.Number, epic.Name),
@@ -152,55 +110,220 @@ func (s *Service) GenerateTasksForEpic(
 		return nil, fmt.Errorf("%s: create parent: %w", op, err)
 	}
 
-	// Lay out child tasks sequentially by sort_order groups.
 	var result []domain.GanttTask
 	result = append(result, *parentTask)
 
 	cursor := adjustedStartDate
-	parentEndDate := adjustedStartDate
-	groups := groupBySortOrder(roleTasks)
-	for _, group := range groups {
-		var groupEnd time.Time
-		for _, rt := range group {
-			childStart := cursor
-			childEnd := addWorkDays(cursor, rt.workDays)
-			roleID := rt.roleID
-			child := &domain.GanttTask{
+
+	if len(stories) > 0 {
+		epicEndDate := adjustedStartDate
+
+		for storyIdx, story := range stories {
+			storyStartDate := cursor
+			// Create story task
+			storyTask := &domain.GanttTask{
 				EpicID:       epicID,
-				RoleID:       &roleID,
-				Name:         rt.roleName,
-				StartDate:    childStart,
-				EndDate:      childEnd,
-				SortOrder:    rt.sortOrder,
-				IsParent:     false,
+				Name:         fmt.Sprintf("%s: %s", story.Number, story.Name),
+				StartDate:    storyStartDate,
+				EndDate:      storyStartDate, // will be recalculated
+				SortOrder:    storyIdx + 1,
+				IsParent:     true,
 				ParentTaskID: &parentTask.ID,
 			}
-			child, err = s.repo.CreateGanttTask(ctx, child)
+			storyTask, err = s.repo.CreateGanttTask(ctx, storyTask)
 			if err != nil {
-				return nil, fmt.Errorf(
-					"%s: create child %s: %w", op, rt.roleName, err,
-				)
+				return nil, fmt.Errorf("%s: create story task %s: %w", op, story.Number, err)
 			}
-			result = append(result, *child)
-			if groupEnd.IsZero() || childEnd.After(groupEnd) {
-				groupEnd = childEnd
-			}
-		}
-		if parentEndDate.Before(groupEnd) {
-			parentEndDate = groupEnd
-		}
-		cursor = moveToWorkDay(groupEnd.AddDate(0, 0, 1))
-	}
+			result = append(result, *storyTask)
 
-	// Update parent task dates.
-	if err := s.repo.UpdateGanttTaskDates(
-		ctx, parentTask.ID, adjustedStartDate, parentEndDate,
-	); err != nil {
-		return nil, fmt.Errorf(
-			"%s: update parent dates: %w", op, err,
-		)
+			roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, story.ID)
+			if err != nil {
+				return nil, fmt.Errorf("%s: get story role scores: %w", op, err)
+			}
+
+			if len(roleScores) > 0 {
+				risks, err := s.repo.GetRisksByEpicID(ctx, story.ID)
+				if err != nil {
+					return nil, fmt.Errorf("%s: get story risks: %w", op, err)
+				}
+
+				finalCoeff := 1.0
+				for _, risk := range risks {
+					if risk.WeightedScore != nil {
+						coeff := RiskCoefficient(*risk.WeightedScore)
+						finalCoeff *= coeff
+					}
+				}
+
+				var roleTasks []roleTask
+				for _, rs := range roleScores {
+					role, err := s.repo.GetRoleByID(ctx, rs.RoleID)
+					if err != nil {
+						return nil, fmt.Errorf("%s: get role: %w", op, err)
+					}
+					workDays := max(1, int(math.Ceil(rs.WeightedAvg*finalCoeff)))
+					order, ok := defaultRoleOrder[role.Name]
+					if !ok {
+						order = 99
+					}
+					roleTasks = append(roleTasks, roleTask{
+						roleID:    rs.RoleID,
+						roleName:  role.Name,
+						workDays:  workDays,
+						sortOrder: order,
+					})
+				}
+
+				slices.SortFunc(roleTasks, func(a, b roleTask) int {
+					if a.sortOrder != b.sortOrder {
+						return a.sortOrder - b.sortOrder
+					}
+					return 0
+				})
+
+				storyEndDate := storyStartDate
+				groups := groupBySortOrder(roleTasks)
+				for _, group := range groups {
+					var groupEnd time.Time
+					for _, rt := range group {
+						childStart := cursor
+						childEnd := addWorkDays(cursor, rt.workDays)
+						roleID := rt.roleID
+						child := &domain.GanttTask{
+							EpicID:       epicID,
+							RoleID:       &roleID,
+							Name:         rt.roleName,
+							StartDate:    childStart,
+							EndDate:      childEnd,
+							SortOrder:    rt.sortOrder,
+							IsParent:     false,
+							ParentTaskID: &storyTask.ID,
+						}
+						child, err = s.repo.CreateGanttTask(ctx, child)
+						if err != nil {
+							return nil, fmt.Errorf("%s: create story child %s: %w", op, rt.roleName, err)
+						}
+						result = append(result, *child)
+						if groupEnd.IsZero() || childEnd.After(groupEnd) {
+							groupEnd = childEnd
+						}
+					}
+					if storyEndDate.Before(groupEnd) {
+						storyEndDate = groupEnd
+					}
+					cursor = moveToWorkDay(groupEnd.AddDate(0, 0, 1))
+				}
+
+				// Update story task dates
+				if err := s.repo.UpdateGanttTaskDates(ctx, storyTask.ID, storyStartDate, storyEndDate); err != nil {
+					return nil, fmt.Errorf("%s: update story dates: %w", op, err)
+				}
+				for idx, r := range result {
+					if r.ID == storyTask.ID {
+						result[idx].StartDate = storyStartDate
+						result[idx].EndDate = storyEndDate
+					}
+				}
+
+				if epicEndDate.Before(storyEndDate) {
+					epicEndDate = storyEndDate
+				}
+			}
+		}
+
+		// Update parent task dates
+		if err := s.repo.UpdateGanttTaskDates(ctx, parentTask.ID, adjustedStartDate, epicEndDate); err != nil {
+			return nil, fmt.Errorf("%s: update parent dates: %w", op, err)
+		}
+		result[0].EndDate = epicEndDate
+
+	} else {
+		// Legacy: Flat Gantt for epics without stories (compatibility support)
+		roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, epicID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: get role scores: %w", op, err)
+		}
+		if len(roleScores) == 0 {
+			return nil, fmt.Errorf("%s: no role scores for epic %s", op, epicID)
+		}
+
+		risks, err := s.repo.GetRisksByEpicID(ctx, epicID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
+		}
+
+		finalCoeff := 1.0
+		for _, risk := range risks {
+			if risk.WeightedScore != nil {
+				coeff := RiskCoefficient(*risk.WeightedScore)
+				finalCoeff *= coeff
+			}
+		}
+
+		var roleTasks []roleTask
+		for _, rs := range roleScores {
+			role, err := s.repo.GetRoleByID(ctx, rs.RoleID)
+			if err != nil {
+				return nil, fmt.Errorf("%s: get role: %w", op, err)
+			}
+			workDays := max(1, int(math.Ceil(rs.WeightedAvg*finalCoeff)))
+			order, ok := defaultRoleOrder[role.Name]
+			if !ok {
+				order = 99
+			}
+			roleTasks = append(roleTasks, roleTask{
+				roleID:    rs.RoleID,
+				roleName:  role.Name,
+				workDays:  workDays,
+				sortOrder: order,
+			})
+		}
+
+		slices.SortFunc(roleTasks, func(a, b roleTask) int {
+			if a.sortOrder != b.sortOrder {
+				return a.sortOrder - b.sortOrder
+			}
+			return 0
+		})
+
+		parentEndDate := adjustedStartDate
+		groups := groupBySortOrder(roleTasks)
+		for _, group := range groups {
+			var groupEnd time.Time
+			for _, rt := range group {
+				childStart := cursor
+				childEnd := addWorkDays(cursor, rt.workDays)
+				roleID := rt.roleID
+				child := &domain.GanttTask{
+					EpicID:       epicID,
+					RoleID:       &roleID,
+					Name:         rt.roleName,
+					StartDate:    childStart,
+					EndDate:      childEnd,
+					SortOrder:    rt.sortOrder,
+					IsParent:     false,
+					ParentTaskID: &parentTask.ID,
+				}
+				child, err = s.repo.CreateGanttTask(ctx, child)
+				if err != nil {
+					return nil, fmt.Errorf("%s: create child %s: %w", op, rt.roleName, err)
+				}
+				result = append(result, *child)
+				if groupEnd.IsZero() || childEnd.After(groupEnd) {
+					groupEnd = childEnd
+				}
+			}
+			if parentEndDate.Before(groupEnd) {
+				parentEndDate = groupEnd
+			}
+			cursor = moveToWorkDay(groupEnd.AddDate(0, 0, 1))
+		}
+
+		if err := s.repo.UpdateGanttTaskDates(ctx, parentTask.ID, adjustedStartDate, parentEndDate); err != nil {
+			return nil, fmt.Errorf("%s: update parent dates: %w", op, err)
+		}
+		result[0].EndDate = parentEndDate
 	}
-	result[0].EndDate = parentEndDate
 
 	s.log.Info("generated gantt tasks",
 		slog.String("epicID", epicID.String()),

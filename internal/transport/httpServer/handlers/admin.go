@@ -324,7 +324,7 @@ func (h *GanttHandler) AddEpic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, epic)
 }
 
-// StartEpicScoring starts the scoring stage for an epic and its risks.
+// StartEpicScoring starts the scoring stage for an epic and its risks/stories.
 func (h *GanttHandler) StartEpicScoring(w http.ResponseWriter, r *http.Request) {
 	op := "handlers.StartEpicScoring"
 	var req struct {
@@ -351,10 +351,38 @@ func (h *GanttHandler) StartEpicScoring(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.repo.StartEpicScoring(r.Context(), epicUUID); err != nil {
-		h.log.Error("failed to start epic scoring", slog.String("op", op), slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("%s: %w", op, err).Error())
+	if epic.ParentEpicID != nil {
+		writeError(w, http.StatusBadRequest, "cannot start scoring of a story directly")
 		return
+	}
+
+	// 1. Проверяем наличие сторей
+	stories, err := h.repo.GetStoriesByEpicID(r.Context(), epicUUID)
+	if err != nil {
+		h.log.Error("failed to get stories", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to check stories")
+		return
+	}
+
+	if len(stories) == 0 {
+		writeError(w, http.StatusBadRequest, "epic must have at least one story")
+		return
+	}
+
+	// 2. Обновляем статус родительского эпика
+	if err := h.repo.UpdateEpicStatus(r.Context(), epicUUID, domain.StatusScoring); err != nil {
+		h.log.Error("failed to update parent status", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to start scoring")
+		return
+	}
+
+	// 3. Запускаем скоринг для всех дочерних сторей
+	for _, story := range stories {
+		if err := h.repo.StartEpicScoring(r.Context(), story.ID); err != nil {
+			h.log.Error("failed to start story scoring", slog.String("op", op), slog.String("story_id", story.ID.String()), slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "failed to start scoring for one of the stories")
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "scoring started"})
