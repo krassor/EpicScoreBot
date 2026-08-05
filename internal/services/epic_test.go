@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"testing"
 
 	"EpicScoreBot/internal/models/domain"
@@ -313,6 +314,92 @@ func TestEpicService_GetReportData(t *testing.T) {
 
 		if len(rReport.Probabilities) != 1 || rReport.Probabilities[0] != 2 || len(rReport.Impacts) != 1 || rReport.Impacts[0] != 3 {
 			t.Errorf("неверные детальные оценки риска: %+v", rReport)
+		}
+	})
+
+	t.Run("успешная генерация отчета с историями", func(t *testing.T) {
+		storyID := uuid.New()
+		repo := &MockRepository{
+			GetTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
+				return &domain.Team{ID: teamID, Name: "Супер Команда"}, nil
+			},
+			GetEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+				return []domain.Epic{
+					{
+						ID:         epicID,
+						Number:     "EP-42",
+						Name:       "Epic 42",
+						TeamID:     teamID,
+						Status:     domain.StatusScored,
+						FinalScore: floatPtr(119.0),
+						Year:       year,
+						Quarter:    quarter,
+						Type:       "feature",
+					},
+				}, nil
+			},
+			GetUsersByTeamIDFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{{ID: userID, FirstName: "Иван", LastName: "Иванов"}}, nil
+			},
+			GetRoleByUserIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.Role, error) {
+				return &domain.Role{ID: roleID, Name: "IT-лидер"}, nil
+			},
+			GetStoriesByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Epic, error) {
+				if eID != epicID {
+					t.Errorf("неверный parent epicID: %v", eID)
+				}
+				return []domain.Epic{
+					{
+						ID:         storyID,
+						ParentEpicID: &epicID,
+						Number:     "EP-42-S1",
+						Name:       "Story 1",
+						Status:     domain.StatusScored,
+						FinalScore: floatPtr(119.0),
+					},
+				}, nil
+			},
+			GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
+				if eID != storyID {
+					t.Errorf("ожидался вызов оценок для storyID: %v, получен: %v", storyID, eID)
+				}
+				return []domain.EpicRoleScore{
+					{
+						RoleID:      roleID,
+						WeightedAvg: 62.833333333333336,
+					},
+				}, nil
+			},
+			GetRoleByIDFunc: func(ctx context.Context, rID uuid.UUID) (*domain.Role, error) {
+				return &domain.Role{ID: roleID, Name: "IT-лидер"}, nil
+			},
+			GetRisksByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Risk, error) {
+				return nil, nil
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		report, err := s.GetReportData(ctx, teamID, 2026, 3)
+		if err != nil {
+			t.Fatalf("ожидался успешный отчет, получена ошибка: %v", err)
+		}
+
+		if len(report.Epics) != 1 {
+			t.Fatalf("ожидался 1 эпик в отчете, получено: %d", len(report.Epics))
+		}
+
+		eReport := report.Epics[0]
+		if eReport.FinalScore != 119.0 {
+			t.Errorf("ожидался FinalScore = 119.0, получено: %f", eReport.FinalScore)
+		}
+
+		if len(eReport.RoleScores) != 1 || eReport.RoleScores[0].RoleName != "IT-лидер" {
+			t.Fatalf("ожидалась 1 роль, получено: %+v", eReport.RoleScores)
+		}
+
+		val := eReport.RoleScores[0].WeightedAvg
+		if math.Abs(val-119.0) > 0.1 {
+			t.Errorf("ожидалась масштабированная оценка 119.0, получено: %f", val)
 		}
 	})
 

@@ -197,47 +197,94 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 			}
 		}
 
-		// Role scores
-		roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, e.ID)
-		if err == nil {
-			var baseScore float64
-			for _, rs := range roleScores {
-				baseScore += rs.WeightedAvg
-			}
-
-			riskFactor := 1.0
-			if baseScore > 0 && e.FinalScore != nil {
-				riskFactor = *e.FinalScore / baseScore
-			}
-
+		// Сначала запрашиваем истории эпика
+		stories, err := s.repo.GetStoriesByEpicID(ctx, e.ID)
+		if err == nil && len(stories) > 0 {
 			var totalScore float64
-			for _, rs := range roleScores {
-				roleName := rs.RoleID.String()
-				if rName, exists := roleNames[rs.RoleID]; exists {
-					roleName = rName
-				} else {
-					if r, err := s.repo.GetRoleByID(ctx, rs.RoleID); err == nil {
-						roleName = r.Name
-						roleNames[rs.RoleID] = r.Name
+			for _, story := range stories {
+				if story.Status != domain.StatusScored {
+					continue
+				}
+				storyRoleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, story.ID)
+				if err == nil {
+					var storyBaseScore float64
+					for _, rs := range storyRoleScores {
+						storyBaseScore += rs.WeightedAvg
+					}
+
+					storyRiskFactor := 1.0
+					if storyBaseScore > 0 && story.FinalScore != nil {
+						storyRiskFactor = *story.FinalScore / storyBaseScore
+					}
+
+					for _, rs := range storyRoleScores {
+						roleName := rs.RoleID.String()
+						if rName, exists := roleNames[rs.RoleID]; exists {
+							roleName = rName
+						} else {
+							if r, err := s.repo.GetRoleByID(ctx, rs.RoleID); err == nil {
+								roleName = r.Name
+								roleNames[rs.RoleID] = r.Name
+							}
+						}
+						scaledScore := rs.WeightedAvg * storyRiskFactor
+						epicData.RoleScoresMap[roleName] += scaledScore
+						totalScore += scaledScore
+						rolePlanned[roleName] += scaledScore
 					}
 				}
-				scaledScore := rs.WeightedAvg * riskFactor
+			}
+			// Заполняем срез RoleScores из карты RoleScoresMap
+			for rName, score := range epicData.RoleScoresMap {
 				epicData.RoleScores = append(epicData.RoleScores, report.RoleScoreData{
-					RoleName:    roleName,
-					WeightedAvg: scaledScore,
+					RoleName:    rName,
+					WeightedAvg: score,
 				})
-				epicData.RoleScoresMap[roleName] = scaledScore
-				totalScore += scaledScore
-				rolePlanned[roleName] += scaledScore
 			}
 			epicData.TotalScore = totalScore
 		} else {
-			log.Error("failed to get role scores", sl.Err(err), slog.String("epic_id", e.ID.String()))
+			// Fallback логика: если сторей нет, берем оценки ролей самого эпика
+			roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, e.ID)
+			if err == nil {
+				var baseScore float64
+				for _, rs := range roleScores {
+					baseScore += rs.WeightedAvg
+				}
+
+				riskFactor := 1.0
+				if baseScore > 0 && e.FinalScore != nil {
+					riskFactor = *e.FinalScore / baseScore
+				}
+
+				var totalScore float64
+				for _, rs := range roleScores {
+					roleName := rs.RoleID.String()
+					if rName, exists := roleNames[rs.RoleID]; exists {
+						roleName = rName
+					} else {
+						if r, err := s.repo.GetRoleByID(ctx, rs.RoleID); err == nil {
+							roleName = r.Name
+							roleNames[rs.RoleID] = r.Name
+						}
+					}
+					scaledScore := rs.WeightedAvg * riskFactor
+					epicData.RoleScores = append(epicData.RoleScores, report.RoleScoreData{
+						RoleName:    roleName,
+						WeightedAvg: scaledScore,
+					})
+					epicData.RoleScoresMap[roleName] = scaledScore
+					totalScore += scaledScore
+					rolePlanned[roleName] += scaledScore
+				}
+				epicData.TotalScore = totalScore
+			} else {
+				log.Error("failed to get role scores", sl.Err(err), slog.String("epic_id", e.ID.String()))
+			}
 		}
 
 		// Risks
 		var risks []domain.Risk
-		stories, err := s.repo.GetStoriesByEpicID(ctx, e.ID)
+		stories, err = s.repo.GetStoriesByEpicID(ctx, e.ID)
 		if err == nil {
 			for _, story := range stories {
 				storyRisks, err := s.repo.GetRisksByEpicID(ctx, story.ID)

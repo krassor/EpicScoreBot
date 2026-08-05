@@ -144,32 +144,70 @@ func (h *GanttHandler) GetCapacityReport(w http.ResponseWriter, r *http.Request)
 				techScoreSum += item.FinalScore
 			}
 
-			// Get role-level scores
-			roleScores, err := h.repo.GetEpicRoleScoresByEpicID(r.Context(), e.ID)
-			if err == nil {
-				var baseScore float64
-				for _, rs := range roleScores {
-					baseScore += rs.WeightedAvg
-				}
+			// Сначала пытаемся получить оценки со сторей (историй) эпика
+			stories, err := h.repo.GetStoriesByEpicID(r.Context(), e.ID)
+			if err == nil && len(stories) > 0 {
+				// Если стори есть, суммируем их ролевые оценки с учетом рисков каждой стори
+				for _, story := range stories {
+					if story.Status != domain.StatusScored {
+						continue
+					}
+					storyRoleScores, err := h.repo.GetEpicRoleScoresByEpicID(r.Context(), story.ID)
+					if err == nil {
+						var storyBaseScore float64
+						for _, rs := range storyRoleScores {
+							storyBaseScore += rs.WeightedAvg
+						}
 
-				riskFactor := 1.0
-				if baseScore > 0 && e.Status == domain.StatusScored && e.FinalScore != nil {
-					riskFactor = *e.FinalScore / baseScore
-				}
+						storyRiskFactor := 1.0
+						if storyBaseScore > 0 && story.FinalScore != nil {
+							storyRiskFactor = *story.FinalScore / storyBaseScore
+						}
 
-				for _, rs := range roleScores {
-					roleName := rs.RoleID.String()
-					if rName, exists := roleNames[rs.RoleID]; exists {
-						roleName = rName
-					} else {
-						if r, err := h.repo.GetRoleByID(r.Context(), rs.RoleID); err == nil {
-							roleName = r.Name
-							roleNames[rs.RoleID] = r.Name
+						for _, rs := range storyRoleScores {
+							roleName := rs.RoleID.String()
+							if rName, exists := roleNames[rs.RoleID]; exists {
+								roleName = rName
+							} else {
+								if r, err := h.repo.GetRoleByID(r.Context(), rs.RoleID); err == nil {
+									roleName = r.Name
+									roleNames[rs.RoleID] = r.Name
+								}
+							}
+							scaledScore := rs.WeightedAvg * storyRiskFactor
+							item.RoleScores[roleName] += scaledScore
+							rolePlanned[roleName] += scaledScore
 						}
 					}
-					scaledScore := rs.WeightedAvg * riskFactor
-					item.RoleScores[roleName] = scaledScore
-					rolePlanned[roleName] += scaledScore
+				}
+			} else {
+				// Fallback логика: если сторей нет, берем оценки ролей самого эпика
+				roleScores, err := h.repo.GetEpicRoleScoresByEpicID(r.Context(), e.ID)
+				if err == nil {
+					var baseScore float64
+					for _, rs := range roleScores {
+						baseScore += rs.WeightedAvg
+					}
+
+					riskFactor := 1.0
+					if baseScore > 0 && e.FinalScore != nil {
+						riskFactor = *e.FinalScore / baseScore
+					}
+
+					for _, rs := range roleScores {
+						roleName := rs.RoleID.String()
+						if rName, exists := roleNames[rs.RoleID]; exists {
+							roleName = rName
+						} else {
+							if r, err := h.repo.GetRoleByID(r.Context(), rs.RoleID); err == nil {
+								roleName = r.Name
+								roleNames[rs.RoleID] = r.Name
+							}
+						}
+						scaledScore := rs.WeightedAvg * riskFactor
+						item.RoleScores[roleName] = scaledScore
+						rolePlanned[roleName] += scaledScore
+					}
 				}
 			}
 		}
