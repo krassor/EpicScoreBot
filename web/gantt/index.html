@@ -141,22 +141,6 @@
             <section id="tab-content-admin" class="tab-content hidden">
                 <div class="admin-container">
                     <div class="admin-grid">
-                        <!-- Create Team -->
-                        <div class="admin-card">
-                            <h2>Создание новой команды</h2>
-                            <form id="form-create-team" class="admin-form">
-                                <div class="form-group">
-                                    <label for="team-name">Название команды</label>
-                                    <input type="text" id="team-name" required placeholder="Например, Team Alpha">
-                                </div>
-                                <div class="form-group">
-                                    <label for="team-desc">Описание</label>
-                                    <textarea id="team-desc" placeholder="Описание направлений деятельности команды..."></textarea>
-                                </div>
-                                <button type="submit" class="btn btn-primary">Создать команду</button>
-                            </form>
-                        </div>
-
                         <!-- Create Epic -->
                         <div class="admin-card">
                             <h2>Создание Эпика</h2>
@@ -268,25 +252,22 @@
                             </form>
                         </div>
 
-                        <!-- Import Users -->
+                        <!-- Create Team -->
                         <div class="admin-card">
-                            <h2>Массовый импорт пользователей</h2>
-                            <form id="form-import-users" class="admin-form">
+                            <h2>Создание новой команды</h2>
+                            <form id="form-create-team" class="admin-form">
                                 <div class="form-group">
-                                    <label for="import-team-select">Команда для импорта</label>
-                                    <select id="import-team-select" required class="select">
-                                        <option value="">Выберите команду...</option>
-                                    </select>
+                                    <label for="team-name">Название команды</label>
+                                    <input type="text" id="team-name" required placeholder="Например, Team Alpha">
                                 </div>
                                 <div class="form-group">
-                                    <label for="import-data">Данные пользователей (CSV / текст)</label>
-                                    <div class="form-help">Формат: <code>telegram_id,first_name,last_name,role,weight</code> (один человек на строку)</div>
-                                    <textarea id="import-data" required placeholder="12345678,Иван,Иванов,BE разработчик,100&#10;87654321,Петр,Петров,FE разработчик,80" rows="6"></textarea>
+                                    <label for="team-desc">Описание</label>
+                                    <textarea id="team-desc" placeholder="Описание направлений деятельности команды..."></textarea>
                                 </div>
-                                <button type="submit" class="btn btn-primary">Импортировать пользователей</button>
+                                <button type="submit" class="btn btn-primary">Создать команду</button>
                             </form>
                         </div>
-                        
+
                         <!-- Create Single User -->
                         <div class="admin-card">
                             <h2>Создание пользователя</h2>
@@ -320,6 +301,25 @@
                                     </div>
                                 </div>
                                 <button type="submit" class="btn btn-primary">Создать пользователя</button>
+                            </form>
+                        </div>
+
+                        <!-- Import Users -->
+                        <div class="admin-card">
+                            <h2>Массовый импорт пользователей</h2>
+                            <form id="form-import-users" class="admin-form">
+                                <div class="form-group">
+                                    <label for="import-team-select">Команда для импорта</label>
+                                    <select id="import-team-select" required class="select">
+                                        <option value="">Выберите команду...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="import-data">Данные пользователей (CSV / текст)</label>
+                                    <div class="form-help">Формат: <code>telegram_id,first_name,last_name,role,weight</code> (один человек на строку)</div>
+                                    <textarea id="import-data" required placeholder="12345678,Иван,Иванов,BE разработчик,100&#10;87654321,Петр,Петров,FE разработчик,80" rows="6"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Импортировать пользователей</button>
                             </form>
                         </div>
                     </div>
