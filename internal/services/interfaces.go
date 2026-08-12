@@ -69,6 +69,8 @@ type Repository interface {
 	GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
 	GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 	CountStoriesByEpicID(ctx context.Context, epicID uuid.UUID) (int, error)
+	UpdateEpic(ctx context.Context, epic *domain.Epic, newEvaluatingRoles []uuid.UUID, oldNumber string) error
+	UpdateStory(ctx context.Context, story *domain.Epic) error
 
 	// Risks
 	CreateRisk(ctx context.Context, description string, epicID uuid.UUID) (*domain.Risk, error)
@@ -122,6 +124,8 @@ type EpicService interface {
 	GetUnscoredEpicsByUser(ctx context.Context, userID, teamID uuid.UUID) ([]domain.Epic, error)
 	GetUnscoredEpicsForUserAcrossTeams(ctx context.Context, userID uuid.UUID, telegramID string) ([]domain.Epic, error)
 	UpdateEpicStatus(ctx context.Context, epicID uuid.UUID, status domain.Status) error
+	UpdateEpic(ctx context.Context, id uuid.UUID, req domain.UpdateEpicReq) (*domain.Epic, error)
+	UpdateStory(ctx context.Context, id uuid.UUID, req domain.UpdateStoryReq) (*domain.Epic, error)
 	DeleteEpic(ctx context.Context, epicID uuid.UUID) error
 	GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
 	CreateEpicScore(ctx context.Context, epicID, userID, roleID uuid.UUID, score int) error

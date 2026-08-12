@@ -433,3 +433,135 @@ func (r *Repository) CountStoriesByEpicID(ctx context.Context, epicID uuid.UUID)
 	return count, nil
 }
 
+// UpdateEpic updates an existing epic and performs cascading updates for child stories.
+func (r *Repository) UpdateEpic(ctx context.Context, epic *domain.Epic, newEvaluatingRoles []uuid.UUID, oldNumber string) error {
+	op := "Repository.UpdateEpic"
+	tx, err := r.DB.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%s: begin tx: %w", op, err)
+	}
+	defer tx.Rollback()
+
+	// Update main epic row
+	query := `UPDATE epics SET 
+		number = $1, 
+		name = $2, 
+		description = $3, 
+		team_id = $4, 
+		year = $5, 
+		quarter = $6, 
+		type = $7, 
+		updated_at = NOW() 
+		WHERE id = $8`
+	_, err = tx.ExecContext(ctx, query,
+		epic.Number, epic.Name, epic.Description,
+		epic.TeamID, epic.Year, epic.Quarter, epic.Type, epic.ID)
+	if err != nil {
+		return fmt.Errorf("%s: update epic: %w", op, err)
+	}
+
+	// Update evaluating roles if provided
+	if newEvaluatingRoles != nil {
+		_, err = tx.ExecContext(ctx, `DELETE FROM epic_evaluation_roles WHERE epic_id = $1`, epic.ID)
+		if err != nil {
+			return fmt.Errorf("%s: delete old roles: %w", op, err)
+		}
+		for _, roleID := range newEvaluatingRoles {
+			_, err = tx.ExecContext(ctx, `INSERT INTO epic_evaluation_roles (epic_id, role_id) VALUES ($1, $2)`, epic.ID, roleID)
+			if err != nil {
+				return fmt.Errorf("%s: insert role: %w", op, err)
+			}
+		}
+	}
+
+	// Cascade update child stories (team_id, year, quarter, type)
+	_, err = tx.ExecContext(ctx, `UPDATE epics SET 
+		team_id = $1, 
+		year = $2, 
+		quarter = $3, 
+		type = $4, 
+		updated_at = NOW() 
+		WHERE parent_epic_id = $5`,
+		epic.TeamID, epic.Year, epic.Quarter, epic.Type, epic.ID)
+	if err != nil {
+		return fmt.Errorf("%s: cascade update stories: %w", op, err)
+	}
+
+	// Cascade update evaluating roles for child stories if roles changed
+	if newEvaluatingRoles != nil {
+		storiesQuery := `SELECT id FROM epics WHERE parent_epic_id = $1`
+		var storyIDs []uuid.UUID
+		err = tx.SelectContext(ctx, &storyIDs, storiesQuery, epic.ID)
+		if err == nil {
+			for _, storyID := range storyIDs {
+				tx.ExecContext(ctx, `DELETE FROM epic_evaluation_roles WHERE epic_id = $1`, storyID)
+				for _, roleID := range newEvaluatingRoles {
+					tx.ExecContext(ctx, `INSERT INTO epic_evaluation_roles (epic_id, role_id) VALUES ($1, $2)`, storyID, roleID)
+				}
+			}
+		}
+	}
+
+	// Cascade rename story numbers if number changed (e.g., "EPIC-42-S1" -> "EPIC-99-S1")
+	if oldNumber != "" && oldNumber != epic.Number {
+		oldPrefix := oldNumber + "-S"
+		newPrefix := epic.Number + "-S"
+		_, err = tx.ExecContext(ctx, `UPDATE epics SET 
+			number = REPLACE(number, $1, $2), 
+			updated_at = NOW() 
+			WHERE parent_epic_id = $3 AND number LIKE $4`,
+			oldPrefix, newPrefix, epic.ID, oldPrefix+"%")
+		if err != nil {
+			return fmt.Errorf("%s: cascade update story numbers: %w", op, err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("%s: commit: %w", op, err)
+	}
+	return nil
+}
+
+// UpdateStory updates an existing story.
+func (r *Repository) UpdateStory(ctx context.Context, story *domain.Epic) error {
+	op := "Repository.UpdateStory"
+	tx, err := r.DB.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%s: begin tx: %w", op, err)
+	}
+	defer tx.Rollback()
+
+	query := `UPDATE epics SET 
+		number = $1, 
+		name = $2, 
+		description = $3, 
+		parent_epic_id = $4, 
+		team_id = $5, 
+		year = $6, 
+		quarter = $7, 
+		type = $8, 
+		updated_at = NOW() 
+		WHERE id = $9 AND parent_epic_id IS NOT NULL`
+	_, err = tx.ExecContext(ctx, query,
+		story.Number, story.Name, story.Description,
+		story.ParentEpicID, story.TeamID, story.Year, story.Quarter, story.Type, story.ID)
+	if err != nil {
+		return fmt.Errorf("%s: update story: %w", op, err)
+	}
+
+	// Update evaluating roles from parent epic
+	if story.EvaluatingRoleIDs != nil {
+		_, err = tx.ExecContext(ctx, `DELETE FROM epic_evaluation_roles WHERE epic_id = $1`, story.ID)
+		if err == nil {
+			for _, roleID := range story.EvaluatingRoleIDs {
+				tx.ExecContext(ctx, `INSERT INTO epic_evaluation_roles (epic_id, role_id) VALUES ($1, $2)`, story.ID, roleID)
+			}
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("%s: commit: %w", op, err)
+	}
+	return nil
+}
+

@@ -1007,3 +1007,135 @@ func TestEpicService_DeleteStory(t *testing.T) {
 	})
 }
 
+func TestEpicService_UpdateEpic(t *testing.T) {
+	ctx := context.Background()
+	log := newDiscardLogger()
+	epicID := uuid.New()
+	teamID := uuid.New()
+	newTeamID := uuid.New()
+	roleID := uuid.New()
+
+	t.Run("успешное обновление эпика в статусе NEW", func(t *testing.T) {
+		repo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{
+					ID:                epicID,
+					Number:            "EP-1",
+					Name:              "Old Epic",
+					TeamID:            teamID,
+					Status:            domain.StatusNew,
+					EvaluatingRoleIDs: []uuid.UUID{roleID},
+				}, nil
+			},
+			UpdateEpicFunc: func(ctx context.Context, epic *domain.Epic, newRoles []uuid.UUID, oldNum string) error {
+				if epic.Name != "New Epic" || epic.TeamID != newTeamID || oldNum != "EP-1" {
+					t.Errorf("неверные параметры обновления: %+v", epic)
+				}
+				return nil
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		updated, err := s.UpdateEpic(ctx, epicID, domain.UpdateEpicReq{
+			Number:            "EP-2",
+			Name:              "New Epic",
+			Description:       "New desc",
+			TeamID:            newTeamID,
+			Year:              2026,
+			Quarter:           3,
+			Type:              "feature",
+			EvaluatingRoleIDs: []uuid.UUID{roleID},
+		})
+		if err != nil {
+			t.Fatalf("неожидаемая ошибка: %v", err)
+		}
+		if updated == nil {
+			t.Fatal("ожидался обновленный эпик, получен nil")
+		}
+	})
+
+	t.Run("ошибка обновления команды в статусе SCORING", func(t *testing.T) {
+		repo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{
+					ID:                epicID,
+					Number:            "EP-1",
+					Name:              "Old Epic",
+					TeamID:            teamID,
+					Status:            domain.StatusScoring,
+					EvaluatingRoleIDs: []uuid.UUID{roleID},
+				}, nil
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		_, err := s.UpdateEpic(ctx, epicID, domain.UpdateEpicReq{
+			Number:            "EP-1",
+			Name:              "New Epic",
+			TeamID:            newTeamID, // Смена команды запрещена
+			EvaluatingRoleIDs: []uuid.UUID{roleID},
+		})
+		if err == nil {
+			t.Fatal("ожидалась ошибка смены команды в статусе SCORING, получен nil")
+		}
+	})
+}
+
+func TestEpicService_UpdateStory(t *testing.T) {
+	ctx := context.Background()
+	log := newDiscardLogger()
+	storyID := uuid.New()
+	parentID := uuid.New()
+	newParentID := uuid.New()
+
+	t.Run("успешное обновление истории в статусе NEW", func(t *testing.T) {
+		repo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
+				if id == storyID {
+					return &domain.Epic{
+						ID:           storyID,
+						Number:       "EP-1-S1",
+						Name:         "Story 1",
+						Status:       domain.StatusNew,
+						ParentEpicID: &parentID,
+					}, nil
+				}
+				if id == newParentID {
+					return &domain.Epic{
+						ID:           newParentID,
+						Number:       "EP-2",
+						Name:         "Epic 2",
+						Status:       domain.StatusNew,
+						TeamID:       uuid.New(),
+						Year:         2026,
+						Quarter:      4,
+						Type:         "techdebt",
+					}, nil
+				}
+				return nil, sql.ErrNoRows
+			},
+			UpdateStoryFunc: func(ctx context.Context, story *domain.Epic) error {
+				if story.Name != "Updated Story" || *story.ParentEpicID != newParentID {
+					t.Errorf("неверные параметры обновления истории: %+v", story)
+				}
+				return nil
+			},
+		}
+
+		s := NewEpicService(log, repo)
+		updated, err := s.UpdateStory(ctx, storyID, domain.UpdateStoryReq{
+			Number:       "EP-2-S1",
+			Name:         "Updated Story",
+			Description:  "New desc",
+			ParentEpicID: &newParentID,
+		})
+		if err != nil {
+			t.Fatalf("неожидаемая ошибка: %v", err)
+		}
+		if updated == nil {
+			t.Fatal("ожидалась обновленная история, получен nil")
+		}
+	})
+}
+
+

@@ -58,6 +58,8 @@ type Repository interface {
 	GetAllEpics(ctx context.Context) ([]domain.Epic, error)
 	GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 	CountStoriesByEpicID(ctx context.Context, epicID uuid.UUID) (int, error)
+	UpdateEpic(ctx context.Context, epic *domain.Epic, newEvaluatingRoles []uuid.UUID, oldNumber string) error
+	UpdateStory(ctx context.Context, story *domain.Epic) error
 	CreateStory(ctx context.Context, parentEpicID uuid.UUID, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
 
 	// Risks

@@ -66,6 +66,10 @@ func (r *Router) Mount(mux *chi.Mux) {
 					// Admin override scores
 					mux.Post("/admin/scores/epic", r.ganttHandler.AdminSubmitEpicScore)
 					mux.Post("/admin/scores/risk", r.ganttHandler.AdminSubmitRiskScore)
+
+					// Admin editing epics/stories
+					mux.Put("/epics/{epic_id}", r.ganttHandler.UpdateEpic)
+					mux.Put("/stories/{story_id}", r.ganttHandler.UpdateStory)
 				})
 
 

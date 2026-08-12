@@ -1,7 +1,7 @@
 // ── Scoring Panel Module ─────────────────────────────────────────────
 
 import { state } from './state.js';
-import { apiGet, apiPost } from './api.js';
+import { apiGet, apiPost, apiPut } from './api.js';
 import { showToast } from './utils.js';
 
 let selectedEpic = null;
@@ -278,7 +278,10 @@ function renderDetails() {
     let html = `
         <div class="scoring-details-header">
             <div class="scoring-epic-title">
-                <h2>${selectedEpic.number}: ${selectedEpic.name}</h2>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <h2>${selectedEpic.number}: ${selectedEpic.name}</h2>
+                    ${isAdmin ? `<button id="btn-edit-epic" class="btn btn-secondary btn-sm" title="Редактировать эпик" style="padding: 3px 8px; font-size: 12px;">✏️ Редактировать</button>` : ''}
+                </div>
                 <div class="scoring-epic-desc">${selectedEpic.description || 'Нет описания.'}</div>
             </div>
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
@@ -583,7 +586,10 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
     return `
         <div style="border-bottom: 1px solid var(--color-border); padding-bottom: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
             <div style="min-width: 0;">
-                <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: var(--color-text);">${story.number}: ${story.name}</h3>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: var(--color-text);">${story.number}: ${story.name}</h3>
+                    ${isAdmin ? `<button id="btn-edit-story" class="btn btn-secondary btn-sm" data-story-id="${story.id}" title="Редактировать историю" style="padding: 2px 6px; font-size: 11px;">✏️ Редактировать</button>` : ''}
+                </div>
                 <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px; overflow-wrap: break-word;">${story.description || 'Нет описания.'}</div>
             </div>
             <div>
@@ -879,6 +885,15 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
             }
         });
     });
+    // 5. Admin: Edit Epic
+    if (isAdmin && selectedEpic) {
+        document.getElementById('btn-edit-epic')?.addEventListener('click', () => openEditEpicModal(selectedEpic));
+    }
+
+    // 6. Admin: Edit Story
+    if (isAdmin && selectedStory) {
+        document.getElementById('btn-edit-story')?.addEventListener('click', () => openEditStoryModal(selectedStory));
+    }
 }
 
 async function startEpicScoring(epicId) {
@@ -902,4 +917,220 @@ async function startEpicScoring(epicId) {
         showToast('Не удалось запустить оценку: ' + err.message, 'error');
     }
 }
+
+async function openEditEpicModal(epic) {
+    let modal = document.getElementById('modal-edit-epic');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'modal-edit-epic';
+        modal.className = 'modal-backdrop';
+        document.body.appendChild(modal);
+    }
+
+    const isNew = epic.status === 'NEW';
+    const teams = state.get('teams') || [];
+    const roles = rolesList || [];
+
+    let teamsList = teams;
+    if (!teamsList.length) {
+        try {
+            const data = await apiGet('/teams');
+            teamsList = data.teams || [];
+        } catch (e) {}
+    }
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 550px; width: 90%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin: 0; font-size: 16px;">Редактирование Эпика</h3>
+                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+            </div>
+            <form id="form-edit-epic">
+                <div class="form-group">
+                    <label>Номер эпика</label>
+                    <input type="text" id="edit-epic-number" class="input" value="${epic.number || ''}" required>
+                </div>
+                <div class="form-group">
+                    <label>Название эпика</label>
+                    <input type="text" id="edit-epic-name" class="input" value="${epic.name || ''}" required>
+                </div>
+                <div class="form-group">
+                    <label>Описание</label>
+                    <textarea id="edit-epic-desc" class="input" style="min-height: 70px;">${epic.description || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Команда ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано: скоринг запущен)</span>' : ''}</label>
+                    <select id="edit-epic-team" class="select" ${!isNew ? 'disabled' : ''}>
+                        ${teamsList.map(t => `<option value="${t.id}" ${t.id === epic.team_id ? 'selected' : ''}>${t.name}</option>`).join('')}
+                    </select>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label>Год</label>
+                        <input type="number" id="edit-epic-year" class="input" value="${epic.year || 2026}" min="2000" max="2100" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Квартал</label>
+                        <select id="edit-epic-quarter" class="select">
+                            <option value="1" ${epic.quarter === 1 ? 'selected' : ''}>Q1</option>
+                            <option value="2" ${epic.quarter === 2 ? 'selected' : ''}>Q2</option>
+                            <option value="3" ${epic.quarter === 3 ? 'selected' : ''}>Q3</option>
+                            <option value="4" ${epic.quarter === 4 ? 'selected' : ''}>Q4</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Тип</label>
+                        <select id="edit-epic-type" class="select">
+                            <option value="feature" ${epic.type === 'feature' ? 'selected' : ''}>Feature</option>
+                            <option value="architecture" ${epic.type === 'architecture' ? 'selected' : ''}>Architecture</option>
+                            <option value="techdebt" ${epic.type === 'techdebt' ? 'selected' : ''}>Techdebt</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Роли-оценщики ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано)</span>' : ''}</label>
+                    <div class="checkbox-container-list" id="edit-epic-roles-container" style="max-height: 120px; overflow-y: auto;">
+                        ${roles.map(r => {
+                            const isChecked = (epic.evaluating_role_ids || []).includes(r.id);
+                            return `
+                                <label class="checkbox-label" style="font-size: 12px;">
+                                    <input type="checkbox" value="${r.id}" ${isChecked ? 'checked' : ''} ${!isNew ? 'disabled' : ''}> ${r.name}
+                                </label>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
+                    <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    `;
+
+    modal.style.display = 'flex';
+
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => { modal.style.display = 'none'; };
+    });
+
+    const form = modal.querySelector('#form-edit-epic');
+    form.onsubmit = async (e) => {
+        e.preventDefault();
+        const number = document.getElementById('edit-epic-number').value.trim();
+        const name = document.getElementById('edit-epic-name').value.trim();
+        const description = document.getElementById('edit-epic-desc').value.trim();
+        const teamId = document.getElementById('edit-epic-team').value;
+        const year = parseInt(document.getElementById('edit-epic-year').value, 10);
+        const quarter = parseInt(document.getElementById('edit-epic-quarter').value, 10);
+        const type = document.getElementById('edit-epic-type').value;
+
+        const roleCbs = document.querySelectorAll('#edit-epic-roles-container input[type="checkbox"]:checked');
+        const evaluatingRoleIds = Array.from(roleCbs).map(cb => cb.value);
+
+        try {
+            const updatedEpic = await apiPut(`/epics/${epic.id}`, {
+                number,
+                name,
+                description,
+                team_id: teamId,
+                year,
+                quarter,
+                type,
+                evaluating_role_ids: evaluatingRoleIds
+            });
+            showToast('Эпик успешно обновлен!', 'success');
+            modal.style.display = 'none';
+            selectedEpic = updatedEpic;
+            const currentTeamId = state.get('selectedTeamId');
+            await loadScoringEpics(currentTeamId);
+            await loadEpicData();
+        } catch (err) {
+            showToast('Ошибка при обновлении эпика: ' + err.message, 'error');
+        }
+    };
+}
+
+async function openEditStoryModal(story) {
+    let modal = document.getElementById('modal-edit-story');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'modal-edit-story';
+        modal.className = 'modal-backdrop';
+        document.body.appendChild(modal);
+    }
+
+    const isNew = story.status === 'NEW';
+    let epicsList = [];
+    if (selectedEpic) {
+        try {
+            const data = await apiGet(`/epics?team_id=${selectedEpic.team_id}&all=true`);
+            epicsList = (data.epics || []).filter(e => !e.parent_epic_id);
+        } catch (e) {}
+    }
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px; width: 90%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin: 0; font-size: 16px;">Редактирование Истории</h3>
+                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+            </div>
+            <form id="form-edit-story">
+                <div class="form-group">
+                    <label>Номер истории</label>
+                    <input type="text" id="edit-story-number" class="input" value="${story.number || ''}" required>
+                </div>
+                <div class="form-group">
+                    <label>Название истории</label>
+                    <input type="text" id="edit-story-name" class="input" value="${story.name || ''}" required>
+                </div>
+                <div class="form-group">
+                    <label>Описание истории</label>
+                    <textarea id="edit-story-desc" class="input" style="min-height: 70px;">${story.description || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Родительский Эпик ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано: скоринг запущен)</span>' : ''}</label>
+                    <select id="edit-story-parent-epic" class="select" ${!isNew ? 'disabled' : ''}>
+                        ${epicsList.map(e => `<option value="${e.id}" ${story.parent_epic_id === e.id ? 'selected' : ''}>${e.number}: ${e.name}</option>`).join('')}
+                    </select>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
+                    <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    `;
+
+    modal.style.display = 'flex';
+
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => { modal.style.display = 'none'; };
+    });
+
+    const form = modal.querySelector('#form-edit-story');
+    form.onsubmit = async (e) => {
+        e.preventDefault();
+        const number = document.getElementById('edit-story-number').value.trim();
+        const name = document.getElementById('edit-story-name').value.trim();
+        const description = document.getElementById('edit-story-desc').value.trim();
+        const parentEpicId = document.getElementById('edit-story-parent-epic').value;
+
+        try {
+            const updatedStory = await apiPut(`/stories/${story.id}`, {
+                number,
+                name,
+                description,
+                parent_epic_id: parentEpicId
+            });
+            showToast('История успешно обновлена!', 'success');
+            modal.style.display = 'none';
+            selectedStory = updatedStory;
+            await loadEpicData();
+        } catch (err) {
+            showToast('Ошибка при обновлении истории: ' + err.message, 'error');
+        }
+    };
+}
+
 

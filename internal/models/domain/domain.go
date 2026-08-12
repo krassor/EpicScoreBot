@@ -61,6 +61,26 @@ type Epic struct {
 	UpdatedAt         time.Time    `json:"updated_at"`
 }
 
+// UpdateEpicReq holds fields for updating an epic.
+type UpdateEpicReq struct {
+	Number            string      `json:"number"`
+	Name              string      `json:"name"`
+	Description       string      `json:"description"`
+	TeamID            uuid.UUID   `json:"team_id"`
+	Year              int         `json:"year"`
+	Quarter           int         `json:"quarter"`
+	Type              string      `json:"type"`
+	EvaluatingRoleIDs []uuid.UUID `json:"evaluating_role_ids"`
+}
+
+// UpdateStoryReq holds fields for updating a story.
+type UpdateStoryReq struct {
+	Number       string     `json:"number"`
+	Name         string     `json:"name"`
+	Description  string     `json:"description"`
+	ParentEpicID *uuid.UUID `json:"parent_epic_id,omitempty"`
+}
+
 // Risk represents a risk associated with an epic.
 type Risk struct {
 	ID            uuid.UUID
