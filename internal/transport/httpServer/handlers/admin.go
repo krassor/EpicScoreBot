@@ -324,6 +324,121 @@ func (h *GanttHandler) AddEpic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, epic)
 }
 
+// UpdateEpic updates an existing epic.
+func (h *GanttHandler) UpdateEpic(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.UpdateEpic"
+	epicIDStr := chi.URLParam(r, "epic_id")
+	epicUUID, err := uuid.Parse(epicIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid epic_id")
+		return
+	}
+
+	var req struct {
+		Number            string   `json:"number"`
+		Name              string   `json:"name"`
+		Description       string   `json:"description"`
+		TeamID            string   `json:"team_id"`
+		Year              *int     `json:"year"`
+		Quarter           *int     `json:"quarter"`
+		Type              *string  `json:"type"`
+		EvaluatingRoleIDs []string `json:"evaluating_role_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	teamUUID, err := uuid.Parse(req.TeamID)
+	if err != nil || req.Number == "" || req.Name == "" {
+		writeError(w, http.StatusBadRequest, "invalid epic fields or team_id")
+		return
+	}
+
+	epic, err := h.repo.GetEpicByID(r.Context(), epicUUID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "epic not found")
+		return
+	}
+
+	if epic.ParentEpicID != nil {
+		writeError(w, http.StatusBadRequest, "cannot update story using epic endpoint")
+		return
+	}
+
+	var evalUUIDs []uuid.UUID
+	for _, idStr := range req.EvaluatingRoleIDs {
+		u, err := uuid.Parse(idStr)
+		if err == nil {
+			evalUUIDs = append(evalUUIDs, u)
+		}
+	}
+
+	if epic.Status != domain.StatusNew {
+		if teamUUID != epic.TeamID {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("cannot change team when epic status is %s", epic.Status))
+			return
+		}
+		if !sameRoleIDs(epic.EvaluatingRoleIDs, evalUUIDs) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("cannot change evaluating roles when epic status is %s", epic.Status))
+			return
+		}
+	}
+
+	yearVal := 2026
+	if req.Year != nil {
+		yearVal = *req.Year
+	}
+	quarterVal := 3
+	if req.Quarter != nil {
+		quarterVal = *req.Quarter
+	}
+	typeVal := "feature"
+	if req.Type != nil {
+		typeVal = *req.Type
+	}
+
+	oldNumber := epic.Number
+	epic.Number = req.Number
+	epic.Name = req.Name
+	epic.Description = req.Description
+	epic.TeamID = teamUUID
+	epic.Year = yearVal
+	epic.Quarter = quarterVal
+	epic.Type = typeVal
+
+	if err := h.repo.UpdateEpic(r.Context(), epic, evalUUIDs, oldNumber); err != nil {
+		h.log.Error("failed to update epic", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	updatedEpic, err := h.repo.GetEpicByID(r.Context(), epicUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, updatedEpic)
+}
+
+func sameRoleIDs(a, b []uuid.UUID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[uuid.UUID]bool)
+	for _, id := range a {
+		m[id] = true
+	}
+	for _, id := range b {
+		if !m[id] {
+			return false
+		}
+	}
+	return true
+}
+
+
 // StartEpicScoring starts the scoring stage for an epic and its risks/stories.
 func (h *GanttHandler) StartEpicScoring(w http.ResponseWriter, r *http.Request) {
 	op := "handlers.StartEpicScoring"

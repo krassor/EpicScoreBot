@@ -137,3 +137,86 @@ func (h *GanttHandler) DeleteStory(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+
+// UpdateStory updates an existing story.
+func (h *GanttHandler) UpdateStory(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.UpdateStory"
+	storyIDStr := chi.URLParam(r, "story_id")
+	storyUUID, err := uuid.Parse(storyIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid story_id")
+		return
+	}
+
+	var req struct {
+		Number       string  `json:"number"`
+		Name         string  `json:"name"`
+		Description  string  `json:"description"`
+		ParentEpicID *string `json:"parent_epic_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Number == "" || req.Name == "" {
+		writeError(w, http.StatusBadRequest, "story number and name are required")
+		return
+	}
+
+	story, err := h.repo.GetEpicByID(r.Context(), storyUUID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "story not found")
+		return
+	}
+
+	if story.ParentEpicID == nil {
+		writeError(w, http.StatusBadRequest, "cannot update epic using story endpoint")
+		return
+	}
+
+	if req.ParentEpicID != nil && *req.ParentEpicID != "" {
+		newParentUUID, err := uuid.Parse(*req.ParentEpicID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid parent_epic_id")
+			return
+		}
+
+		if newParentUUID != *story.ParentEpicID {
+			if story.Status != domain.StatusNew {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("cannot change parent epic when story status is %s", story.Status))
+				return
+			}
+			parentEpic, err := h.repo.GetEpicByID(r.Context(), newParentUUID)
+			if err != nil {
+				writeError(w, http.StatusNotFound, "parent epic not found")
+				return
+			}
+			story.ParentEpicID = &newParentUUID
+			story.TeamID = parentEpic.TeamID
+			story.Year = parentEpic.Year
+			story.Quarter = parentEpic.Quarter
+			story.Type = parentEpic.Type
+			story.EvaluatingRoleIDs = parentEpic.EvaluatingRoleIDs
+		}
+	}
+
+	story.Number = req.Number
+	story.Name = req.Name
+	story.Description = req.Description
+
+	if err := h.repo.UpdateStory(r.Context(), story); err != nil {
+		h.log.Error("failed to update story", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	updatedStory, err := h.repo.GetEpicByID(r.Context(), storyUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, updatedStory)
+}
+

@@ -504,5 +504,112 @@ func (s *epicService) StartEpicScoring(ctx context.Context, epicID uuid.UUID) er
 	log.Info("scoring started successfully for epic and all its stories")
 	return nil
 }
+func (s *epicService) UpdateEpic(ctx context.Context, id uuid.UUID, req domain.UpdateEpicReq) (*domain.Epic, error) {
+	op := "epicService.UpdateEpic"
+	log := s.log.With(slog.String("op", op), slog.String("epic_id", id.String()))
 
+	if req.Number == "" || req.Name == "" {
+		return nil, errors.New("epic number and name are required")
+	}
 
+	epic, err := s.repo.GetEpicByID(ctx, id)
+	if err != nil {
+		log.Error("failed to find epic", sl.Err(err))
+		return nil, fmt.Errorf("epic not found: %w", err)
+	}
+
+	if epic.ParentEpicID != nil {
+		return nil, errors.New("cannot update story using epic endpoint")
+	}
+
+	// Status restrictions
+	if epic.Status != domain.StatusNew {
+		if req.TeamID != epic.TeamID {
+			return nil, fmt.Errorf("cannot change team when epic status is %s", epic.Status)
+		}
+		if !sameRoleIDs(epic.EvaluatingRoleIDs, req.EvaluatingRoleIDs) {
+			return nil, fmt.Errorf("cannot change evaluating roles when epic status is %s", epic.Status)
+		}
+	}
+
+	oldNumber := epic.Number
+	epic.Number = req.Number
+	epic.Name = req.Name
+	epic.Description = req.Description
+	epic.TeamID = req.TeamID
+	epic.Year = req.Year
+	epic.Quarter = req.Quarter
+	epic.Type = req.Type
+
+	if err := s.repo.UpdateEpic(ctx, epic, req.EvaluatingRoleIDs, oldNumber); err != nil {
+		log.Error("failed to update epic in repository", sl.Err(err))
+		return nil, err
+	}
+
+	log.Info("epic updated successfully", slog.String("number", epic.Number))
+	return s.repo.GetEpicByID(ctx, id)
+}
+
+func (s *epicService) UpdateStory(ctx context.Context, id uuid.UUID, req domain.UpdateStoryReq) (*domain.Epic, error) {
+	op := "epicService.UpdateStory"
+	log := s.log.With(slog.String("op", op), slog.String("story_id", id.String()))
+
+	if req.Number == "" || req.Name == "" {
+		return nil, errors.New("story number and name are required")
+	}
+
+	story, err := s.repo.GetEpicByID(ctx, id)
+	if err != nil {
+		log.Error("failed to find story", sl.Err(err))
+		return nil, fmt.Errorf("story not found: %w", err)
+	}
+
+	if story.ParentEpicID == nil {
+		return nil, errors.New("cannot update epic using story endpoint")
+	}
+
+	// Check parent epic change
+	if req.ParentEpicID != nil && *req.ParentEpicID != *story.ParentEpicID {
+		if story.Status != domain.StatusNew {
+			return nil, fmt.Errorf("cannot change parent epic when story status is %s", story.Status)
+		}
+		parentEpic, err := s.repo.GetEpicByID(ctx, *req.ParentEpicID)
+		if err != nil {
+			return nil, fmt.Errorf("parent epic not found: %w", err)
+		}
+		story.ParentEpicID = req.ParentEpicID
+		story.TeamID = parentEpic.TeamID
+		story.Year = parentEpic.Year
+		story.Quarter = parentEpic.Quarter
+		story.Type = parentEpic.Type
+		story.EvaluatingRoleIDs = parentEpic.EvaluatingRoleIDs
+	}
+
+	story.Number = req.Number
+	story.Name = req.Name
+	story.Description = req.Description
+
+	if err := s.repo.UpdateStory(ctx, story); err != nil {
+		log.Error("failed to update story in repository", sl.Err(err))
+		return nil, err
+	}
+
+	log.Info("story updated successfully", slog.String("number", story.Number))
+	return s.repo.GetEpicByID(ctx, id)
+}
+
+func sameRoleIDs(a, b []uuid.UUID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[uuid.UUID]bool)
+	for _, id := range a {
+		m[id] = true
+	}
+	for _, id := range b {
+		if !m[id] {
+			return false
+		}
+	}
+	return true
+}
