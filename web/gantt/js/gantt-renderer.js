@@ -138,7 +138,14 @@ function renderGantt(tasks) {
     });
 }
 
+function cleanTaskName(name) {
+    if (!name) return '';
+    return name.replace(/^[└─\s\u00a0]+/g, '').trim();
+}
+
 function getTaskClass(task) {
+    if (!task) return 'gantt-default';
+
     if (task.is_parent) {
         if (task.parent_task_id || task.parent_id) {
             return 'gantt-story';
@@ -148,8 +155,28 @@ function getTaskClass(task) {
     
     // Extrapolate role name from task name if role_id is not directly resolved
     // Usually name matches role: "Аналитик", "BE разработчик", etc.
-    const name = task.name.trim();
-    const colorClass = roleColorMap[name] || 'default';
+    const cleanName = cleanTaskName(task.name);
+    let colorClass = roleColorMap[cleanName];
+
+    if (!colorClass) {
+        const lower = cleanName.toLowerCase();
+        if (lower.includes('be') || lower.includes('backend') || lower.includes('бэкенд')) {
+            colorClass = 'be';
+        } else if (lower.includes('fe') || lower.includes('frontend') || lower.includes('фронтенд')) {
+            colorClass = 'fe';
+        } else if (lower.includes('mobile') || lower.includes('мобильн')) {
+            colorClass = 'mobile';
+        } else if (lower.includes('аналит') || lower.includes('analyst')) {
+            colorClass = 'analyst';
+        } else if (lower.includes('тестиров') || lower.includes('qa')) {
+            colorClass = 'qa';
+        } else if (lower.includes('лидер') || lower.includes('leader')) {
+            colorClass = 'leader';
+        } else {
+            colorClass = 'default';
+        }
+    }
+
     return `gantt-${colorClass}`;
 }
 
@@ -179,13 +206,13 @@ function openReorderModal(parentTask) {
 
     reorderEpicTasks = children.sort((a, b) => a.sort_order - b.sort_order);
 
-    document.getElementById('modal-title').textContent = `Порядок ролей: ${parentTask.name.trim()}`;
+    document.getElementById('modal-title').textContent = `Порядок ролей: ${cleanTaskName(parentTask.name)}`;
 
     const body = document.getElementById('modal-body');
     body.innerHTML = '';
 
     for (const task of reorderEpicTasks) {
-        const roleName = task.name.trim();
+        const roleName = cleanTaskName(task.name);
         const colorClass = roleColorMap[roleName] || 'default';
 
         const item = document.createElement('div');

@@ -233,10 +233,10 @@ type ganttTaskResp struct {
 
 // roleToCSS maps role names to CSS class names.
 var roleToCSS = map[string]string{
+	"BE разработчик":     "gantt-be",
+	"FE разработчик":     "gantt-fe",
+	"Mobile разработчик": "gantt-mobile",
 	"Аналитик":           "gantt-analyst",
-	"BE разработчик":     "gantt-developer",
-	"FE разработчик":     "gantt-developer",
-	"Mobile разработчик": "gantt-developer",
 	"Тестировщик":        "gantt-qa",
 	"IT-лидер":           "gantt-leader",
 }
@@ -285,8 +285,14 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 
 	var resp []ganttTaskResp
 	for _, t := range tasks {
-		css := "gantt-epic"
-		if !t.IsParent {
+		var css string
+		if t.IsParent {
+			if t.ParentTaskID != nil {
+				css = "gantt-story"
+			} else {
+				css = "gantt-epic"
+			}
+		} else {
 			css = roleToCSS[t.Name]
 			if css == "" {
 				css = "gantt-default"
