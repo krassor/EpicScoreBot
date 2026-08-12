@@ -173,22 +173,43 @@ func (h *GanttHandler) GetEpics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type epicResp struct {
-		ID          string   `json:"id"`
-		Number      string   `json:"number"`
-		Name        string   `json:"name"`
-		Status      string   `json:"status"`
-		Description string   `json:"description"`
-		FinalScore  *float64 `json:"final_score"`
+		ID                string   `json:"id"`
+		Number            string   `json:"number"`
+		Name              string   `json:"name"`
+		Status            string   `json:"status"`
+		Description       string   `json:"description"`
+		FinalScore        *float64 `json:"final_score"`
+		TeamID            string   `json:"team_id"`
+		Year              int      `json:"year"`
+		Quarter           int      `json:"quarter"`
+		Type              string   `json:"type"`
+		EvaluatingRoleIDs []string `json:"evaluating_role_ids,omitempty"`
+		ParentEpicID      *string  `json:"parent_epic_id,omitempty"`
 	}
 	var resp []epicResp
 	for _, e := range epics {
+		var evalRoles []string
+		for _, rID := range e.EvaluatingRoleIDs {
+			evalRoles = append(evalRoles, rID.String())
+		}
+		var parentStr *string
+		if e.ParentEpicID != nil {
+			s := e.ParentEpicID.String()
+			parentStr = &s
+		}
 		resp = append(resp, epicResp{
-			ID:          e.ID.String(),
-			Number:      e.Number,
-			Name:        e.Name,
-			Status:      string(e.Status),
-			Description: e.Description,
-			FinalScore:  e.FinalScore,
+			ID:                e.ID.String(),
+			Number:            e.Number,
+			Name:              e.Name,
+			Status:            string(e.Status),
+			Description:       e.Description,
+			FinalScore:        e.FinalScore,
+			TeamID:            e.TeamID.String(),
+			Year:              e.Year,
+			Quarter:           e.Quarter,
+			Type:              e.Type,
+			EvaluatingRoleIDs: evalRoles,
+			ParentEpicID:      parentStr,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"epics": resp})

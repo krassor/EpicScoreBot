@@ -885,14 +885,20 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
             }
         });
     });
-    // 5. Admin: Edit Epic
-    if (isAdmin && selectedEpic) {
-        document.getElementById('btn-edit-epic')?.addEventListener('click', () => openEditEpicModal(selectedEpic));
-    }
-
-    // 6. Admin: Edit Story
-    if (isAdmin && selectedStory) {
-        document.getElementById('btn-edit-story')?.addEventListener('click', () => openEditStoryModal(selectedStory));
+    // 5. Admin: Edit Epic & Story
+    if (isAdmin) {
+        const btnEditEpic = document.getElementById('btn-edit-epic');
+        if (btnEditEpic) {
+            btnEditEpic.onclick = () => {
+                if (selectedEpic) openEditEpicModal(selectedEpic);
+            };
+        }
+        const btnEditStory = document.getElementById('btn-edit-story');
+        if (btnEditStory) {
+            btnEditStory.onclick = () => {
+                if (selectedStory) openEditStoryModal(selectedStory);
+            };
+        }
     }
 }
 
@@ -923,7 +929,7 @@ async function openEditEpicModal(epic) {
     if (!modal) {
         modal = document.createElement('div');
         modal.id = 'modal-edit-epic';
-        modal.className = 'modal-backdrop';
+        modal.className = 'modal hidden';
         document.body.appendChild(modal);
     }
 
@@ -940,6 +946,7 @@ async function openEditEpicModal(epic) {
     }
 
     modal.innerHTML = `
+        <div class="modal-overlay"></div>
         <div class="modal-content" style="max-width: 550px; width: 90%;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                 <h3 style="margin: 0; font-size: 16px;">Редактирование Эпика</h3>
@@ -1008,10 +1015,14 @@ async function openEditEpicModal(epic) {
         </div>
     `;
 
+    modal.classList.remove('hidden');
     modal.style.display = 'flex';
 
-    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
-        btn.onclick = () => { modal.style.display = 'none'; };
+    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
+        btn.onclick = () => {
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        };
     });
 
     const form = modal.querySelector('#form-edit-epic');
@@ -1040,6 +1051,7 @@ async function openEditEpicModal(epic) {
                 evaluating_role_ids: evaluatingRoleIds
             });
             showToast('Эпик успешно обновлен!', 'success');
+            modal.classList.add('hidden');
             modal.style.display = 'none';
             selectedEpic = updatedEpic;
             const currentTeamId = state.get('selectedTeamId');
@@ -1056,20 +1068,22 @@ async function openEditStoryModal(story) {
     if (!modal) {
         modal = document.createElement('div');
         modal.id = 'modal-edit-story';
-        modal.className = 'modal-backdrop';
+        modal.className = 'modal hidden';
         document.body.appendChild(modal);
     }
 
     const isNew = story.status === 'NEW';
+    const teamId = (selectedEpic && selectedEpic.team_id) || (story && story.team_id) || state.get('selectedTeamId');
     let epicsList = [];
-    if (selectedEpic) {
+    if (teamId) {
         try {
-            const data = await apiGet(`/epics?team_id=${selectedEpic.team_id}&all=true`);
+            const data = await apiGet(`/epics?team_id=${teamId}&all=true`);
             epicsList = (data.epics || []).filter(e => !e.parent_epic_id);
         } catch (e) {}
     }
 
     modal.innerHTML = `
+        <div class="modal-overlay"></div>
         <div class="modal-content" style="max-width: 500px; width: 90%;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                 <h3 style="margin: 0; font-size: 16px;">Редактирование Истории</h3>
@@ -1102,10 +1116,14 @@ async function openEditStoryModal(story) {
         </div>
     `;
 
+    modal.classList.remove('hidden');
     modal.style.display = 'flex';
 
-    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
-        btn.onclick = () => { modal.style.display = 'none'; };
+    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
+        btn.onclick = () => {
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        };
     });
 
     const form = modal.querySelector('#form-edit-story');
@@ -1124,6 +1142,7 @@ async function openEditStoryModal(story) {
                 parent_epic_id: parentEpicId
             });
             showToast('История успешно обновлена!', 'success');
+            modal.classList.add('hidden');
             modal.style.display = 'none';
             selectedStory = updatedStory;
             await loadEpicData();
