@@ -3,12 +3,18 @@ package scoring
 import (
 	"EpicScoreBot/internal/models/domain"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 
 	"github.com/google/uuid"
 )
+
+// ErrScoringNotComplete возвращается, когда запрошена операция,
+// требующая завершённого скоринга эпика/стори (статус SCORED),
+// но фактический статус эпика этому не соответствует.
+var ErrScoringNotComplete = errors.New("epic scoring is not completed yet")
 
 // Service provides scoring business logic.
 type Service struct {
@@ -178,9 +184,12 @@ func (s *Service) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) 
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	if epic.Status == domain.StatusScored {
-		return nil
-	}
+	// Примечание: ранее здесь был ранний выход при epic.Status == domain.StatusScored.
+	// Он убран намеренно: метод должен корректно пересчитывать final_score и при
+	// повторном вызове (например, после того как админ переотправил оценку участника
+	// или риска post-factum через AdminSubmitEpicScore/AdminSubmitRiskScore).
+	// Метод идемпотентен: UpsertEpicRoleScore и SetEpicFinalScore — это upsert/UPDATE,
+	// повторный вызов безопасен.
 
 	teamMembers, err := s.repo.GetExpectedScorersCount(ctx, epicID, epic.TeamID)
 	if err != nil {
@@ -258,62 +267,124 @@ func (s *Service) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) 
 
 	// If this is a story, check if all sibling stories are scored and aggregate them to the parent epic
 	if epic.ParentEpicID != nil {
-		parentID := *epic.ParentEpicID
-		stories, err := s.repo.GetStoriesByEpicID(ctx, parentID)
-		if err != nil {
-			return fmt.Errorf("%s: get stories for parent: %w", op, err)
-		}
-
-		allCompleted := true
-		var parentFinalScore float64
-		roleTotals := make(map[uuid.UUID]float64)
-
-		for _, story := range stories {
-			actualStory := story
-			if story.ID == epic.ID {
-				actualStory = *epic
-				actualStory.Status = domain.StatusScored
-				actualStory.FinalScore = &finalScore
-			} else {
-				st, err := s.repo.GetEpicByID(ctx, story.ID)
-				if err != nil {
-					return fmt.Errorf("%s: get actual story status: %w", op, err)
-				}
-				actualStory = *st
-			}
-
-			if actualStory.Status != domain.StatusScored || actualStory.FinalScore == nil {
-				allCompleted = false
-				break
-			}
-			parentFinalScore += *actualStory.FinalScore
-
-			// Aggregate role scores for this story
-			storyRoleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, actualStory.ID)
-			if err == nil {
-				for _, rs := range storyRoleScores {
-					roleTotals[rs.RoleID] += rs.WeightedAvg
-				}
-			}
-		}
-
-		if allCompleted {
-			// Save aggregated role scores for the parent epic (needed for reports)
-			for roleID, totalAvg := range roleTotals {
-				if err := s.repo.UpsertEpicRoleScore(ctx, parentID, roleID, totalAvg); err != nil {
-					return fmt.Errorf("%s: upsert parent role score: %w", op, err)
-				}
-			}
-
-			if err := s.repo.SetEpicFinalScore(ctx, parentID, parentFinalScore); err != nil {
-				return fmt.Errorf("%s: set parent final score: %w", op, err)
-			}
-
-			s.log.Info("parent epic scoring completed",
-				slog.String("parentID", parentID.String()),
-				slog.Float64("finalScore", parentFinalScore))
+		if err := s.recalcParentEpic(ctx, epic, finalScore); err != nil {
+			return fmt.Errorf("%s: %w", op, err)
 		}
 	}
 
 	return nil
+}
+
+// recalcParentEpic пересчитывает агрегированную оценку родительского эпика
+// на основе дочерних сторей. story — только что пересчитанная стори,
+// finalScore — её новое итоговое значение (может ещё не быть сохранено в story.FinalScore).
+// Родитель обновляется, только если у всех сиблинг-сторей статус SCORED.
+func (s *Service) recalcParentEpic(ctx context.Context, story *domain.Epic, finalScore float64) error {
+	op := "scoring.recalcParentEpic"
+
+	if story.ParentEpicID == nil {
+		return nil
+	}
+	parentID := *story.ParentEpicID
+
+	stories, err := s.repo.GetStoriesByEpicID(ctx, parentID)
+	if err != nil {
+		return fmt.Errorf("%s: get stories for parent: %w", op, err)
+	}
+
+	allCompleted := true
+	var parentFinalScore float64
+	roleTotals := make(map[uuid.UUID]float64)
+
+	for _, sibling := range stories {
+		actualStory := sibling
+		if sibling.ID == story.ID {
+			actualStory = *story
+			actualStory.Status = domain.StatusScored
+			actualStory.FinalScore = &finalScore
+		} else {
+			st, err := s.repo.GetEpicByID(ctx, sibling.ID)
+			if err != nil {
+				return fmt.Errorf("%s: get actual story status: %w", op, err)
+			}
+			actualStory = *st
+		}
+
+		if actualStory.Status != domain.StatusScored || actualStory.FinalScore == nil {
+			allCompleted = false
+			break
+		}
+		parentFinalScore += *actualStory.FinalScore
+
+		// Aggregate role scores for this story
+		storyRoleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, actualStory.ID)
+		if err == nil {
+			for _, rs := range storyRoleScores {
+				roleTotals[rs.RoleID] += rs.WeightedAvg
+			}
+		}
+	}
+
+	if !allCompleted {
+		return nil
+	}
+
+	// Save aggregated role scores for the parent epic (needed for reports)
+	for roleID, totalAvg := range roleTotals {
+		if err := s.repo.UpsertEpicRoleScore(ctx, parentID, roleID, totalAvg); err != nil {
+			return fmt.Errorf("%s: upsert parent role score: %w", op, err)
+		}
+	}
+
+	if err := s.repo.SetEpicFinalScore(ctx, parentID, parentFinalScore); err != nil {
+		return fmt.Errorf("%s: set parent final score: %w", op, err)
+	}
+
+	s.log.Info("parent epic scoring completed",
+		slog.String("parentID", parentID.String()),
+		slog.Float64("finalScore", parentFinalScore))
+
+	return nil
+}
+
+// SetManualFinalScore позволяет администратору вручную переопределить итоговую оценку
+// (final_score) уже полностью оцененного эпика/стори (статус SCORED). Используется,
+// когда нужно скорректировать результат после завершения скоринга без повторного
+// прохождения всего цикла оценки участниками. Если у эпика есть родитель (это стори),
+// каскадно пересчитывает и агрегированную оценку родительского эпика.
+func (s *Service) SetManualFinalScore(ctx context.Context, epicID uuid.UUID, finalScore float64) (*domain.Epic, error) {
+	op := "scoring.SetManualFinalScore"
+
+	epic, err := s.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	if epic == nil {
+		return nil, fmt.Errorf("%s: epic not found", op)
+	}
+
+	if epic.Status != domain.StatusScored {
+		return nil, ErrScoringNotComplete
+	}
+
+	if err := s.repo.SetEpicFinalScore(ctx, epicID, finalScore); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	if epic.ParentEpicID != nil {
+		if err := s.recalcParentEpic(ctx, epic, finalScore); err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
+		}
+	}
+
+	updatedEpic, err := s.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	s.log.Info("manual final score override applied",
+		slog.String("epicID", epicID.String()),
+		slog.Float64("finalScore", finalScore))
+
+	return updatedEpic, nil
 }

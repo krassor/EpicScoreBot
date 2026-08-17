@@ -100,6 +100,10 @@ type Repository interface {
 type ScoringService interface {
 	TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) error
 	TryCompleteRiskScoring(ctx context.Context, riskID uuid.UUID) error
+	// SetManualFinalScore позволяет вручную переопределить итоговую оценку
+	// (final_score) уже оцененного эпика/стори (статус SCORED), с каскадным
+	// пересчётом родительского эпика при необходимости.
+	SetManualFinalScore(ctx context.Context, epicID uuid.UUID, finalScore float64) (*domain.Epic, error)
 }
 
 // AIClient defines the contract for interacting with the AI assistant.

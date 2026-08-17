@@ -11,6 +11,7 @@ import (
 
 	"EpicScoreBot/internal/config"
 	"EpicScoreBot/internal/models/domain"
+	"EpicScoreBot/internal/scoring"
 	"EpicScoreBot/internal/transport/httpServer/middleware"
 	"log/slog"
 
@@ -76,6 +77,14 @@ func (m *mockAdminScoresRepo) CountRiskScores(ctx context.Context, riskID uuid.U
 type mockAdminScoresSvc struct {
 	ScoringService
 	repo *mockAdminScoresRepo
+
+	manualFinalScoreEpic *domain.Epic
+	manualFinalScoreErr  error
+	manualFinalScoreCall struct {
+		called     bool
+		epicID     uuid.UUID
+		finalScore float64
+	}
 }
 
 func (s *mockAdminScoresSvc) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) error {
@@ -86,6 +95,17 @@ func (s *mockAdminScoresSvc) TryCompleteEpicScoring(ctx context.Context, epicID 
 func (s *mockAdminScoresSvc) TryCompleteRiskScoring(ctx context.Context, riskID uuid.UUID) error {
 	s.repo.completedRiskScoring = true
 	return nil
+}
+
+func (s *mockAdminScoresSvc) SetManualFinalScore(ctx context.Context, epicID uuid.UUID, finalScore float64) (*domain.Epic, error) {
+	s.manualFinalScoreCall.called = true
+	s.manualFinalScoreCall.epicID = epicID
+	s.manualFinalScoreCall.finalScore = finalScore
+
+	if s.manualFinalScoreErr != nil {
+		return nil, s.manualFinalScoreErr
+	}
+	return s.manualFinalScoreEpic, nil
 }
 
 func TestAdminSubmitEpicScore(t *testing.T) {
@@ -269,6 +289,191 @@ func TestAdminSubmitRiskScore(t *testing.T) {
 		rr := httptest.NewRecorder()
 
 		handler.AdminSubmitRiskScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d", rr.Code)
+		}
+	})
+}
+
+func TestAdminOverrideFinalScore(t *testing.T) {
+	epicID := uuid.New()
+	parentID := uuid.New()
+
+	cfg := config.BotConfig{
+		Admins: []string{"admin_user"},
+	}
+
+	t.Run("forbidden_for_member", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+
+		body := fmt.Sprintf(`{"epic_id":"%s","final_score":42}`, epicID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "111", Username: "regular_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideFinalScore(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden, got %d", rr.Code)
+		}
+		if svc.manualFinalScoreCall.called {
+			t.Error("expected SetManualFinalScore not to be called")
+		}
+	})
+
+	t.Run("bad_request_when_scoring_not_complete", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{}
+		svc := &mockAdminScoresSvc{repo: repo, manualFinalScoreErr: scoring.ErrScoringNotComplete}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+
+		body := fmt.Sprintf(`{"epic_id":"%s","final_score":42}`, epicID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideFinalScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&errResp); err != nil {
+			t.Fatalf("failed to decode error response: %v", err)
+		}
+		if errResp.Error != "story scoring is not completed yet" {
+			t.Errorf("expected error message 'story scoring is not completed yet', got '%s'", errResp.Error)
+		}
+	})
+
+	t.Run("success_with_parent_epic_id", func(t *testing.T) {
+		finalScore := 42.0
+		repo := &mockAdminScoresRepo{}
+		svc := &mockAdminScoresSvc{
+			repo: repo,
+			manualFinalScoreEpic: &domain.Epic{
+				ID:           epicID,
+				Status:       domain.StatusScored,
+				ParentEpicID: &parentID,
+				FinalScore:   &finalScore,
+			},
+		}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+
+		body := fmt.Sprintf(`{"epic_id":"%s","final_score":42}`, epicID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideFinalScore(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+		if !svc.manualFinalScoreCall.called {
+			t.Fatal("expected SetManualFinalScore to be called")
+		}
+		if svc.manualFinalScoreCall.epicID != epicID {
+			t.Errorf("expected SetManualFinalScore called with epicID %v, got %v", epicID, svc.manualFinalScoreCall.epicID)
+		}
+		if svc.manualFinalScoreCall.finalScore != 42.0 {
+			t.Errorf("expected SetManualFinalScore called with finalScore 42.0, got %v", svc.manualFinalScoreCall.finalScore)
+		}
+
+		var resp struct {
+			Status       string  `json:"status"`
+			FinalScore   float64 `json:"final_score"`
+			EpicID       string  `json:"epic_id"`
+			ParentEpicID *string `json:"parent_epic_id"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Status != "ok" {
+			t.Errorf("expected status 'ok', got '%s'", resp.Status)
+		}
+		if resp.FinalScore != 42.0 {
+			t.Errorf("expected final_score 42.0, got %v", resp.FinalScore)
+		}
+		if resp.EpicID != epicID.String() {
+			t.Errorf("expected epic_id %s, got %s", epicID.String(), resp.EpicID)
+		}
+		if resp.ParentEpicID == nil || *resp.ParentEpicID != parentID.String() {
+			t.Errorf("expected parent_epic_id %s, got %v", parentID.String(), resp.ParentEpicID)
+		}
+	})
+
+	t.Run("success_without_parent_epic_id", func(t *testing.T) {
+		finalScore := 15.0
+		repo := &mockAdminScoresRepo{}
+		svc := &mockAdminScoresSvc{
+			repo: repo,
+			manualFinalScoreEpic: &domain.Epic{
+				ID:         epicID,
+				Status:     domain.StatusScored,
+				FinalScore: &finalScore,
+			},
+		}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+
+		body := fmt.Sprintf(`{"epic_id":"%s","final_score":15}`, epicID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideFinalScore(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var resp struct {
+			ParentEpicID *string `json:"parent_epic_id"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.ParentEpicID != nil {
+			t.Errorf("expected parent_epic_id null, got %v", *resp.ParentEpicID)
+		}
+	})
+
+	t.Run("bad_request_invalid_final_score", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+
+		body := fmt.Sprintf(`{"epic_id":"%s","final_score":-1}`, epicID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideFinalScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d", rr.Code)
+		}
+		if svc.manualFinalScoreCall.called {
+			t.Error("expected SetManualFinalScore not to be called for invalid final_score")
+		}
+	})
+
+	t.Run("bad_request_invalid_epic_id", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+
+		body := `{"epic_id":"not-a-uuid","final_score":42}`
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideFinalScore(rr, req)
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("expected 400 Bad Request, got %d", rr.Code)
 		}

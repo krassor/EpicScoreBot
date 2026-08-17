@@ -258,6 +258,26 @@ async function loadEpicData() {
     }
 }
 
+// Каскадный рефреш после админского редактирования оценки: пересчёт final_score
+// стори может каскадно изменить final_score родительского эпика на бэкенде,
+// поэтому дополнительно перезагружаем список эпиков и актуализируем selectedEpic,
+// который иначе останется "протухшим" и покажет старый бейдж в шапке.
+async function refreshAfterAdminEdit() {
+    const teamId = state.get('selectedTeamId');
+    if (teamId && selectedEpic) {
+        try {
+            const data = await apiGet(`/epics?team_id=${teamId}&all=true`);
+            const epics = data.epics || [];
+            const fresh = epics.find(e => e.id === selectedEpic.id);
+            if (fresh) selectedEpic = fresh;
+            renderEpicsList(epics);
+        } catch (e) {
+            // не блокируем остальной рефреш, если список эпиков не удалось перезагрузить
+        }
+    }
+    await loadEpicData(); // вызывает renderDetails() в конце
+}
+
 function renderDetails() {
     const container = document.getElementById('scoring-details');
     if (!container || !selectedEpic) return;
@@ -503,7 +523,7 @@ function renderRisksHtml(epicOrStory, scoresData, risks) {
         }
 
         let adminRiskSelectorsHtml = '';
-        if (isAdmin && epicOrStory.status === 'SCORING') {
+        if (isAdmin && (epicOrStory.status === 'SCORING' || epicOrStory.status === 'SCORED')) {
             const members = scoresData?.members || [];
             adminRiskSelectorsHtml = `
                 <div class="risk-vote-selectors admin-risk-override" style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;">
@@ -565,7 +585,7 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
     const isAdmin = userProfile && (userProfile.role === 'admin' || userProfile.role === 'superadmin');
 
     let adminPanelHtml = '';
-    if (isAdmin && story.status === 'SCORING') {
+    if (isAdmin && (story.status === 'SCORING' || story.status === 'SCORED')) {
         adminPanelHtml = `
         <div style="margin-top: 16px; border-top: 1px solid var(--color-border); padding-top: 16px;">
             <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Оценки участников (Админ)</h4>
@@ -590,6 +610,17 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
         ? `<div class="badge" style="background: rgba(16, 185, 129, 0.15); color: var(--color-role-be); font-size: 12px; padding: 4px 10px;">Финальная оценка: ${story.final_score} чд</div>`
         : `<div class="badge" style="background: var(--bg-tertiary); font-size: 12px; padding: 4px 10px;">Статус: ${story.status === 'NEW' ? 'Новый' : 'Оценка'}</div>`;
 
+    // Прямой override итоговой оценки доступен админу только после завершения скоринга (SCORED)
+    const overrideFinalScoreHtml = isAdmin && story.status === 'SCORED' ? `
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 2px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <input type="number" id="input-override-final-score" class="input" min="0" step="1" value="${story.final_score}" style="width: 80px; padding: 4px 6px; font-size: 12px;">
+                <button id="btn-override-final-score" class="btn btn-primary" style="padding: 4px 8px; font-size: 11px;">Переопределить</button>
+            </div>
+            <span style="font-size: 11px; color: var(--text-muted);">Переопределяет расчёт по формуле</span>
+        </div>
+    ` : '';
+
     return `
         <div style="border-bottom: 1px solid var(--color-border); padding-bottom: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
             <div style="min-width: 0;">
@@ -599,8 +630,9 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
                 </div>
                 <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px; overflow-wrap: break-word;">${story.description || 'Нет описания.'}</div>
             </div>
-            <div>
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
                 ${finalScoreText}
+                ${overrideFinalScoreHtml}
             </div>
         </div>
 
@@ -825,7 +857,7 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                     impact
                 });
                 showToast('Оценка риска участника успешно сохранена!', 'success');
-                await loadEpicData();
+                await refreshAfterAdminEdit();
             } catch (err) {
                 showToast('Не удалось оценить риск: ' + err.message, 'error');
             }
@@ -886,12 +918,42 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 });
                 showToast('Оценка успешно проставлена!', 'success');
                 delete activeVotesObj[userId];
-                await loadEpicData();
+                await refreshAfterAdminEdit();
             } catch (err) {
                 showToast('Не удалось проставить оценку: ' + err.message, 'error');
             }
         });
     });
+    // 10. Admin: Override story final_score directly (only when scoring already finished)
+    if (isAdmin && selectedStory && selectedStory.status === 'SCORED') {
+        const btnOverrideFinalScore = document.getElementById('btn-override-final-score');
+        btnOverrideFinalScore?.addEventListener('click', async () => {
+            const input = document.getElementById('input-override-final-score');
+            if (!input) return;
+            const valStr = input.value.trim();
+            if (valStr === '') {
+                showToast('Пожалуйста, введите итоговую оценку', 'error');
+                return;
+            }
+            const finalScore = Number(valStr);
+            if (isNaN(finalScore) || finalScore < 0) {
+                showToast('Итоговая оценка должна быть числом не меньше 0', 'error');
+                return;
+            }
+
+            try {
+                await apiPost('/admin/scores/final', {
+                    epic_id: selectedStory.id,
+                    final_score: finalScore
+                });
+                showToast('Итоговая оценка обновлена!', 'success');
+                await refreshAfterAdminEdit();
+            } catch (err) {
+                showErrorModal(err.message);
+            }
+        });
+    }
+
     // 5. Admin: Edit Epic & Story
     if (isAdmin) {
         const btnEditEpic = document.getElementById('btn-edit-epic');

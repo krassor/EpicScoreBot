@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"EpicScoreBot/internal/config"
 	"EpicScoreBot/internal/models/domain"
+	"EpicScoreBot/internal/scoring"
 	"EpicScoreBot/internal/transport/httpServer/middleware"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,6 +14,22 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// isAdminOrSuperAdmin проверяет, входит ли пользователь сессии в список
+// администраторов или суперадминистраторов, заданный в конфигурации.
+func isAdminOrSuperAdmin(session *middleware.UserSession, cfg *config.BotConfig) bool {
+	for _, ad := range cfg.Admins {
+		if strings.EqualFold(session.Username, ad) {
+			return true
+		}
+	}
+	for _, sa := range cfg.SuperAdmins {
+		if strings.EqualFold(session.Username, sa) {
+			return true
+		}
+	}
+	return false
+}
 
 // AdminSubmitEpicScore позволяет администратору проставить оценку эпика вместо участника.
 func (h *GanttHandler) AdminSubmitEpicScore(w http.ResponseWriter, r *http.Request) {
@@ -29,22 +48,7 @@ func (h *GanttHandler) AdminSubmitEpicScore(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	isAdmin := false
-	for _, ad := range h.cfg.Admins {
-		if strings.EqualFold(session.Username, ad) {
-			isAdmin = true
-			break
-		}
-	}
-	isSuperAdmin := false
-	for _, sa := range h.cfg.SuperAdmins {
-		if strings.EqualFold(session.Username, sa) {
-			isSuperAdmin = true
-			break
-		}
-	}
-
-	if !isAdmin && !isSuperAdmin {
+	if !isAdminOrSuperAdmin(session, &h.cfg) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -140,22 +144,7 @@ func (h *GanttHandler) AdminSubmitRiskScore(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	isAdmin := false
-	for _, ad := range h.cfg.Admins {
-		if strings.EqualFold(session.Username, ad) {
-			isAdmin = true
-			break
-		}
-	}
-	isSuperAdmin := false
-	for _, sa := range h.cfg.SuperAdmins {
-		if strings.EqualFold(session.Username, sa) {
-			isSuperAdmin = true
-			break
-		}
-	}
-
-	if !isAdmin && !isSuperAdmin {
+	if !isAdminOrSuperAdmin(session, &h.cfg) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -227,5 +216,82 @@ func (h *GanttHandler) AdminSubmitRiskScore(w http.ResponseWriter, r *http.Reque
 		"scoring_complete": risk != nil && risk.Status == domain.StatusScored,
 		"scores_received":  receivedScores,
 		"scores_expected":  totalMembers,
+	})
+}
+
+// AdminOverrideFinalScore позволяет администратору вручную переопределить итоговую
+// оценку (final_score) уже полностью оцененного эпика/стори (статус SCORED).
+// Если у эпика есть родитель (это стори), каскадно пересчитывает агрегированную
+// оценку родительского эпика.
+func (h *GanttHandler) AdminOverrideFinalScore(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.AdminOverrideFinalScore"
+	h.log.Info("admin overriding final score", slog.String("op", op))
+
+	// 1. Проверка роли admin/superadmin инициатора запроса
+	sessionData := r.Context().Value(middleware.UserSessionKey)
+	if sessionData == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	session, ok := sessionData.(*middleware.UserSession)
+	if !ok || session.TelegramID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid session")
+		return
+	}
+
+	if !isAdminOrSuperAdmin(session, &h.cfg) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	// 2. Декодирование тела запроса
+	var req struct {
+		EpicID     string  `json:"epic_id"`
+		FinalScore float64 `json:"final_score"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	epicUUID, err := uuid.Parse(req.EpicID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid epic_id")
+		return
+	}
+
+	if req.FinalScore < 0 {
+		writeError(w, http.StatusBadRequest, "final_score must be >= 0")
+		return
+	}
+
+	// 3. Применение ручного переопределения итоговой оценки
+	epic, err := h.scoring.SetManualFinalScore(r.Context(), epicUUID, req.FinalScore)
+	if err != nil {
+		if errors.Is(err, scoring.ErrScoringNotComplete) {
+			writeError(w, http.StatusBadRequest, "story scoring is not completed yet")
+			return
+		}
+		h.log.Error("failed to set manual final score", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("%s: %w", op, err).Error())
+		return
+	}
+
+	var parentEpicID any
+	if epic.ParentEpicID != nil {
+		parentEpicID = epic.ParentEpicID.String()
+	}
+
+	finalScore := req.FinalScore
+	if epic.FinalScore != nil {
+		finalScore = *epic.FinalScore
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":         "ok",
+		"final_score":    finalScore,
+		"epic_id":        epicUUID.String(),
+		"parent_epic_id": parentEpicID,
 	})
 }
