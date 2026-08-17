@@ -1,7 +1,7 @@
 // ── Scoring Panel Module ─────────────────────────────────────────────
 
 import { state } from './state.js';
-import { apiGet, apiPost, apiPut } from './api.js';
+import { apiGet, apiPost, apiPut, apiDelete } from './api.js';
 import { showToast } from './utils.js';
 
 let selectedEpic = null;
