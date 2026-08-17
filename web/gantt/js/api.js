@@ -27,14 +27,23 @@ function handleHttpError(status, errData) {
         throw new Error('UNAUTHORIZED');
     }
     if (status === 403) {
-        // Show access denied overlay
-        document.getElementById('auth-overlay').classList.add('hidden');
-        document.getElementById('app').classList.add('hidden');
-        document.getElementById('denied-overlay').classList.remove('hidden');
-        
-        throw new Error('FORBIDDEN');
+        const appEl = document.getElementById('app');
+        // Если #app ещё скрыт — это первичная проверка доступа (/profile),
+        // пользователь вообще не зарегистрирован в системе: показываем полноэкранный оверлей.
+        // Если #app уже виден — это точечная ошибка прав внутри уже открытого приложения
+        // (например, голосование без назначенной роли), приложение трогать не нужно.
+        if (appEl && appEl.classList.contains('hidden')) {
+            // Show access denied overlay
+            document.getElementById('auth-overlay').classList.add('hidden');
+            appEl.classList.add('hidden');
+            document.getElementById('denied-overlay').classList.remove('hidden');
+
+            throw new Error('FORBIDDEN');
+        }
+        // #app уже показан — пробрасываем ошибку с реальным текстом дальше,
+        // без изменения видимости приложения и оверлеев.
     }
-    
+
     const message = errData?.error?.message || errData?.error || `HTTP error ${status}`;
     const code = errData?.error?.code || 'UNKNOWN_ERROR';
     

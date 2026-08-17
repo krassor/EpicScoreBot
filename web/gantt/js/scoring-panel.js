@@ -2,7 +2,7 @@
 
 import { state } from './state.js';
 import { apiGet, apiPost, apiPut, apiDelete } from './api.js';
-import { showToast } from './utils.js';
+import { showToast, showErrorModal } from './utils.js';
 
 let selectedEpic = null;
 let rolesList = [];
@@ -751,7 +751,7 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 showToast('Ваша оценка принята!', 'success');
                 await loadEpicData();
             } catch (err) {
-                showToast('Не удалось отправить оценку: ' + err.message, 'error');
+                showErrorModal(err.message);
             }
         });
     }
@@ -781,7 +781,7 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 showToast('Ваша оценка истории принята!', 'success');
                 await loadEpicData();
             } catch (err) {
-                showToast('Не удалось отправить оценку: ' + err.message, 'error');
+                showErrorModal(err.message);
             }
         });
     }
@@ -803,7 +803,7 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 showToast('Оценка риска принята!', 'success');
                 await loadEpicData();
             } catch (err) {
-                showToast('Не удалось оценить риск: ' + err.message, 'error');
+                showErrorModal(err.message);
             }
         });
     });
