@@ -73,6 +73,18 @@ func (r *Repository) GetRiskByID(ctx context.Context, riskID uuid.UUID) (*domain
 	return &risk, nil
 }
 
+// UpdateRisk updates the description of a risk.
+func (r *Repository) UpdateRisk(ctx context.Context, riskID uuid.UUID, description string) error {
+	op := "Repository.UpdateRisk"
+	query := `UPDATE risks SET description = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2`
+	_, err := r.DB.ExecContext(ctx, query, description, riskID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
 // UpdateRiskStatus sets the status of a risk.
 func (r *Repository) UpdateRiskStatus(ctx context.Context, riskID uuid.UUID, status domain.Status) error {
 	op := "Repository.UpdateRiskStatus"

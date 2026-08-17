@@ -70,6 +70,7 @@ func (r *Router) Mount(mux *chi.Mux) {
 					// Admin editing epics/stories
 					mux.Put("/epics/{epic_id}", r.ganttHandler.UpdateEpic)
 					mux.Put("/stories/{story_id}", r.ganttHandler.UpdateStory)
+					mux.Put("/risks/{id}", r.ganttHandler.UpdateRisk)
 				})
 
 
