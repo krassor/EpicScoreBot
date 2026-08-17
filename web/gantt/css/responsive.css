@@ -1,15 +1,30 @@
 /* ── Responsive Adaptation ──────────────────────────────────────────── */
+/*
+ * Брейкпоинты:
+ *   > 1024px — десктоп (базовые стили в components.css/gantt.css уже
+ *              используют fluid-единицы clamp()/minmax(), поэтому
+ *              "скачков" между 1024 и, скажем, 1920px быть не должно).
+ *   ≤ 1024px — планшет: сжимаем боковые панели, сетки чуть плотнее.
+ *   ≤ 768px  — мобильный телефон: навигация переезжает в нижний
+ *              таб-бар, формы/таблицы — в одну колонку/со скроллом.
+ *   ≤ 480px  — маленький телефон: дополнительно ужимаем отступы и
+ *              укрупняем зоны нажатия.
+ */
 
-@media (max-width: 900px) {
+/* ── Tablet (≤ 1024px) ─────────────────────────────────────────────── */
+@media (max-width: 1024px) {
     .scoring-container {
         flex-direction: column;
+        height: auto;
+        overflow: visible;
     }
 
     .scoring-sidebar {
         width: 100%;
+        max-width: none;
         border-right: none;
         border-bottom: 1px solid var(--border-color);
-        max-height: 200px;
+        max-height: 220px;
     }
 
     .scoring-epic-item {
@@ -17,38 +32,144 @@
         justify-content: space-between;
         align-items: center;
     }
+
+    .admin-grid {
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+
+    .header {
+        padding: 10px clamp(12px, 3vw, 20px);
+    }
 }
 
+/* ── Mobile (≤ 768px) ──────────────────────────────────────────────── */
 @media (max-width: 768px) {
+    :root {
+        /* Высота нижнего таб-бара + safe-area, используется как отступ,
+           чтобы контент вкладок не перекрывался навигацией. */
+        --mobile-tabbar-h: calc(58px + env(safe-area-inset-bottom, 0px));
+    }
+
     .header {
-        flex-direction: column;
-        gap: 12px;
-        align-items: center;
-        text-align: center;
-        padding: 16px;
+        flex-wrap: wrap;
+        row-gap: 10px;
+        padding: 10px 14px;
+        /* backdrop-filter на предке создаёт containing block для
+           position:fixed у вложенного .nav-tabs (нижний таб-бар) —
+           фиксация "уезжает" к низу хедера вместо низа вьюпорта.
+           На мобильном экране отключаем блюр хедера, чтобы это исправить. */
+        backdrop-filter: none;
+        background: rgba(17, 17, 38, 0.96);
+    }
+
+    .header-left {
+        flex: 1 1 auto;
     }
 
     .header-controls {
-        flex-wrap: wrap;
+        flex-direction: column;
+        align-items: stretch;
         width: 100%;
-        justify-content: center;
     }
 
-    .nav-tabs {
+    .header-controls .select {
+        min-width: 0;
         width: 100%;
-        justify-content: center;
-        overflow-x: auto;
+    }
+
+    .user-profile {
+        width: 100%;
+        min-width: 0;
+        justify-content: space-between;
+        box-sizing: border-box;
+    }
+
+    #user-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 110px;
+    }
+
+    /* ── Нижний таб-бар вместо горизонтальных вкладок ─────────────────
+       Решение: используем существующий <nav class="nav-tabs"> и переводим
+       его в position:fixed внизу экрана — DOM/JS не меняется, меняется
+       только раскладка. Так удобнее тапать одним пальцем, чем скроллить
+       узкий ряд из 5 вкладок вверху, и это привычный паттерн мобильных
+       приложений (как Instagram/Telegram). */
+    .nav-tabs {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 200;
+        width: 100%;
+        display: flex;
+        justify-content: space-around;
+        gap: 2px;
+        background: rgba(17, 17, 38, 0.92);
+        backdrop-filter: blur(20px);
+        border: none;
+        border-top: 1px solid var(--border-color);
+        border-radius: 0;
+        padding: 4px calc(4px + env(safe-area-inset-left, 0px)) calc(4px + env(safe-area-inset-bottom, 0px)) calc(4px + env(safe-area-inset-right, 0px));
+        box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .nav-tab {
+        flex: 1 1 0;
+        flex-direction: column;
+        gap: 2px;
+        padding: 6px 2px;
+        min-height: 50px;
+        border-radius: 10px;
+    }
+
+    .nav-tab-icon {
+        font-size: 18px;
+    }
+
+    .nav-tab-label {
+        font-size: 9.5px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+
+    /* Резервируем место снизу, чтобы контент вкладок не прятался под
+       фиксированным таб-баром. Работает для всех вкладок разом, т.к.
+       .tab-content — общий скролл-контейнер каждой секции. */
+    .tab-content {
+        padding-bottom: var(--mobile-tabbar-h);
+    }
+
+    .toast-container {
+        bottom: calc(var(--mobile-tabbar-h) + 12px);
+        left: 12px;
+        right: 12px;
     }
 
     .toolbar {
         flex-direction: column;
-        gap: 12px;
-        align-items: flex-start;
+        align-items: stretch;
     }
 
     .toolbar-left {
-        flex-wrap: wrap;
         width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .toolbar-left > * {
+        width: 100%;
+        white-space: normal;
+    }
+
+    .toolbar-right {
+        width: 100%;
+        justify-content: space-between;
     }
 
     .select,
@@ -57,10 +178,17 @@
         flex: 1;
     }
 
+    .modal {
+        align-items: flex-end;
+        padding: 0;
+    }
+
     .modal-content {
-        min-width: unset;
-        margin: 16px;
-        width: calc(100% - 32px);
+        width: 100%;
+        max-width: 100%;
+        max-height: calc(100dvh - var(--mobile-tabbar-h) - 16px);
+        border-radius: var(--border-radius) var(--border-radius) 0 0;
+        animation: slideUpSheet var(--transition) ease;
     }
 
     .admin-grid {
@@ -71,8 +199,154 @@
         grid-template-columns: 1fr;
     }
 
+    .scoring-details-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .scoring-details-header > div:last-child {
+        align-items: flex-start;
+    }
+
     .ai-chat-container {
-        width: calc(100% - 24px);
-        margin: 12px auto;
+        width: 100%;
+        margin: 0;
+        height: 100%;
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+    }
+
+    .ai-message {
+        max-width: 92%;
+    }
+
+    /* ── Таблицы: горизонтальный скролл с закреплённой первой колонкой
+       и градиентной "подсказкой", что справа есть ещё контент ──────── */
+    .table-responsive {
+        margin: 0 calc(-1 * var(--space-page));
+        padding: 0 var(--space-page);
+    }
+
+    .table-responsive::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 28px;
+        pointer-events: none;
+        background: linear-gradient(to right, transparent, rgba(11, 11, 22, 0.55));
+    }
+
+    .admin-table th:first-child,
+    .admin-table td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: var(--bg-secondary);
+        box-shadow: 2px 0 6px rgba(0, 0, 0, 0.35);
+    }
+
+    .admin-table th:first-child {
+        z-index: 3;
+    }
+
+    .full-width-card {
+        padding: 16px;
+    }
+
+    /* Достаточная зона нажатия на тач-устройствах */
+    .btn,
+    .nav-tab,
+    .select,
+    .input,
+    .input-date,
+    .admin-form input,
+    .admin-form textarea,
+    .btn-icon {
+        min-height: var(--tap-target-min);
+    }
+
+    .btn-sm {
+        min-height: 36px;
+    }
+}
+
+@keyframes slideUpSheet {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Small phones (≤ 480px) ───────────────────────────────────────── */
+@media (max-width: 480px) {
+    .header-left h1 {
+        font-size: var(--font-size-sm);
+    }
+
+    .logo {
+        font-size: 20px;
+    }
+
+    .auth-card {
+        padding: 20px;
+    }
+
+    .admin-container,
+    .scoring-details {
+        padding: var(--space-3);
+    }
+
+    .admin-card {
+        padding: 14px;
+        gap: 12px;
+    }
+
+    .vote-options-grid {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 6px;
+    }
+
+    .btn-vote {
+        padding: 8px 4px;
+        font-size: var(--font-size-xs);
+    }
+
+    .risk-vote-selectors {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .toolbar-right {
+        justify-content: space-between;
+        width: 100%;
+    }
+
+    .view-modes {
+        flex: 1;
+    }
+
+    .btn-view {
+        flex: 1;
+        text-align: center;
+    }
+
+    .nav-tab-label {
+        font-size: 9px;
+    }
+
+    .modal-header,
+    .modal-body,
+    .modal-footer {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+
+    .modal-footer {
+        flex-direction: column-reverse;
+    }
+
+    .modal-footer .btn {
+        width: 100%;
     }
 }

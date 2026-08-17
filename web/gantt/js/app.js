@@ -222,8 +222,10 @@ function switchTab(tabName) {
     document.querySelectorAll('.nav-tab').forEach(btn => {
         if (btn.dataset.tab === tabName) {
             btn.classList.add('active');
+            btn.setAttribute('aria-current', 'page');
         } else {
             btn.classList.remove('active');
+            btn.removeAttribute('aria-current');
         }
     });
 

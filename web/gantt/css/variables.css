@@ -15,8 +15,20 @@
 
     --accent-primary: #6366f1;
     --accent-hover: #818cf8;
+    --accent-active: #4f46e5;
+    --accent-disabled: rgba(99, 102, 241, 0.35);
     --accent-glow: rgba(99, 102, 241, 0.25);
-    
+
+    /* Semantic status colors */
+    --color-success: #10b981;
+    --color-success-bg: rgba(16, 185, 129, 0.15);
+    --color-danger: #ef4444;
+    --color-danger-bg: rgba(239, 68, 68, 0.15);
+    --color-warning: #f59e0b;
+    --color-warning-bg: rgba(245, 158, 11, 0.15);
+    --color-info: #3b82f6;
+    --color-info-bg: rgba(59, 130, 246, 0.15);
+
     /* Role Colors */
     --color-role-it-leader: #8b5cf6;
     --color-role-analyst: #3b82f6;
@@ -34,9 +46,11 @@
     --color-status-scored: #10b981;
 
     --border-color: rgba(255, 255, 255, 0.12);
+    --border-color-hover: rgba(255, 255, 255, 0.22);
     --border-color-focus: rgba(99, 102, 241, 0.5);
     --border-radius: 16px;
     --border-radius-sm: 8px;
+    --border-radius-md: 12px;
     --border-radius-lg: 24px;
 
     --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
@@ -46,4 +60,44 @@
 
     --font-family: 'Inter', system-ui, -apple-system, sans-serif;
     --transition: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* ── Aliases (backward-compat for legacy var names used across JS/HTML) ─
+       Некоторые модули (например, инлайновые стили в js/scoring-panel.js,
+       js/reports-panel.js) исторически ссылаются на короткие имена токенов.
+       Алиасы ниже не переименовывают существующие переменные, а лишь
+       гарантируют, что такие ссылки резолвятся в актуальную палитру. */
+    --color-border: var(--border-color);
+    --color-text: var(--text-primary);
+    --color-text-muted: var(--text-muted);
+    --color-primary: var(--accent-primary);
+
+    /* ── Spacing scale ───────────────────────────────────────────────── */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-7: 32px;
+    --space-8: 40px;
+
+    /* Fluid layout gutters/gaps that shrink gracefully between mobile and desktop */
+    --gap-fluid-sm: clamp(8px, 1.2vw, 12px);
+    --gap-fluid-md: clamp(12px, 2vw, 24px);
+    --gap-fluid-lg: clamp(16px, 3vw, 32px);
+    --space-page: clamp(12px, 3vw, 24px);
+
+    /* ── Typography scale (fluid via clamp) ─────────────────────────── */
+    --font-size-xs: clamp(10.5px, 0.85vw + 8px, 11.5px);
+    --font-size-sm: clamp(12px, 0.5vw + 11px, 13px);
+    --font-size-base: clamp(13px, 0.4vw + 12px, 14px);
+    --font-size-md: clamp(14px, 0.5vw + 13px, 15px);
+    --font-size-lg: clamp(15px, 0.6vw + 14px, 17px);
+    --font-size-xl: clamp(17px, 1vw + 15px, 20px);
+    --font-size-2xl: clamp(20px, 1.4vw + 17px, 26px);
+    --font-size-3xl: clamp(24px, 2.2vw + 18px, 34px);
+
+    /* Minimum touch target size for interactive elements on touch devices */
+    --tap-target-min: 44px;
 }

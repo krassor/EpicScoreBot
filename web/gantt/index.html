@@ -65,12 +65,22 @@
             </div>
             
             <!-- Navigation Tabs -->
-            <nav class="nav-tabs" id="nav-tabs">
-                <button class="nav-tab active" data-tab="gantt">📅 Гант</button>
-                <button class="nav-tab" data-tab="scoring">⚡ Скоринг</button>
-                <button class="nav-tab" data-tab="reports">📊 Отчеты</button>
-                <button class="nav-tab" data-tab="admin" style="display: none;">⚙️ Админка</button>
-                <button class="nav-tab" data-tab="ai-chat">💬 Чат с AI</button>
+            <nav class="nav-tabs" id="nav-tabs" aria-label="Основная навигация">
+                <button class="nav-tab active" data-tab="gantt" aria-current="page">
+                    <span class="nav-tab-icon" aria-hidden="true">📅</span><span class="nav-tab-label">Гант</span>
+                </button>
+                <button class="nav-tab" data-tab="scoring">
+                    <span class="nav-tab-icon" aria-hidden="true">⚡</span><span class="nav-tab-label">Скоринг</span>
+                </button>
+                <button class="nav-tab" data-tab="reports">
+                    <span class="nav-tab-icon" aria-hidden="true">📊</span><span class="nav-tab-label">Отчеты</span>
+                </button>
+                <button class="nav-tab" data-tab="admin" style="display: none;">
+                    <span class="nav-tab-icon" aria-hidden="true">⚙️</span><span class="nav-tab-label">Админка</span>
+                </button>
+                <button class="nav-tab" data-tab="ai-chat">
+                    <span class="nav-tab-icon" aria-hidden="true">💬</span><span class="nav-tab-label">Чат с AI</span>
+                </button>
             </nav>
             
             <div class="header-controls">
@@ -326,8 +336,8 @@
 
                     <!-- User Management Table Card -->
                     <div class="admin-card full-width-card" style="margin-top: 24px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--color-border); padding-bottom: 12px; margin-bottom: 16px;">
-                            <h2 style="margin: 0;">Управление пользователями</h2>
+                        <div class="card-header-with-action">
+                            <h2>Управление пользователями</h2>
                             <button id="btn-refresh-users" class="btn btn-secondary btn-sm" type="button">🔄 Обновить</button>
                         </div>
                         <div class="table-responsive">
@@ -358,19 +368,19 @@
             <section id="tab-content-reports" class="tab-content hidden">
                 <div class="reports-container">
                     <div class="toolbar" style="margin-bottom: 20px;">
-                        <div class="toolbar-left" style="display: flex; gap: 12px; align-items: center;">
-                            <div class="form-group" style="margin: 0; display: flex; align-items: center; gap: 8px;">
-                                <label for="reports-team-select" style="margin: 0; white-space: nowrap;">Команда:</label>
+                        <div class="toolbar-left reports-toolbar-filters">
+                            <div class="form-group reports-filter-item">
+                                <label for="reports-team-select">Команда:</label>
                                 <select id="reports-team-select" class="select" required style="min-width: 180px;">
                                     <option value="">Выберите команду...</option>
                                 </select>
                             </div>
-                            <div class="form-group" style="margin: 0; display: flex; align-items: center; gap: 8px;">
-                                <label for="reports-year" style="margin: 0; white-space: nowrap;">Год:</label>
-                                <input type="number" id="reports-year" class="input" style="width: 100px; text-align: center; margin: 0;" required placeholder="Год" min="2000" max="2100">
+                            <div class="form-group reports-filter-item">
+                                <label for="reports-year">Год:</label>
+                                <input type="number" id="reports-year" class="input" style="width: 100px; text-align: center;" required placeholder="Год" min="2000" max="2100">
                             </div>
-                            <div class="form-group" style="margin: 0; display: flex; align-items: center; gap: 8px;">
-                                <label for="reports-quarter" style="margin: 0; white-space: nowrap;">Квартал:</label>
+                            <div class="form-group reports-filter-item">
+                                <label for="reports-quarter">Квартал:</label>
                                 <select id="reports-quarter" class="select" required style="min-width: 80px;">
                                     <option value="1">Q1</option>
                                     <option value="2">Q2</option>
@@ -380,18 +390,18 @@
                             </div>
                         </div>
                     </div>
-                    
-                    <div class="reports-grid" style="display: flex; flex-direction: column; gap: 24px;">
+
+                    <div class="reports-grid">
                         <!-- Вместимость и эпики -->
-                        <div class="admin-card full-width-card" style="width: 100%;">
+                        <div class="admin-card full-width-card">
                             <h2>📊 Вместимость и распределение эпиков (человеко-дни)</h2>
                             <div class="table-responsive" id="reports-capacity-table-container" style="margin-top: 16px;">
                                 <p style="color: var(--text-muted); padding: 10px; margin: 0;">Выберите команду, год и квартал для формирования отчета.</p>
                             </div>
                         </div>
-                        
+
                         <!-- Квоты по типам задач -->
-                        <div class="admin-card full-width-card" style="width: 100%;">
+                        <div class="admin-card full-width-card">
                             <h2>🎯 Квоты по типам задач</h2>
                             <div class="table-responsive" id="reports-quotas-table-container" style="margin-top: 16px;">
                                 <p style="color: var(--text-muted); padding: 10px; margin: 0;">Выберите команду, год и квартал для формирования отчета.</p>

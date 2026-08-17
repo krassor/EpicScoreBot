@@ -4,7 +4,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 24px;
+    flex-wrap: wrap;
+    gap: var(--gap-fluid-sm);
+    padding: 12px clamp(14px, 3vw, 24px);
     background: var(--bg-glass);
     border-bottom: 1px solid var(--border-color);
 }
@@ -12,12 +14,14 @@
 .toolbar-left {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 12px;
 }
 
 .toolbar-right {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 16px;
 }
 
@@ -33,12 +37,13 @@
 .btn-view {
     background: transparent;
     color: var(--text-secondary);
-    padding: 6px 12px;
+    padding: 8px 14px;
+    min-height: 32px;
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-family: var(--font-family);
-    font-size: 12px;
+    font-size: var(--font-size-xs);
     font-weight: 500;
     transition: all var(--transition);
 }
@@ -55,9 +60,10 @@
 
 .app-gantt-wrapper {
     flex: 1;
-    padding: 24px;
+    padding: clamp(12px, 3vw, 24px);
     overflow: auto;
     background: var(--bg-primary);
+    -webkit-overflow-scrolling: touch;
 }
 
 .empty-state {
@@ -65,19 +71,19 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 100px 24px;
+    padding: clamp(40px, 12vh, 100px) clamp(12px, 4vw, 24px);
     text-align: center;
 }
 
 .empty-icon {
-    font-size: 56px;
+    font-size: clamp(40px, 6vw, 56px);
     margin-bottom: 16px;
     opacity: 0.4;
     filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.1));
 }
 
 .empty-state h2 {
-    font-size: 18px;
+    font-size: var(--font-size-xl);
     font-weight: 600;
     color: var(--text-secondary);
     margin-bottom: 8px;
@@ -85,7 +91,8 @@
 
 .empty-state p {
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: var(--font-size-sm);
+    max-width: 46ch;
 }
 
 /* ── Frappe Gantt Dark Theme Overrides ─────────────────────────────── */
