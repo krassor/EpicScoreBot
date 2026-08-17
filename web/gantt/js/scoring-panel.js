@@ -536,10 +536,17 @@ function renderRisksHtml(epicOrStory, scoresData, risks) {
             `;
         }
 
+        const editRiskBtnHtml = isAdmin
+            ? `<button class="btn-edit-risk" data-risk-id="${risk.id}" title="Редактировать риск" style="background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 13px; padding: 0 4px;">✏️</button>`
+            : '';
+
         return `
             <div class="risk-vote-item" data-risk-id="${risk.id}" style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--color-border);">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div class="risk-vote-desc" style="font-weight:600; font-size: 13px;">${risk.description}</div>
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                        <div class="risk-vote-desc" style="font-weight:600; font-size: 13px;">${risk.description}</div>
+                        ${editRiskBtnHtml}
+                    </div>
                     <div style="font-size: 12px;">${scoreDisplay}</div>
                 </div>
                 <div style="margin-top: 6px;">
@@ -899,6 +906,15 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 if (selectedStory) openEditStoryModal(selectedStory);
             };
         }
+
+        container.querySelectorAll('.btn-edit-risk').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const riskId = btn.dataset.riskId;
+                const risk = selectedStoryRisks.find(r => r.id === riskId);
+                if (risk) openEditRiskModal(risk);
+            });
+        });
     }
 }
 
@@ -1148,6 +1164,66 @@ async function openEditStoryModal(story) {
             await loadEpicData();
         } catch (err) {
             showToast('Ошибка при обновлении истории: ' + err.message, 'error');
+        }
+    };
+}
+
+function openEditRiskModal(risk) {
+    let modal = document.getElementById('modal-edit-risk');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'modal-edit-risk';
+        modal.className = 'modal hidden';
+        document.body.appendChild(modal);
+    }
+
+    modal.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width: 500px; width: 90%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin: 0; font-size: 16px;">Редактирование риска</h3>
+                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+            </div>
+            <form id="form-edit-risk">
+                <div class="form-group">
+                    <label>Описание риска</label>
+                    <textarea id="edit-risk-desc" class="input" style="min-height: 70px;" required>${risk.description || ''}</textarea>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
+                    <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    `;
+
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+
+    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
+        btn.onclick = () => {
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        };
+    });
+
+    const form = modal.querySelector('#form-edit-risk');
+    form.onsubmit = async (e) => {
+        e.preventDefault();
+        const description = document.getElementById('edit-risk-desc').value.trim();
+        if (!description) {
+            showToast('Пожалуйста, введите описание риска', 'error');
+            return;
+        }
+
+        try {
+            await apiPut(`/risks/${risk.id}`, { description });
+            showToast('Риск успешно обновлён!', 'success');
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+            await loadEpicData();
+        } catch (err) {
+            showToast('Ошибка при обновлении риска: ' + err.message, 'error');
         }
     };
 }

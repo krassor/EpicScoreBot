@@ -653,6 +653,48 @@ func (h *GanttHandler) AddRisk(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, risk)
 }
 
+// UpdateRisk updates the description of an existing risk.
+func (h *GanttHandler) UpdateRisk(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.UpdateRisk"
+	riskIDStr := chi.URLParam(r, "id")
+	riskUUID, err := uuid.Parse(riskIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid risk id")
+		return
+	}
+
+	var req struct {
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Description == "" {
+		writeError(w, http.StatusBadRequest, "description is required")
+		return
+	}
+
+	if _, err := h.repo.GetRiskByID(r.Context(), riskUUID); err != nil {
+		writeError(w, http.StatusNotFound, "risk not found")
+		return
+	}
+
+	if err := h.repo.UpdateRisk(r.Context(), riskUUID, req.Description); err != nil {
+		h.log.Error("failed to update risk", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("%s: %w", op, err).Error())
+		return
+	}
+
+	updatedRisk, err := h.repo.GetRiskByID(r.Context(), riskUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, updatedRisk)
+}
+
 // SetUserWeight updates a user's scoring weight.
 func (h *GanttHandler) SetUserWeight(w http.ResponseWriter, r *http.Request) {
 	op := "handlers.SetUserWeight"

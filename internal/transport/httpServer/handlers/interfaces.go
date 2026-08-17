@@ -66,6 +66,7 @@ type Repository interface {
 	CreateRisk(ctx context.Context, description string, epicID uuid.UUID) (*domain.Risk, error)
 	GetRiskByID(ctx context.Context, riskID uuid.UUID) (*domain.Risk, error)
 	GetRisksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
+	UpdateRisk(ctx context.Context, riskID uuid.UUID, description string) error
 	DeleteRisk(ctx context.Context, riskID uuid.UUID) error
 
 	// Roles
