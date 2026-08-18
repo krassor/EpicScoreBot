@@ -390,6 +390,21 @@
     color: var(--text-secondary);
 }
 
+/* Сетка из N равных колонок для компактных групп полей (например,
+   Год/Квартал/Тип в модалке эпика). minmax(0, 1fr) + сброс min-width
+   у .select/.input внутри — иначе их безусловный min-width (см. .select
+   ниже) не даёт колонкам сжаться теснее и поля вылезают за край модалки. */
+.form-grid-3col {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.form-grid-3col .select,
+.form-grid-3col .input {
+    min-width: 0;
+}
+
 .form-help {
     font-size: var(--font-size-xs);
     color: var(--text-muted);
@@ -881,6 +896,7 @@
 
 .role-item .role-name {
     flex: 1;
+    min-width: 0;
     font-weight: 500;
 }
 
@@ -1088,10 +1104,12 @@
    из responsive.css), а ID-селектор иначе перебивает это правило по специфичности. */
 @media (min-width: 769px) {
     #modal-edit-epic .modal-content {
+        width: 90%;
         max-width: 550px;
     }
 
     #modal-edit-story .modal-content {
+        width: 90%;
         max-width: 500px;
     }
 }

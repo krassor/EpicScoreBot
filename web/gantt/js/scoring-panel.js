@@ -1050,7 +1050,7 @@ async function openEditEpicModal(epic) {
                             ${teamsList.map(t => `<option value="${t.id}" ${t.id === epic.team_id ? 'selected' : ''}>${t.name}</option>`).join('')}
                         </select>
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                    <div class="form-grid-3col">
                         <div class="form-group">
                             <label>Год</label>
                             <input type="number" id="edit-epic-year" class="input" value="${epic.year || 2026}" min="2000" max="2100" required>
