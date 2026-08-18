@@ -453,6 +453,35 @@
             </div>
         </div>
 
+        <!-- Task details modal: set completion % for a leaf (role) task -->
+        <div id="task-details-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="task-details-title">Задача</h2>
+                    <button id="task-details-close" class="btn-icon">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>План</label>
+                        <div id="task-details-dates" class="form-help"></div>
+                    </div>
+                    <div id="task-details-fact-group" class="form-group hidden">
+                        <label>Факт</label>
+                        <div id="task-details-fact" class="form-help"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="task-details-progress">Прогресс выполнения, %</label>
+                        <input type="number" id="task-details-progress" min="0" max="100" step="1" class="input">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="task-details-save" class="btn btn-primary">💾 Сохранить прогресс</button>
+                    <button id="task-details-cancel" class="btn btn-secondary">Отмена</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Edit User Modal -->
         <div id="modal-edit-user" class="modal hidden">
             <div class="modal-overlay"></div>

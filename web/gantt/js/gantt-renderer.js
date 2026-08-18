@@ -124,6 +124,8 @@ function renderGantt(tasks) {
             if (isReadOnly) return;
             if (task._is_parent) {
                 openReorderModal(task);
+            } else {
+                openTaskDetailsModal(task);
             }
         },
         on_date_change: () => {
@@ -279,6 +281,79 @@ function applyPostRenderEnhancements(tasks) {
             wrapper.appendChild(diamond);
         }
     });
+}
+
+// ── Task details modal: единственная явная точка входа для простановки % ──
+// выполнения листовой (ролевой) задачи — открывается кликом по её бару.
+// Хендл прогресса на самом баре Frappe Gantt остаётся рабочим как быстрый
+// способ для тех, кто уже знает про него, но не единственный.
+
+let currentDetailsTaskId = null;
+
+function formatDisplayDate(isoDate) {
+    if (!isoDate) return '';
+    const d = new Date(isoDate);
+    if (isNaN(d.getTime())) return isoDate;
+    return d.toLocaleDateString('ru-RU');
+}
+
+function openTaskDetailsModal(feTask) {
+    const rawTasks = state.get('tasks');
+    const t = rawTasks.find(x => x.id === feTask.id);
+    if (!t) return;
+
+    currentDetailsTaskId = t.id;
+
+    document.getElementById('task-details-title').textContent = cleanTaskName(t.name);
+    document.getElementById('task-details-dates').textContent =
+        `${formatDisplayDate(t.start_date || t.start)} — ${formatDisplayDate(t.end_date || t.end)}`;
+
+    const factGroup = document.getElementById('task-details-fact-group');
+    if (t.actual_end_date) {
+        factGroup.classList.remove('hidden');
+        const effort = (t.actual_effort_days !== undefined && t.actual_effort_days !== null)
+            ? `, факт. трудоёмкость: ${t.actual_effort_days} р.д.`
+            : '';
+        document.getElementById('task-details-fact').textContent =
+            `Завершено ${formatDisplayDate(t.actual_end_date)}${effort}`;
+    } else {
+        factGroup.classList.add('hidden');
+    }
+
+    const progressInput = document.getElementById('task-details-progress');
+    progressInput.value = Math.round((t.progress || 0) * 100);
+
+    document.getElementById('task-details-modal').classList.remove('hidden');
+}
+
+function closeTaskDetailsModal() {
+    document.getElementById('task-details-modal').classList.add('hidden');
+    currentDetailsTaskId = null;
+}
+
+async function saveTaskDetails() {
+    if (!currentDetailsTaskId) {
+        closeTaskDetailsModal();
+        return;
+    }
+
+    const input = document.getElementById('task-details-progress');
+    const percent = parseInt(input.value, 10);
+    if (isNaN(percent) || percent < 0 || percent > 100) {
+        showToast('Прогресс должен быть числом от 0 до 100', 'error');
+        return;
+    }
+
+    try {
+        await apiPut(`/tasks/${currentDetailsTaskId}`, { progress: percent / 100 });
+        showToast('Прогресс задачи обновлён', 'success');
+        closeTaskDetailsModal();
+        // Прогресс листовой задачи может сдвинуть расписание всей команды
+        // (конвейер) и зафиксировать факт закрытия — тянем полный список заново.
+        await reloadCurrentTeamTasks();
+    } catch (err) {
+        showToast('Не удалось обновить прогресс: ' + err.message, 'error');
+    }
 }
 
 async function reloadCurrentTeamTasks() {
@@ -525,6 +600,12 @@ function setupGanttEvents() {
     // Новые точки входа для переупорядочивания эпиков/сторей (тулбар Ганта).
     document.getElementById('btn-reorder-epics')?.addEventListener('click', openEpicReorderModal);
     document.getElementById('btn-reorder-stories')?.addEventListener('click', openStoryReorderModal);
+
+    // Модалка деталей задачи (простановка % выполнения по клику на бар).
+    document.getElementById('task-details-close')?.addEventListener('click', closeTaskDetailsModal);
+    document.getElementById('task-details-cancel')?.addEventListener('click', closeTaskDetailsModal);
+    document.getElementById('task-details-save')?.addEventListener('click', saveTaskDetails);
+    document.querySelector('#task-details-modal .modal-overlay')?.addEventListener('click', closeTaskDetailsModal);
 
     // View modes
     document.querySelectorAll('.btn-view').forEach(btn => {
