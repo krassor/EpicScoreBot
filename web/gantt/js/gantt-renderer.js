@@ -417,7 +417,7 @@ function openOrderModal(title, items, config, onSave) {
                 <label>Порядок:</label>
                 <input type="number" min="1" max="99" class="select"
                        value="${order}"
-                       data-item-id="${id}" style="width: 60px; padding: 4px 8px;">
+                       data-item-id="${id}">
             </div>
         `;
         body.appendChild(el);

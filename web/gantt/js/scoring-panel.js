@@ -1025,67 +1025,70 @@ async function openEditEpicModal(epic) {
 
     modal.innerHTML = `
         <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-width: 550px; width: 90%;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <h3 style="margin: 0; font-size: 16px;">Редактирование Эпика</h3>
-                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Редактирование Эпика</h2>
+                <button class="btn-icon btn-close-modal">✕</button>
             </div>
             <form id="form-edit-epic">
-                <div class="form-group">
-                    <label>Номер эпика</label>
-                    <input type="text" id="edit-epic-number" class="input" value="${epic.number || ''}" required>
-                </div>
-                <div class="form-group">
-                    <label>Название эпика</label>
-                    <input type="text" id="edit-epic-name" class="input" value="${epic.name || ''}" required>
-                </div>
-                <div class="form-group">
-                    <label>Описание</label>
-                    <textarea id="edit-epic-desc" class="input" style="min-height: 70px;">${epic.description || ''}</textarea>
-                </div>
-                <div class="form-group">
-                    <label>Команда ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано: скоринг запущен)</span>' : ''}</label>
-                    <select id="edit-epic-team" class="select" ${!isNew ? 'disabled' : ''}>
-                        ${teamsList.map(t => `<option value="${t.id}" ${t.id === epic.team_id ? 'selected' : ''}>${t.name}</option>`).join('')}
-                    </select>
-                </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                <div class="modal-body">
                     <div class="form-group">
-                        <label>Год</label>
-                        <input type="number" id="edit-epic-year" class="input" value="${epic.year || 2026}" min="2000" max="2100" required>
+                        <label>Номер эпика</label>
+                        <input type="text" id="edit-epic-number" class="input" value="${epic.number || ''}" required>
                     </div>
                     <div class="form-group">
-                        <label>Квартал</label>
-                        <select id="edit-epic-quarter" class="select">
-                            <option value="1" ${epic.quarter === 1 ? 'selected' : ''}>Q1</option>
-                            <option value="2" ${epic.quarter === 2 ? 'selected' : ''}>Q2</option>
-                            <option value="3" ${epic.quarter === 3 ? 'selected' : ''}>Q3</option>
-                            <option value="4" ${epic.quarter === 4 ? 'selected' : ''}>Q4</option>
+                        <label>Название эпика</label>
+                        <input type="text" id="edit-epic-name" class="input" value="${epic.name || ''}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Описание</label>
+                        <textarea id="edit-epic-desc" class="input" style="min-height: 70px;">${epic.description || ''}</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Команда ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано: скоринг запущен)</span>' : ''}</label>
+                        <select id="edit-epic-team" class="select" ${!isNew ? 'disabled' : ''}>
+                            ${teamsList.map(t => `<option value="${t.id}" ${t.id === epic.team_id ? 'selected' : ''}>${t.name}</option>`).join('')}
                         </select>
                     </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                        <div class="form-group">
+                            <label>Год</label>
+                            <input type="number" id="edit-epic-year" class="input" value="${epic.year || 2026}" min="2000" max="2100" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Квартал</label>
+                            <select id="edit-epic-quarter" class="select">
+                                <option value="1" ${epic.quarter === 1 ? 'selected' : ''}>Q1</option>
+                                <option value="2" ${epic.quarter === 2 ? 'selected' : ''}>Q2</option>
+                                <option value="3" ${epic.quarter === 3 ? 'selected' : ''}>Q3</option>
+                                <option value="4" ${epic.quarter === 4 ? 'selected' : ''}>Q4</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Тип</label>
+                            <select id="edit-epic-type" class="select">
+                                <option value="feature" ${epic.type === 'feature' ? 'selected' : ''}>Feature</option>
+                                <option value="architecture" ${epic.type === 'architecture' ? 'selected' : ''}>Architecture</option>
+                                <option value="techdebt" ${epic.type === 'techdebt' ? 'selected' : ''}>Techdebt</option>
+                            </select>
+                        </div>
+                    </div>
                     <div class="form-group">
-                        <label>Тип</label>
-                        <select id="edit-epic-type" class="select">
-                            <option value="feature" ${epic.type === 'feature' ? 'selected' : ''}>Feature</option>
-                            <option value="architecture" ${epic.type === 'architecture' ? 'selected' : ''}>Architecture</option>
-                            <option value="techdebt" ${epic.type === 'techdebt' ? 'selected' : ''}>Techdebt</option>
-                        </select>
+                        <label>Роли-оценщики ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано)</span>' : ''}</label>
+                        <div class="checkbox-container-list" id="edit-epic-roles-container" style="max-height: 120px; overflow-y: auto;">
+                            ${roles.map(r => {
+                                const isChecked = (epic.evaluating_role_ids || []).includes(r.id);
+                                return `
+                                    <div class="checkbox-item">
+                                        <input type="checkbox" id="edit-epic-role-${r.id}" value="${r.id}" ${isChecked ? 'checked' : ''} ${!isNew ? 'disabled' : ''}>
+                                        <label for="edit-epic-role-${r.id}">${r.name}</label>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Роли-оценщики ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано)</span>' : ''}</label>
-                    <div class="checkbox-container-list" id="edit-epic-roles-container" style="max-height: 120px; overflow-y: auto;">
-                        ${roles.map(r => {
-                            const isChecked = (epic.evaluating_role_ids || []).includes(r.id);
-                            return `
-                                <label class="checkbox-label" style="font-size: 12px;">
-                                    <input type="checkbox" value="${r.id}" ${isChecked ? 'checked' : ''} ${!isNew ? 'disabled' : ''}> ${r.name}
-                                </label>
-                            `;
-                        }).join('')}
-                    </div>
-                </div>
-                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
+                <div class="modal-footer">
                     <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
                     <button type="submit" class="btn btn-primary">Сохранить</button>
                 </div>
@@ -1162,31 +1165,33 @@ async function openEditStoryModal(story) {
 
     modal.innerHTML = `
         <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-width: 500px; width: 90%;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <h3 style="margin: 0; font-size: 16px;">Редактирование Истории</h3>
-                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Редактирование Истории</h2>
+                <button class="btn-icon btn-close-modal">✕</button>
             </div>
             <form id="form-edit-story">
-                <div class="form-group">
-                    <label>Номер истории</label>
-                    <input type="text" id="edit-story-number" class="input" value="${story.number || ''}" required>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Номер истории</label>
+                        <input type="text" id="edit-story-number" class="input" value="${story.number || ''}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Название истории</label>
+                        <input type="text" id="edit-story-name" class="input" value="${story.name || ''}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Описание истории</label>
+                        <textarea id="edit-story-desc" class="input" style="min-height: 70px;">${story.description || ''}</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Родительский Эпик ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано: скоринг запущен)</span>' : ''}</label>
+                        <select id="edit-story-parent-epic" class="select" ${!isNew ? 'disabled' : ''}>
+                            ${epicsList.map(e => `<option value="${e.id}" ${story.parent_epic_id === e.id ? 'selected' : ''}>${e.number}: ${e.name}</option>`).join('')}
+                        </select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Название истории</label>
-                    <input type="text" id="edit-story-name" class="input" value="${story.name || ''}" required>
-                </div>
-                <div class="form-group">
-                    <label>Описание истории</label>
-                    <textarea id="edit-story-desc" class="input" style="min-height: 70px;">${story.description || ''}</textarea>
-                </div>
-                <div class="form-group">
-                    <label>Родительский Эпик ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано: скоринг запущен)</span>' : ''}</label>
-                    <select id="edit-story-parent-epic" class="select" ${!isNew ? 'disabled' : ''}>
-                        ${epicsList.map(e => `<option value="${e.id}" ${story.parent_epic_id === e.id ? 'selected' : ''}>${e.number}: ${e.name}</option>`).join('')}
-                    </select>
-                </div>
-                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
+                <div class="modal-footer">
                     <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
                     <button type="submit" class="btn btn-primary">Сохранить</button>
                 </div>
