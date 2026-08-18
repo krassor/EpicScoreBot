@@ -448,7 +448,7 @@ func (h *GanttHandler) ReorderTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		SortOrder int `json:"sort_order"`
+		SortOrder int `json:"new_sort_order"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
