@@ -332,6 +332,79 @@ func (s *Service) GenerateTasksForEpic(
 	return result, nil
 }
 
+// GetTeamTasks returns Gantt tasks for a team ordered hierarchically:
+// epic -> its stories (by sort_order) -> role tasks of each story (by sort_order).
+// Repository.GetGanttTasksByTeamID sorts tasks in a flat space
+// (ORDER BY e.number, sort_order, name) without grouping by parent_task_id,
+// so rows of different levels/stories end up interleaved. Rebuild the
+// correct order explicitly here instead of touching the SQL/stored values.
+func (s *Service) GetTeamTasks(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error) {
+	op := "gantt.GetTeamTasks"
+
+	tasks, err := s.repo.GetGanttTasksByTeamID(ctx, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	return orderTasksHierarchically(tasks), nil
+}
+
+// orderTasksHierarchically restores correct parent-child row order.
+// Roots (tasks without a parent, i.e. epics) keep their incoming relative
+// order — the SQL query already returns them ordered by epic number.
+// Each parent's direct children are grouped together and sorted stably
+// by (SortOrder, Name), then the tree is walked depth-first so that every
+// story's role rows immediately follow that story, regardless of depth.
+func orderTasksHierarchically(tasks []domain.GanttTask) []domain.GanttTask {
+	children := make(map[uuid.UUID][]domain.GanttTask)
+	var roots []domain.GanttTask
+	for _, t := range tasks {
+		if t.ParentTaskID == nil {
+			roots = append(roots, t)
+			continue
+		}
+		children[*t.ParentTaskID] = append(children[*t.ParentTaskID], t)
+	}
+
+	// sort_order сравним только между прямыми siblings (общий ParentTaskID) —
+	// между уровнями иерархии значения sort_order не связаны.
+	for parentID, group := range children {
+		slices.SortStableFunc(group, func(a, b domain.GanttTask) int {
+			if a.SortOrder != b.SortOrder {
+				return a.SortOrder - b.SortOrder
+			}
+			if a.Name < b.Name {
+				return -1
+			}
+			if a.Name > b.Name {
+				return 1
+			}
+			return 0
+		})
+		children[parentID] = group
+	}
+
+	result := make([]domain.GanttTask, 0, len(tasks))
+	for _, root := range roots {
+		result = appendSubtree(result, root, children)
+	}
+	return result
+}
+
+// appendSubtree appends a task and its descendants (DFS) to result,
+// working for hierarchies of arbitrary depth.
+func appendSubtree(
+	result []domain.GanttTask,
+	task domain.GanttTask,
+	children map[uuid.UUID][]domain.GanttTask,
+) []domain.GanttTask {
+	result = append(result, task)
+	for _, child := range children[task.ID] {
+		result = appendSubtree(result, child, children)
+	}
+	return result
+}
+
 // groupBySortOrder groups role tasks by their sort order,
 // preserving the order of groups.
 func groupBySortOrder(items []roleTask) [][]roleTask {

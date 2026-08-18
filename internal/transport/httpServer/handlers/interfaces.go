@@ -13,6 +13,7 @@ type GanttService interface {
 	GenerateTasksForEpic(ctx context.Context, epicID uuid.UUID, startDate time.Time) ([]domain.GanttTask, error)
 	UpdateTaskDates(ctx context.Context, taskID uuid.UUID, startDate, endDate time.Time) error
 	ReorderTask(ctx context.Context, taskID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
+	GetTeamTasks(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error)
 }
 
 // Repository defines the data-access contract used by handlers.

@@ -250,7 +250,7 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.repo.GetGanttTasksByTeamID(r.Context(), teamID)
+	tasks, err := h.svc.GetTeamTasks(r.Context(), teamID)
 	if err != nil {
 		h.log.Error("failed to get tasks", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "failed to get tasks")
