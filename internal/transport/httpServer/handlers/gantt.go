@@ -185,6 +185,9 @@ func (h *GanttHandler) GetEpics(w http.ResponseWriter, r *http.Request) {
 		Type              string   `json:"type"`
 		EvaluatingRoleIDs []string `json:"evaluating_role_ids,omitempty"`
 		ParentEpicID      *string  `json:"parent_epic_id,omitempty"`
+		// SortOrder — позиция эпика в очереди конвейерного планировщика
+		// (см. epics.sort_order); nil, если ещё не назначена.
+		SortOrder *int `json:"sort_order,omitempty"`
 	}
 	var resp []epicResp
 	for _, e := range epics {
@@ -210,6 +213,7 @@ func (h *GanttHandler) GetEpics(w http.ResponseWriter, r *http.Request) {
 			Type:              e.Type,
 			EvaluatingRoleIDs: evalRoles,
 			ParentEpicID:      parentStr,
+			SortOrder:         e.SortOrder,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"epics": resp})
@@ -229,6 +233,11 @@ type ganttTaskResp struct {
 	ParentID     string  `json:"parent_id,omitempty"`
 	SortOrder    int     `json:"sort_order"`
 	RoleID       string  `json:"role_id,omitempty"`
+	// ActualEndDate — фактическая дата завершения задачи (проставляется
+	// автоматически при 100% прогресса), отсутствует пока задача не завершена.
+	ActualEndDate *string `json:"actual_end_date,omitempty"`
+	// ActualEffortDays — фактическая трудоёмкость в рабочих днях.
+	ActualEffortDays *int `json:"actual_effort_days,omitempty"`
 }
 
 // roleToCSS maps role names to CSS class names.
@@ -333,6 +342,13 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 		if t.RoleID != nil {
 			item.RoleID = t.RoleID.String()
 		}
+		if t.ActualEndDate != nil {
+			s := t.ActualEndDate.Format("2006-01-02")
+			item.ActualEndDate = &s
+		}
+		if t.ActualEffortDays != nil {
+			item.ActualEffortDays = t.ActualEffortDays
+		}
 		resp = append(resp, item)
 	}
 
@@ -380,7 +396,9 @@ func (h *GanttHandler) GenerateTasks(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// UpdateTask updates a task's dates and/or progress.
+// UpdateTask updates a task's progress. Dates are no longer settable
+// manually — the pipeline scheduler (epic/story/role order + progress)
+// is the only way to move a task on the Gantt chart.
 func (h *GanttHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	taskIDStr := chi.URLParam(r, "id")
 	taskID, err := uuid.Parse(taskIDStr)
@@ -399,30 +417,15 @@ func (h *GanttHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Start != nil && req.End != nil {
-		startDate, err := time.Parse("2006-01-02", *req.Start)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid start date")
-			return
-		}
-		endDate, err := time.Parse("2006-01-02", *req.End)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid end date")
-			return
-		}
-		if err := h.svc.UpdateTaskDates(
-			r.Context(), taskID, startDate, endDate,
-		); err != nil {
-			h.log.Error("failed to update dates",
-				slog.String("error", err.Error()))
-			writeError(w, http.StatusInternalServerError,
-				"failed to update dates")
-			return
-		}
+	if req.Start != nil || req.End != nil {
+		writeErrorCode(w, http.StatusBadRequest, "SCHEDULE_MANAGED_AUTOMATICALLY",
+			"даты задач рассчитываются автоматически конвейерным планировщиком; "+
+				"управляйте расписанием через порядок эпиков/сторей/ролей и прогресс")
+		return
 	}
 
 	if req.Progress != nil {
-		if err := h.repo.UpdateGanttTaskProgress(
+		if _, err := h.svc.SetTaskProgress(
 			r.Context(), taskID, *req.Progress,
 		); err != nil {
 			h.log.Error("failed to update progress",
@@ -466,6 +469,77 @@ func (h *GanttHandler) ReorderTask(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message": "task reordered",
+		"count":   len(tasks),
+	})
+}
+
+// ReorderEpic changes a top-level epic's position in its team's pipeline
+// queue and recalculates the whole team's schedule.
+func (h *GanttHandler) ReorderEpic(w http.ResponseWriter, r *http.Request) {
+	epicIDStr := chi.URLParam(r, "epic_id")
+	epicID, err := uuid.Parse(epicIDStr)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_EPIC_ID", "invalid epic id")
+		return
+	}
+
+	var req struct {
+		SortOrder int `json:"new_sort_order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY", "invalid request body")
+		return
+	}
+
+	tasks, err := h.svc.ReorderEpic(r.Context(), epicID, req.SortOrder)
+	if err != nil {
+		h.log.Error("failed to reorder epic",
+			slog.String("error", err.Error()))
+		// Сервис не возвращает типизированные sentinel-ошибки (не найден
+		// эпик / стори вместо эпика / ошибка пересчёта расписания), поэтому
+		// все ошибки уровня сервиса возвращаются одним общим кодом.
+		writeErrorCode(w, http.StatusInternalServerError, "RESCHEDULE_FAILED",
+			"failed to reorder epic")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "epic reordered",
+		"count":   len(tasks),
+	})
+}
+
+// ReorderStory changes a story's position in its parent epic's pipeline
+// queue and recalculates the whole team's schedule.
+func (h *GanttHandler) ReorderStory(w http.ResponseWriter, r *http.Request) {
+	storyIDStr := chi.URLParam(r, "story_id")
+	storyID, err := uuid.Parse(storyIDStr)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_STORY_ID", "invalid story id")
+		return
+	}
+
+	var req struct {
+		SortOrder int `json:"new_sort_order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY", "invalid request body")
+		return
+	}
+
+	tasks, err := h.svc.ReorderStory(r.Context(), storyID, req.SortOrder)
+	if err != nil {
+		h.log.Error("failed to reorder story",
+			slog.String("error", err.Error()))
+		// См. комментарий в ReorderEpic — сервис не возвращает
+		// типизированные sentinel-ошибки, поэтому один общий код.
+		writeErrorCode(w, http.StatusInternalServerError, "RESCHEDULE_FAILED",
+			"failed to reorder story")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "story reordered",
 		"count":   len(tasks),
 	})
 }

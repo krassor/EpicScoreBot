@@ -209,6 +209,54 @@
     cursor: ew-resize;
 }
 
+/* ── Завершённые задачи (progress 100% или зафиксирован факт) ────────── */
+/* Класс навешивается точечно после рендера (см. gantt-renderer.js), а не
+   через custom_class, — приглушённая заливка + галочка поверх обычного
+   прогресс-бара, чтобы визуально отличать закрытые задачи от текущих. */
+.gantt .bar-wrapper.gantt-completed .bar {
+    fill: var(--bg-tertiary);
+    stroke: var(--color-success);
+    stroke-width: 1.5px;
+    opacity: 0.85;
+}
+
+.gantt .bar-wrapper.gantt-completed .bar-progress {
+    fill: var(--color-success);
+    opacity: 0.9;
+}
+
+.gantt .gantt-completed-icon {
+    fill: var(--color-success);
+    font-size: 12px;
+    font-weight: 700;
+    pointer-events: none;
+}
+
+/* ── Факт-маркер (плановая дата vs фактическая дата закрытия) ────────── */
+/* Тонкая вертикальная линия + ромб на позиции фактической даты поверх
+   бара листовой задачи: зелёный — закрыли раньше плана, красный — позже. */
+.fact-marker {
+    stroke-width: 2px;
+    pointer-events: none;
+}
+
+.fact-marker-diamond {
+    stroke-width: 1px;
+    pointer-events: none;
+}
+
+.fact-marker.fact-marker-early,
+.fact-marker-diamond.fact-marker-early {
+    stroke: var(--color-success);
+    fill: var(--color-success);
+}
+
+.fact-marker.fact-marker-late,
+.fact-marker-diamond.fact-marker-late {
+    stroke: var(--color-danger);
+    fill: var(--color-danger);
+}
+
 /* Tooltip/Popup styling */
 .gantt-container .popup-wrapper {
     background: var(--bg-card) !important;

@@ -87,6 +87,8 @@ func (r *Router) Mount(mux *chi.Mux) {
 				mux.Get("/epics/{epic_id}/stories", r.ganttHandler.GetStories)
 				mux.Post("/epics/{epic_id}/stories", r.ganttHandler.CreateStory)
 				mux.Delete("/stories/{story_id}", r.ganttHandler.DeleteStory)
+				mux.Put("/epics/{epic_id}/reorder", r.ganttHandler.ReorderEpic)
+				mux.Put("/stories/{story_id}/reorder", r.ganttHandler.ReorderStory)
 
 				// AI chat endpoint
 				mux.Post("/ask-ai", r.ganttHandler.AskAI)

@@ -19,6 +19,12 @@ type GanttTask struct {
 	SortOrder    int
 	IsParent     bool
 	ParentTaskID *uuid.UUID // nil for parent tasks
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// ActualEndDate — фактическая дата завершения задачи (проставляется
+	// автоматически при простановке 100% прогресса), nil пока не завершена.
+	ActualEndDate *time.Time
+	// ActualEffortDays — фактическая трудоёмкость в рабочих днях между
+	// плановым стартом задачи и ActualEndDate, вычисляется автоматически.
+	ActualEffortDays *int
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }

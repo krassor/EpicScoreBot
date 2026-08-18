@@ -71,6 +71,11 @@ type Repository interface {
 	CountStoriesByEpicID(ctx context.Context, epicID uuid.UUID) (int, error)
 	UpdateEpic(ctx context.Context, epic *domain.Epic, newEvaluatingRoles []uuid.UUID, oldNumber string) error
 	UpdateStory(ctx context.Context, story *domain.Epic) error
+	// GetTeamEpicsOrdered и UpdateEpicSortOrder используются конвейерным
+	// планировщиком диаграммы Ганта (internal/gantt) для управления очередью
+	// эпиков/сторей; объявлены здесь для единообразия с остальными методами Epic.
+	GetTeamEpicsOrdered(ctx context.Context, teamID uuid.UUID) ([]domain.Epic, error)
+	UpdateEpicSortOrder(ctx context.Context, epicID uuid.UUID, sortOrder int) error
 
 	// Risks
 	CreateRisk(ctx context.Context, description string, epicID uuid.UUID) (*domain.Risk, error)

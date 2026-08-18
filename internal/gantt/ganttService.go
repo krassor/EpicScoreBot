@@ -61,10 +61,70 @@ func New(logger *slog.Logger, repo Repository) *Service {
 	}
 }
 
-// GenerateTasksForEpic creates Gantt tasks for a scored epic.
-// It generates a parent task (the epic itself) and child tasks
-// for each role that has scores, laid out sequentially by default
-// sort order. 1 SP = 1 day.
+// buildRoleTasks calculates role work-day durations (1 SP = 1 day, adjusted
+// by the story/epic's risk coefficients) for an epic or a story, sorted by
+// defaultRoleOrder. Returns (nil, nil) when there are no role scores yet
+// (e.g. a story that hasn't been scored).
+func (s *Service) buildRoleTasks(ctx context.Context, storyOrEpicID uuid.UUID) ([]roleTask, error) {
+	op := "gantt.buildRoleTasks"
+
+	roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, storyOrEpicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get role scores: %w", op, err)
+	}
+	if len(roleScores) == 0 {
+		return nil, nil
+	}
+
+	risks, err := s.repo.GetRisksByEpicID(ctx, storyOrEpicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get risks: %w", op, err)
+	}
+
+	finalCoeff := 1.0
+	for _, risk := range risks {
+		if risk.WeightedScore != nil {
+			finalCoeff *= RiskCoefficient(*risk.WeightedScore)
+		}
+	}
+
+	var roleTasks []roleTask
+	for _, rs := range roleScores {
+		role, err := s.repo.GetRoleByID(ctx, rs.RoleID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: get role: %w", op, err)
+		}
+		workDays := max(1, int(math.Ceil(rs.WeightedAvg*finalCoeff)))
+		order, ok := defaultRoleOrder[role.Name]
+		if !ok {
+			order = 99
+		}
+		roleTasks = append(roleTasks, roleTask{
+			roleID:    rs.RoleID,
+			roleName:  role.Name,
+			workDays:  workDays,
+			sortOrder: order,
+		})
+	}
+
+	slices.SortFunc(roleTasks, func(a, b roleTask) int {
+		if a.sortOrder != b.sortOrder {
+			return a.sortOrder - b.sortOrder
+		}
+		return 0
+	})
+
+	return roleTasks, nil
+}
+
+// GenerateTasksForEpic creates Gantt task rows for a scored epic: a parent
+// task (the epic itself), a wrapper task per story (or, for legacy epics
+// without stories, role tasks directly under the epic), and a role task per
+// scored role. It does NOT lay out dates itself — that's the job of the
+// global pipeline scheduler (RecalculateTeamSchedule), which this method
+// invokes once all rows exist. startDate only seeds the epic's initial
+// "floor" (its parent task's StartDate), used by the scheduler as the
+// earliest possible start for this epic's own tasks.
 func (s *Service) GenerateTasksForEpic(
 	ctx context.Context,
 	epicID uuid.UUID,
@@ -96,12 +156,12 @@ func (s *Service) GenerateTasksForEpic(
 
 	adjustedStartDate := moveToWorkDay(startDate)
 
-	// Create parent task (epic)
+	// Create parent task (epic). Dates are placeholders, recalculated below.
 	parentTask := &domain.GanttTask{
 		EpicID:    epicID,
 		Name:      fmt.Sprintf("%s: %s", epic.Number, epic.Name),
 		StartDate: adjustedStartDate,
-		EndDate:   adjustedStartDate, // will be recalculated
+		EndDate:   adjustedStartDate,
 		SortOrder: 0,
 		IsParent:  true,
 	}
@@ -110,22 +170,31 @@ func (s *Service) GenerateTasksForEpic(
 		return nil, fmt.Errorf("%s: create parent: %w", op, err)
 	}
 
-	var result []domain.GanttTask
-	result = append(result, *parentTask)
-
-	cursor := adjustedStartDate
+	createChild := func(parentID uuid.UUID, rt roleTask) error {
+		roleID := rt.roleID
+		child := &domain.GanttTask{
+			EpicID:       epicID,
+			RoleID:       &roleID,
+			Name:         rt.roleName,
+			StartDate:    adjustedStartDate,
+			EndDate:      addWorkDays(adjustedStartDate, rt.workDays),
+			SortOrder:    rt.sortOrder,
+			IsParent:     false,
+			ParentTaskID: &parentID,
+		}
+		if _, err := s.repo.CreateGanttTask(ctx, child); err != nil {
+			return fmt.Errorf("%s: create child %s: %w", op, rt.roleName, err)
+		}
+		return nil
+	}
 
 	if len(stories) > 0 {
-		epicEndDate := adjustedStartDate
-
 		for storyIdx, story := range stories {
-			storyStartDate := cursor
-			// Create story task
 			storyTask := &domain.GanttTask{
 				EpicID:       epicID,
 				Name:         fmt.Sprintf("%s: %s", story.Number, story.Name),
-				StartDate:    storyStartDate,
-				EndDate:      storyStartDate, // will be recalculated
+				StartDate:    adjustedStartDate,
+				EndDate:      adjustedStartDate,
 				SortOrder:    storyIdx + 1,
 				IsParent:     true,
 				ParentTaskID: &parentTask.ID,
@@ -134,195 +203,46 @@ func (s *Service) GenerateTasksForEpic(
 			if err != nil {
 				return nil, fmt.Errorf("%s: create story task %s: %w", op, story.Number, err)
 			}
-			result = append(result, *storyTask)
 
-			roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, story.ID)
+			roleTasks, err := s.buildRoleTasks(ctx, story.ID)
 			if err != nil {
-				return nil, fmt.Errorf("%s: get story role scores: %w", op, err)
+				return nil, fmt.Errorf("%s: %w", op, err)
 			}
-
-			if len(roleScores) > 0 {
-				risks, err := s.repo.GetRisksByEpicID(ctx, story.ID)
-				if err != nil {
-					return nil, fmt.Errorf("%s: get story risks: %w", op, err)
-				}
-
-				finalCoeff := 1.0
-				for _, risk := range risks {
-					if risk.WeightedScore != nil {
-						coeff := RiskCoefficient(*risk.WeightedScore)
-						finalCoeff *= coeff
-					}
-				}
-
-				var roleTasks []roleTask
-				for _, rs := range roleScores {
-					role, err := s.repo.GetRoleByID(ctx, rs.RoleID)
-					if err != nil {
-						return nil, fmt.Errorf("%s: get role: %w", op, err)
-					}
-					workDays := max(1, int(math.Ceil(rs.WeightedAvg*finalCoeff)))
-					order, ok := defaultRoleOrder[role.Name]
-					if !ok {
-						order = 99
-					}
-					roleTasks = append(roleTasks, roleTask{
-						roleID:    rs.RoleID,
-						roleName:  role.Name,
-						workDays:  workDays,
-						sortOrder: order,
-					})
-				}
-
-				slices.SortFunc(roleTasks, func(a, b roleTask) int {
-					if a.sortOrder != b.sortOrder {
-						return a.sortOrder - b.sortOrder
-					}
-					return 0
-				})
-
-				storyEndDate := storyStartDate
-				groups := groupBySortOrder(roleTasks)
-				for _, group := range groups {
-					var groupEnd time.Time
-					for _, rt := range group {
-						childStart := cursor
-						childEnd := addWorkDays(cursor, rt.workDays)
-						roleID := rt.roleID
-						child := &domain.GanttTask{
-							EpicID:       epicID,
-							RoleID:       &roleID,
-							Name:         rt.roleName,
-							StartDate:    childStart,
-							EndDate:      childEnd,
-							SortOrder:    rt.sortOrder,
-							IsParent:     false,
-							ParentTaskID: &storyTask.ID,
-						}
-						child, err = s.repo.CreateGanttTask(ctx, child)
-						if err != nil {
-							return nil, fmt.Errorf("%s: create story child %s: %w", op, rt.roleName, err)
-						}
-						result = append(result, *child)
-						if groupEnd.IsZero() || childEnd.After(groupEnd) {
-							groupEnd = childEnd
-						}
-					}
-					if storyEndDate.Before(groupEnd) {
-						storyEndDate = groupEnd
-					}
-					cursor = moveToWorkDay(groupEnd.AddDate(0, 0, 1))
-				}
-
-				// Update story task dates
-				if err := s.repo.UpdateGanttTaskDates(ctx, storyTask.ID, storyStartDate, storyEndDate); err != nil {
-					return nil, fmt.Errorf("%s: update story dates: %w", op, err)
-				}
-				for idx, r := range result {
-					if r.ID == storyTask.ID {
-						result[idx].StartDate = storyStartDate
-						result[idx].EndDate = storyEndDate
-					}
-				}
-
-				if epicEndDate.Before(storyEndDate) {
-					epicEndDate = storyEndDate
+			for _, rt := range roleTasks {
+				if err := createChild(storyTask.ID, rt); err != nil {
+					return nil, err
 				}
 			}
 		}
-
-		// Update parent task dates
-		if err := s.repo.UpdateGanttTaskDates(ctx, parentTask.ID, adjustedStartDate, epicEndDate); err != nil {
-			return nil, fmt.Errorf("%s: update parent dates: %w", op, err)
-		}
-		result[0].EndDate = epicEndDate
-
 	} else {
-		// Legacy: Flat Gantt for epics without stories (compatibility support)
-		roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, epicID)
-		if err != nil {
-			return nil, fmt.Errorf("%s: get role scores: %w", op, err)
-		}
-		if len(roleScores) == 0 {
-			return nil, fmt.Errorf("%s: no role scores for epic %s", op, epicID)
-		}
-
-		risks, err := s.repo.GetRisksByEpicID(ctx, epicID)
+		// Legacy: flat Gantt for epics without stories (compatibility support).
+		roleTasks, err := s.buildRoleTasks(ctx, epicID)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", op, err)
 		}
-
-		finalCoeff := 1.0
-		for _, risk := range risks {
-			if risk.WeightedScore != nil {
-				coeff := RiskCoefficient(*risk.WeightedScore)
-				finalCoeff *= coeff
+		if len(roleTasks) == 0 {
+			return nil, fmt.Errorf("%s: no role scores for epic %s", op, epicID)
+		}
+		for _, rt := range roleTasks {
+			if err := createChild(parentTask.ID, rt); err != nil {
+				return nil, err
 			}
 		}
+	}
 
-		var roleTasks []roleTask
-		for _, rs := range roleScores {
-			role, err := s.repo.GetRoleByID(ctx, rs.RoleID)
-			if err != nil {
-				return nil, fmt.Errorf("%s: get role: %w", op, err)
-			}
-			workDays := max(1, int(math.Ceil(rs.WeightedAvg*finalCoeff)))
-			order, ok := defaultRoleOrder[role.Name]
-			if !ok {
-				order = 99
-			}
-			roleTasks = append(roleTasks, roleTask{
-				roleID:    rs.RoleID,
-				roleName:  role.Name,
-				workDays:  workDays,
-				sortOrder: order,
-			})
+	// Assign this epic's place in the team-wide pipeline queue if it
+	// doesn't have one yet (e.g. legacy epics created before this column
+	// existed, or any other edge case where the insert-time subquery in
+	// CreateEpic/CreateStory didn't run).
+	if epic.SortOrder == nil {
+		if err := s.assignNextEpicSortOrder(ctx, epic); err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
 		}
+	}
 
-		slices.SortFunc(roleTasks, func(a, b roleTask) int {
-			if a.sortOrder != b.sortOrder {
-				return a.sortOrder - b.sortOrder
-			}
-			return 0
-		})
-
-		parentEndDate := adjustedStartDate
-		groups := groupBySortOrder(roleTasks)
-		for _, group := range groups {
-			var groupEnd time.Time
-			for _, rt := range group {
-				childStart := cursor
-				childEnd := addWorkDays(cursor, rt.workDays)
-				roleID := rt.roleID
-				child := &domain.GanttTask{
-					EpicID:       epicID,
-					RoleID:       &roleID,
-					Name:         rt.roleName,
-					StartDate:    childStart,
-					EndDate:      childEnd,
-					SortOrder:    rt.sortOrder,
-					IsParent:     false,
-					ParentTaskID: &parentTask.ID,
-				}
-				child, err = s.repo.CreateGanttTask(ctx, child)
-				if err != nil {
-					return nil, fmt.Errorf("%s: create child %s: %w", op, rt.roleName, err)
-				}
-				result = append(result, *child)
-				if groupEnd.IsZero() || childEnd.After(groupEnd) {
-					groupEnd = childEnd
-				}
-			}
-			if parentEndDate.Before(groupEnd) {
-				parentEndDate = groupEnd
-			}
-			cursor = moveToWorkDay(groupEnd.AddDate(0, 0, 1))
-		}
-
-		if err := s.repo.UpdateGanttTaskDates(ctx, parentTask.ID, adjustedStartDate, parentEndDate); err != nil {
-			return nil, fmt.Errorf("%s: update parent dates: %w", op, err)
-		}
-		result[0].EndDate = parentEndDate
+	result, err := s.RecalculateTeamSchedule(ctx, epic.TeamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: recalc schedule: %w", op, err)
 	}
 
 	s.log.Info("generated gantt tasks",
@@ -332,12 +252,360 @@ func (s *Service) GenerateTasksForEpic(
 	return result, nil
 }
 
+// assignNextEpicSortOrder assigns epic the next free position in its
+// team's top-level pipeline queue.
+func (s *Service) assignNextEpicSortOrder(ctx context.Context, epic *domain.Epic) error {
+	op := "gantt.assignNextEpicSortOrder"
+
+	epics, err := s.repo.GetTeamEpicsOrdered(ctx, epic.TeamID)
+	if err != nil {
+		return fmt.Errorf("%s: get team epics: %w", op, err)
+	}
+	next := 1
+	for _, e := range epics {
+		if e.SortOrder != nil && *e.SortOrder >= next {
+			next = *e.SortOrder + 1
+		}
+	}
+	if err := s.repo.UpdateEpicSortOrder(ctx, epic.ID, next); err != nil {
+		return fmt.Errorf("%s: update sort order: %w", op, err)
+	}
+	return nil
+}
+
+// RecalculateTeamSchedule rebuilds the pipeline schedule for the whole team:
+// all epics (ordered by epics.sort_order) -> their stories (ordered by
+// epics.sort_order, a "story" being either a real story row or, for legacy
+// epics without stories, the epic itself) -> role tasks within a story
+// (grouped by defaultRoleOrder, unchanged from before). Unlike the old
+// per-epic wave layout, a role does not wait for its siblings from other
+// roles to finish the previous story before starting the next one: as soon
+// as a role finishes its task in story N, it can start story N+1's task for
+// that same role, as long as story N+1's earlier-order roles (e.g. the
+// analyst) have already finished for that particular story.
+//
+// Tasks that are already in progress (Progress > 0) or fully completed
+// (ActualEndDate set) are frozen — their StartDate/EndDate are left
+// untouched — but their effective completion (ActualEndDate if set,
+// otherwise EndDate) is still used as the earliest possible start for that
+// role's next task in the pipeline, so a fact that differs from the plan
+// reshuffles everything downstream.
+func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error) {
+	op := "gantt.RecalculateTeamSchedule"
+
+	epics, err := s.repo.GetTeamEpicsOrdered(ctx, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get team epics: %w", op, err)
+	}
+
+	// First pass: collect the Gantt rows of every in-scope epic (those that
+	// already have a generated chart) and derive a single team-wide floor —
+	// the earliest currently recorded epic parent StartDate. A *per-epic*
+	// floor read from that same (mutable) field would drift upward every
+	// time an epic happens to be scheduled later due to its position in the
+	// queue, and that drift would then persist even after the epic is
+	// reordered back to the front — defeating ReorderEpic/ReorderStory.
+	// A single team floor, recomputed fresh at the start of every call from
+	// whichever epic currently holds the earliest date, self-corrects instead.
+	type epicWithTasks struct {
+		epic  domain.Epic
+		tasks []domain.GanttTask
+	}
+	var inScope []epicWithTasks
+	var teamFloor time.Time
+	for _, epic := range epics {
+		hasTasks, err := s.repo.HasGanttTasksForEpic(ctx, epic.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: check tasks for epic %s: %w", op, epic.ID, err)
+		}
+		if !hasTasks {
+			continue
+		}
+		epicTasks, err := s.repo.GetGanttTasksByEpicID(ctx, epic.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: get epic tasks: %w", op, err)
+		}
+		inScope = append(inScope, epicWithTasks{epic: epic, tasks: epicTasks})
+
+		for _, t := range epicTasks {
+			if t.IsParent && t.ParentTaskID == nil {
+				floor := moveToWorkDay(t.StartDate)
+				if teamFloor.IsZero() || floor.Before(teamFloor) {
+					teamFloor = floor
+				}
+			}
+		}
+	}
+
+	// roleFreeAt tracks, per role, the effective completion time of that
+	// role's latest task processed so far. Recomputed from scratch on every
+	// call so there's no state drift between calls.
+	roleFreeAt := make(map[uuid.UUID]time.Time)
+
+	for _, ewt := range inScope {
+		if err := s.recalculateEpicSchedule(ctx, ewt.epic, ewt.tasks, teamFloor, roleFreeAt); err != nil {
+			return nil, fmt.Errorf("%s: epic %s: %w", op, ewt.epic.ID, err)
+		}
+	}
+
+	return s.GetTeamTasks(ctx, teamID)
+}
+
+// recalculateEpicSchedule recalculates dates and aggregated progress for a
+// single epic's tasks (its stories/legacy role tasks), advancing roleFreeAt
+// as it goes. teamFloor is the team-wide lower bound (see RecalculateTeamSchedule).
+func (s *Service) recalculateEpicSchedule(
+	ctx context.Context,
+	epic domain.Epic,
+	epicTasks []domain.GanttTask,
+	teamFloor time.Time,
+	roleFreeAt map[uuid.UUID]time.Time,
+) error {
+	op := "gantt.recalculateEpicSchedule"
+
+	var epicParent *domain.GanttTask
+	storyTasksByName := make(map[string]*domain.GanttTask)
+	roleTasksByParent := make(map[uuid.UUID][]domain.GanttTask)
+
+	for i := range epicTasks {
+		t := epicTasks[i]
+		switch {
+		case t.IsParent && t.ParentTaskID == nil:
+			cp := t
+			epicParent = &cp
+		case t.IsParent && t.ParentTaskID != nil:
+			cp := t
+			storyTasksByName[t.Name] = &cp
+		case !t.IsParent && t.ParentTaskID != nil:
+			roleTasksByParent[*t.ParentTaskID] = append(roleTasksByParent[*t.ParentTaskID], t)
+		}
+	}
+	if epicParent == nil {
+		return nil
+	}
+
+	// epicFloor is the team-wide lower bound (see RecalculateTeamSchedule):
+	// no task of any epic is scheduled earlier than this, regardless of
+	// queue position, so reordering epics/stories can always move a unit's
+	// tasks earlier, not just later.
+	epicFloor := teamFloor
+
+	stories, err := s.repo.GetStoriesByEpicID(ctx, epic.ID)
+	if err != nil {
+		return fmt.Errorf("%s: get stories: %w", op, err)
+	}
+
+	type unit struct {
+		task  *domain.GanttTask
+		roles []domain.GanttTask
+	}
+	var units []unit
+	if len(stories) > 0 {
+		for _, story := range stories {
+			name := fmt.Sprintf("%s: %s", story.Number, story.Name)
+			st, ok := storyTasksByName[name]
+			if !ok {
+				// Story exists but its Gantt row hasn't been generated
+				// (shouldn't normally happen once HasGanttTasksForEpic is
+				// true, but be defensive rather than panic).
+				continue
+			}
+			units = append(units, unit{task: st, roles: roleTasksByParent[st.ID]})
+		}
+	} else {
+		units = append(units, unit{task: epicParent, roles: roleTasksByParent[epicParent.ID]})
+	}
+
+	var epicStart, epicEnd time.Time
+	epicHasBounds := false
+	var epicProgressSum, epicWeightSum float64
+
+	for _, u := range units {
+		if len(u.roles) == 0 {
+			continue
+		}
+
+		groups := groupGanttTasksBySortOrder(u.roles)
+		groupPrevEnd := epicFloor
+
+		var storyStart, storyEnd time.Time
+		storyHasBounds := false
+		var storyProgressSum, storyWeightSum float64
+
+		for _, group := range groups {
+			var groupEnd time.Time
+			for _, task := range group {
+				if task.RoleID == nil {
+					continue
+				}
+				roleID := *task.RoleID
+				workDays := max(1, countWorkDays(task.StartDate, task.EndDate))
+
+				var effectiveEnd time.Time
+				frozen := task.Progress > 0 || task.ActualEndDate != nil
+				if frozen {
+					effectiveEnd = task.EndDate
+					if task.ActualEndDate != nil {
+						effectiveEnd = *task.ActualEndDate
+					}
+				} else {
+					// roleFreeAt stores the last busy day of the role's
+					// previous task (its "effective end"), not the next
+					// available day — advance it by one work day here so
+					// the new task starts strictly after the previous one
+					// ends, matching groupPrevEnd's own "+1 work day" semantics.
+					roleNextAvailable := roleFreeAt[roleID]
+					if !roleNextAvailable.IsZero() {
+						roleNextAvailable = moveToWorkDay(roleNextAvailable.AddDate(0, 0, 1))
+					}
+					newStart := moveToWorkDay(maxTime(groupPrevEnd, roleNextAvailable, epicFloor))
+					newEnd := addWorkDays(newStart, workDays)
+					if !newStart.Equal(task.StartDate) || !newEnd.Equal(task.EndDate) {
+						if err := s.repo.UpdateGanttTaskDates(ctx, task.ID, newStart, newEnd); err != nil {
+							return fmt.Errorf("%s: update role task: %w", op, err)
+						}
+					}
+					task.StartDate = newStart
+					task.EndDate = newEnd
+					effectiveEnd = newEnd
+				}
+
+				if cur, ok := roleFreeAt[roleID]; !ok || effectiveEnd.After(cur) {
+					roleFreeAt[roleID] = effectiveEnd
+				}
+				if groupEnd.IsZero() || effectiveEnd.After(groupEnd) {
+					groupEnd = effectiveEnd
+				}
+
+				if !storyHasBounds || task.StartDate.Before(storyStart) {
+					storyStart = task.StartDate
+				}
+				if !storyHasBounds || task.EndDate.After(storyEnd) {
+					storyEnd = task.EndDate
+				}
+				storyHasBounds = true
+
+				weight := float64(workDays)
+				storyProgressSum += task.Progress * weight
+				storyWeightSum += weight
+			}
+			groupPrevEnd = moveToWorkDay(groupEnd.AddDate(0, 0, 1))
+		}
+
+		if !storyHasBounds {
+			continue
+		}
+
+		storyProgress := 0.0
+		if storyWeightSum > 0 {
+			storyProgress = storyProgressSum / storyWeightSum
+		}
+
+		// For legacy epics without stories, u.task IS the epic parent task —
+		// its dates/progress are set once below, no separate story row exists.
+		if u.task.ID != epicParent.ID {
+			if !u.task.StartDate.Equal(storyStart) || !u.task.EndDate.Equal(storyEnd) {
+				if err := s.repo.UpdateGanttTaskDates(ctx, u.task.ID, storyStart, storyEnd); err != nil {
+					return fmt.Errorf("%s: update story task dates: %w", op, err)
+				}
+			}
+			if err := s.repo.UpdateGanttTaskProgress(ctx, u.task.ID, storyProgress); err != nil {
+				return fmt.Errorf("%s: update story task progress: %w", op, err)
+			}
+		}
+
+		if !epicHasBounds || storyStart.Before(epicStart) {
+			epicStart = storyStart
+		}
+		if !epicHasBounds || storyEnd.After(epicEnd) {
+			epicEnd = storyEnd
+		}
+		epicHasBounds = true
+
+		epicProgressSum += storyProgress * storyWeightSum
+		epicWeightSum += storyWeightSum
+	}
+
+	if !epicHasBounds {
+		return nil
+	}
+
+	epicProgress := 0.0
+	if epicWeightSum > 0 {
+		epicProgress = epicProgressSum / epicWeightSum
+	}
+	if !epicParent.StartDate.Equal(epicStart) || !epicParent.EndDate.Equal(epicEnd) {
+		if err := s.repo.UpdateGanttTaskDates(ctx, epicParent.ID, epicStart, epicEnd); err != nil {
+			return fmt.Errorf("%s: update epic dates: %w", op, err)
+		}
+	}
+	if err := s.repo.UpdateGanttTaskProgress(ctx, epicParent.ID, epicProgress); err != nil {
+		return fmt.Errorf("%s: update epic progress: %w", op, err)
+	}
+
+	return nil
+}
+
+// SetTaskProgress sets the progress of a leaf (role) task and, when it
+// reaches 100%, automatically fixes the completion fact (actual end date +
+// actual effort in working days between the task's current planned start
+// and now). Dropping progress back below 100% on a previously completed
+// task clears that fact (reopening it). Progress cannot be set directly on
+// a parent (story/epic) task — it's always aggregated from its children.
+// Recalculates the whole team's pipeline schedule afterwards, since a fact
+// that differs from the plan can reshuffle downstream tasks.
+func (s *Service) SetTaskProgress(
+	ctx context.Context,
+	taskID uuid.UUID,
+	progress float64,
+) ([]domain.GanttTask, error) {
+	op := "gantt.SetTaskProgress"
+
+	task, err := s.repo.GetGanttTaskByID(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get task: %w", op, err)
+	}
+	if task.IsParent {
+		return nil, fmt.Errorf(
+			"%s: progress of a story/epic is aggregated automatically and cannot be set directly", op,
+		)
+	}
+
+	if err := s.repo.UpdateGanttTaskProgress(ctx, taskID, progress); err != nil {
+		return nil, fmt.Errorf("%s: update progress: %w", op, err)
+	}
+
+	switch {
+	case progress >= 100 && task.ActualEndDate == nil:
+		actualEnd := toMidnight(time.Now())
+		effort := max(1, countWorkDays(task.StartDate, actualEnd))
+		if err := s.repo.UpdateGanttTaskActuals(ctx, taskID, actualEnd, effort); err != nil {
+			return nil, fmt.Errorf("%s: update actuals: %w", op, err)
+		}
+	case progress < 100 && task.ActualEndDate != nil:
+		if err := s.repo.ClearGanttTaskActuals(ctx, taskID); err != nil {
+			return nil, fmt.Errorf("%s: clear actuals: %w", op, err)
+		}
+	}
+
+	epic, err := s.repo.GetEpicByID(ctx, task.EpicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get epic: %w", op, err)
+	}
+
+	result, err := s.RecalculateTeamSchedule(ctx, epic.TeamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: recalc schedule: %w", op, err)
+	}
+	return result, nil
+}
+
 // GetTeamTasks returns Gantt tasks for a team ordered hierarchically:
 // epic -> its stories (by sort_order) -> role tasks of each story (by sort_order).
 // Repository.GetGanttTasksByTeamID sorts tasks in a flat space
-// (ORDER BY e.number, sort_order, name) without grouping by parent_task_id,
-// so rows of different levels/stories end up interleaved. Rebuild the
-// correct order explicitly here instead of touching the SQL/stored values.
+// (ORDER BY e.sort_order, e.number, sort_order, name) without grouping by
+// parent_task_id, so rows of different levels/stories end up interleaved.
+// Rebuild the correct order explicitly here instead of touching the SQL/stored values.
 func (s *Service) GetTeamTasks(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error) {
 	op := "gantt.GetTeamTasks"
 
@@ -351,7 +619,7 @@ func (s *Service) GetTeamTasks(ctx context.Context, teamID uuid.UUID) ([]domain.
 
 // orderTasksHierarchically restores correct parent-child row order.
 // Roots (tasks without a parent, i.e. epics) keep their incoming relative
-// order — the SQL query already returns them ordered by epic number.
+// order — the SQL query already returns them ordered by epics.sort_order.
 // Each parent's direct children are grouped together and sorted stably
 // by (SortOrder, Name), then the tree is walked depth-first so that every
 // story's role rows immediately follow that story, regardless of depth.
@@ -405,22 +673,29 @@ func appendSubtree(
 	return result
 }
 
-// groupBySortOrder groups role tasks by their sort order,
-// preserving the order of groups.
-func groupBySortOrder(items []roleTask) [][]roleTask {
-	if len(items) == 0 {
+// groupGanttTasksBySortOrder groups already-persisted role tasks by their
+// sort_order (roles meant to run in parallel share the same value),
+// preserving the relative order of groups and of tasks within a group.
+func groupGanttTasksBySortOrder(tasks []domain.GanttTask) [][]domain.GanttTask {
+	if len(tasks) == 0 {
 		return nil
 	}
-	var groups [][]roleTask
-	var current []roleTask
-	currentOrder := items[0].sortOrder
-	for _, item := range items {
-		if item.sortOrder != currentOrder {
+	sorted := make([]domain.GanttTask, len(tasks))
+	copy(sorted, tasks)
+	slices.SortStableFunc(sorted, func(a, b domain.GanttTask) int {
+		return a.SortOrder - b.SortOrder
+	})
+
+	var groups [][]domain.GanttTask
+	var current []domain.GanttTask
+	currentOrder := sorted[0].SortOrder
+	for _, t := range sorted {
+		if t.SortOrder != currentOrder {
 			groups = append(groups, current)
 			current = nil
-			currentOrder = item.sortOrder
+			currentOrder = t.SortOrder
 		}
-		current = append(current, item)
+		current = append(current, t)
 	}
 	if len(current) > 0 {
 		groups = append(groups, current)
@@ -428,40 +703,9 @@ func groupBySortOrder(items []roleTask) [][]roleTask {
 	return groups
 }
 
-// UpdateTaskDates updates a task's dates and recalculates the parent.
-func (s *Service) UpdateTaskDates(
-	ctx context.Context,
-	taskID uuid.UUID,
-	startDate, endDate time.Time,
-) error {
-	op := "gantt.UpdateTaskDates"
-
-	workDays := max(1, countWorkDays(startDate, endDate))
-	adjustedStart := moveToWorkDay(startDate)
-	adjustedEnd := addWorkDays(adjustedStart, workDays)
-
-	if err := s.repo.UpdateGanttTaskDates(
-		ctx, taskID, adjustedStart, adjustedEnd,
-	); err != nil {
-		return fmt.Errorf("%s: %w", op, err)
-	}
-
-	task, err := s.repo.GetGanttTaskByID(ctx, taskID)
-	if err != nil {
-		return fmt.Errorf("%s: get task: %w", op, err)
-	}
-
-	// If this is a child task, recalculate parent bounds.
-	if task.ParentTaskID != nil {
-		if err := s.recalcParentDates(ctx, *task.ParentTaskID); err != nil {
-			return fmt.Errorf("%s: recalc parent: %w", op, err)
-		}
-	}
-
-	return nil
-}
-
-// ReorderTask changes a task's sort_order and recalculates sibling dates.
+// ReorderTask changes a role task's sort_order within its story (or,
+// for legacy epics, within the epic) and recalculates the whole team's
+// pipeline schedule.
 func (s *Service) ReorderTask(
 	ctx context.Context,
 	taskID uuid.UUID,
@@ -478,6 +722,11 @@ func (s *Service) ReorderTask(
 			"%s: cannot reorder parent task", op,
 		)
 	}
+	if task.ParentTaskID == nil {
+		return nil, fmt.Errorf(
+			"%s: child task has no parent", op,
+		)
+	}
 
 	if err := s.repo.UpdateGanttTaskSortOrder(
 		ctx, taskID, newSortOrder,
@@ -485,136 +734,119 @@ func (s *Service) ReorderTask(
 		return nil, fmt.Errorf("%s: update sort: %w", op, err)
 	}
 
-	// Recalculate all sibling dates based on new order.
-	if task.ParentTaskID == nil {
-		return nil, fmt.Errorf(
-			"%s: child task has no parent", op,
-		)
+	epic, err := s.repo.GetEpicByID(ctx, task.EpicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get epic: %w", op, err)
 	}
 
-	return s.recalcSiblingDates(ctx, *task.ParentTaskID)
+	return s.RecalculateTeamSchedule(ctx, epic.TeamID)
 }
 
-// recalcSiblingDates recalculates dates for all children of a parent
-// based on their sort_order groups, then updates the parent.
-func (s *Service) recalcSiblingDates(
+// ReorderEpic changes a top-level epic's place in its team's pipeline queue
+// and recalculates the whole team's schedule.
+func (s *Service) ReorderEpic(
 	ctx context.Context,
-	parentID uuid.UUID,
+	epicID uuid.UUID,
+	newSortOrder int,
 ) ([]domain.GanttTask, error) {
-	op := "gantt.recalcSiblingDates"
+	op := "gantt.ReorderEpic"
 
-	parent, err := s.repo.GetGanttTaskByID(ctx, parentID)
+	epic, err := s.repo.GetEpicByID(ctx, epicID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: get parent: %w", op, err)
+		return nil, fmt.Errorf("%s: get epic: %w", op, err)
+	}
+	if epic.ParentEpicID != nil {
+		return nil, fmt.Errorf("%s: use ReorderStory to reorder a story", op)
 	}
 
-	children, err := s.repo.GetGanttChildTasks(ctx, parentID)
-	if err != nil {
-		return nil, fmt.Errorf("%s: get children: %w", op, err)
-	}
-	if len(children) == 0 {
-		return []domain.GanttTask{*parent}, nil
+	if err := s.repo.UpdateEpicSortOrder(ctx, epicID, newSortOrder); err != nil {
+		return nil, fmt.Errorf("%s: update sort: %w", op, err)
 	}
 
-	// Group children by sort_order.
-	type group struct {
-		order    int
-		children []domain.GanttTask
-	}
-	var groups []group
-	var current *group
-	for _, c := range children {
-		if current == nil || current.order != c.SortOrder {
-			if current != nil {
-				groups = append(groups, *current)
-			}
-			current = &group{order: c.SortOrder}
-		}
-		current.children = append(current.children, c)
-	}
-	if current != nil {
-		groups = append(groups, *current)
-	}
-
-	// Lay out sequentially.
-	parentStartDate := moveToWorkDay(parent.StartDate)
-	cursor := parentStartDate
-	parentEndDate := parentStartDate
-	for _, g := range groups {
-		var groupEnd time.Time
-		for i := range g.children {
-			workDays := max(1, countWorkDays(g.children[i].StartDate, g.children[i].EndDate))
-			newStart := cursor
-			newEnd := addWorkDays(newStart, workDays)
-			g.children[i].StartDate = newStart
-			g.children[i].EndDate = newEnd
-			if err := s.repo.UpdateGanttTaskDates(
-				ctx, g.children[i].ID, newStart, newEnd,
-			); err != nil {
-				return nil, fmt.Errorf(
-					"%s: update child: %w", op, err,
-				)
-			}
-			if groupEnd.IsZero() || newEnd.After(groupEnd) {
-				groupEnd = newEnd
-			}
-		}
-		if parentEndDate.Before(groupEnd) {
-			parentEndDate = groupEnd
-		}
-		cursor = moveToWorkDay(groupEnd.AddDate(0, 0, 1))
-	}
-
-	// Update parent.
-	if err := s.repo.UpdateGanttTaskDates(
-		ctx, parentID, parentStartDate, parentEndDate,
-	); err != nil {
-		return nil, fmt.Errorf(
-			"%s: update parent: %w", op, err,
-		)
-	}
-	parent.StartDate = parentStartDate
-	parent.EndDate = parentEndDate
-
-	// Return updated task list.
-	var result []domain.GanttTask
-	result = append(result, *parent)
-	for _, g := range groups {
-		result = append(result, g.children...)
-	}
-	return result, nil
+	return s.RecalculateTeamSchedule(ctx, epic.TeamID)
 }
 
-// recalcParentDates recalculates a parent task's start/end
-// from its children's bounds.
-func (s *Service) recalcParentDates(
+// ReorderStory changes a story's place in its parent epic's pipeline queue.
+// If the story already has a generated Gantt row, the sort_order of the
+// corresponding story-level gantt_tasks rows among its siblings is
+// re-synced to match the new epics.sort_order order, so the rendered tree
+// (orderTasksHierarchically, which sorts by gantt_tasks.sort_order) stays
+// consistent with the pipeline order. Recalculates the whole team's
+// schedule afterwards.
+func (s *Service) ReorderStory(
 	ctx context.Context,
-	parentID uuid.UUID,
-) error {
-	op := "gantt.recalcParentDates"
+	storyID uuid.UUID,
+	newSortOrder int,
+) ([]domain.GanttTask, error) {
+	op := "gantt.ReorderStory"
 
-	children, err := s.repo.GetGanttChildTasks(ctx, parentID)
+	story, err := s.repo.GetEpicByID(ctx, storyID)
 	if err != nil {
-		return fmt.Errorf("%s: %w", op, err)
+		return nil, fmt.Errorf("%s: get story: %w", op, err)
 	}
-	if len(children) == 0 {
+	if story.ParentEpicID == nil {
+		return nil, fmt.Errorf("%s: use ReorderEpic to reorder a top-level epic", op)
+	}
+	parentEpicID := *story.ParentEpicID
+
+	if err := s.repo.UpdateEpicSortOrder(ctx, storyID, newSortOrder); err != nil {
+		return nil, fmt.Errorf("%s: update sort: %w", op, err)
+	}
+
+	if err := s.syncStoryGanttSortOrder(ctx, parentEpicID); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	epic, err := s.repo.GetEpicByID(ctx, parentEpicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get parent epic: %w", op, err)
+	}
+
+	return s.RecalculateTeamSchedule(ctx, epic.TeamID)
+}
+
+// syncStoryGanttSortOrder re-numbers the sort_order of story-level
+// gantt_tasks rows under parentEpicID to match the current epics.sort_order
+// order of its stories. No-op if the parent epic has no generated tasks yet.
+func (s *Service) syncStoryGanttSortOrder(ctx context.Context, parentEpicID uuid.UUID) error {
+	op := "gantt.syncStoryGanttSortOrder"
+
+	hasTasks, err := s.repo.HasGanttTasksForEpic(ctx, parentEpicID)
+	if err != nil {
+		return fmt.Errorf("%s: check tasks: %w", op, err)
+	}
+	if !hasTasks {
 		return nil
 	}
 
-	minStart := children[0].StartDate
-	maxEnd := children[0].EndDate
-	for _, c := range children[1:] {
-		if c.StartDate.Before(minStart) {
-			minStart = c.StartDate
-		}
-		if c.EndDate.After(maxEnd) {
-			maxEnd = c.EndDate
+	siblings, err := s.repo.GetStoriesByEpicID(ctx, parentEpicID)
+	if err != nil {
+		return fmt.Errorf("%s: get sibling stories: %w", op, err)
+	}
+
+	epicTasks, err := s.repo.GetGanttTasksByEpicID(ctx, parentEpicID)
+	if err != nil {
+		return fmt.Errorf("%s: get epic tasks: %w", op, err)
+	}
+
+	taskIDByStoryName := make(map[string]uuid.UUID)
+	for _, t := range epicTasks {
+		if t.IsParent && t.ParentTaskID != nil {
+			taskIDByStoryName[t.Name] = t.ID
 		}
 	}
 
-	return s.repo.UpdateGanttTaskDates(
-		ctx, parentID, minStart, maxEnd,
-	)
+	for i, sibling := range siblings {
+		name := fmt.Sprintf("%s: %s", sibling.Number, sibling.Name)
+		taskID, ok := taskIDByStoryName[name]
+		if !ok {
+			continue
+		}
+		if err := s.repo.UpdateGanttTaskSortOrder(ctx, taskID, i+1); err != nil {
+			return fmt.Errorf("%s: sync story task sort order: %w", op, err)
+		}
+	}
+	return nil
 }
 
 // toMidnight returns a time with the same date as t but set to midnight (00:00:00).
@@ -665,4 +897,17 @@ func countWorkDays(start, end time.Time) int {
 		s = s.AddDate(0, 0, 1)
 	}
 	return count
+}
+
+// maxTime returns the latest of the given times (zero-value times.Time{}
+// compare as the earliest possible date, so callers don't need to special-
+// case "not set yet" values such as roleFreeAt's zero-value default).
+func maxTime(times ...time.Time) time.Time {
+	m := times[0]
+	for _, t := range times[1:] {
+		if t.After(m) {
+			m = t
+		}
+	}
+	return m
 }

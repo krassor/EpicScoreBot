@@ -16,3 +16,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
+
+// writeErrorCode writes a JSON error response in the project's standard
+// structured format: {"error":{"code":"...","message":"..."}}. Use this for
+// errors the frontend needs to branch on programmatically (by code), rather
+// than the plain writeError string form.
+func writeErrorCode(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]any{
+		"error": map[string]string{
+			"code":    code,
+			"message": message,
+		},
+	})
+}

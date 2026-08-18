@@ -57,8 +57,12 @@ type Epic struct {
 	Type              string       `json:"type"`
 	EvaluatingRoleIDs []uuid.UUID  `json:"evaluating_role_ids,omitempty"`
 	ParentEpicID      *uuid.UUID   `json:"parent_epic_id,omitempty" db:"parent_epic_id"`
-	CreatedAt         time.Time    `json:"created_at"`
-	UpdatedAt         time.Time    `json:"updated_at"`
+	// SortOrder — явный порядок в очереди конвейерного планировщика: для
+	// топ-эпиков (ParentEpicID == nil) — очередь в рамках команды (TeamID),
+	// для сторей — очередь в рамках родительского эпика (ParentEpicID).
+	SortOrder *int      `json:"sort_order,omitempty" db:"sort_order"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // UpdateEpicReq holds fields for updating an epic.

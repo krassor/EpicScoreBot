@@ -59,6 +59,8 @@ type MockRepository struct {
 	GetEpicsByTeamIDAndStatusFunc func(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
 	GetStoriesByEpicIDFunc        func(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 	CountStoriesByEpicIDFunc      func(ctx context.Context, epicID uuid.UUID) (int, error)
+	GetTeamEpicsOrderedFunc       func(ctx context.Context, teamID uuid.UUID) ([]domain.Epic, error)
+	UpdateEpicSortOrderFunc       func(ctx context.Context, epicID uuid.UUID, sortOrder int) error
 	UpdateEpicFunc                func(ctx context.Context, epic *domain.Epic, newEvaluatingRoles []uuid.UUID, oldNumber string) error
 	UpdateStoryFunc               func(ctx context.Context, story *domain.Epic) error
 
@@ -468,6 +470,20 @@ func (m *MockRepository) CountStoriesByEpicID(ctx context.Context, epicID uuid.U
 		return m.CountStoriesByEpicIDFunc(ctx, epicID)
 	}
 	return 0, nil
+}
+
+func (m *MockRepository) GetTeamEpicsOrdered(ctx context.Context, teamID uuid.UUID) ([]domain.Epic, error) {
+	if m.GetTeamEpicsOrderedFunc != nil {
+		return m.GetTeamEpicsOrderedFunc(ctx, teamID)
+	}
+	return nil, nil
+}
+
+func (m *MockRepository) UpdateEpicSortOrder(ctx context.Context, epicID uuid.UUID, sortOrder int) error {
+	if m.UpdateEpicSortOrderFunc != nil {
+		return m.UpdateEpicSortOrderFunc(ctx, epicID, sortOrder)
+	}
+	return nil
 }
 
 func (m *MockRepository) UpdateEpic(ctx context.Context, epic *domain.Epic, newEvaluatingRoles []uuid.UUID, oldNumber string) error {

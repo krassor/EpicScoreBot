@@ -11,8 +11,14 @@ import (
 // GanttService defines the business-logic contract used by handlers.
 type GanttService interface {
 	GenerateTasksForEpic(ctx context.Context, epicID uuid.UUID, startDate time.Time) ([]domain.GanttTask, error)
-	UpdateTaskDates(ctx context.Context, taskID uuid.UUID, startDate, endDate time.Time) error
 	ReorderTask(ctx context.Context, taskID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
+	// ReorderEpic меняет позицию топ-эпика в очереди конвейерного планировщика команды.
+	ReorderEpic(ctx context.Context, epicID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
+	// ReorderStory меняет позицию стори в очереди сторей родительского эпика.
+	ReorderStory(ctx context.Context, storyID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
+	// SetTaskProgress выставляет прогресс листовой (ролевой) задачи и
+	// автоматически фиксирует факт завершения при достижении 100%.
+	SetTaskProgress(ctx context.Context, taskID uuid.UUID, progress float64) ([]domain.GanttTask, error)
 	GetTeamTasks(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error)
 }
 

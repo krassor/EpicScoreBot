@@ -3,7 +3,7 @@ package gantt
 import (
 	"EpicScoreBot/internal/models/domain"
 	"context"
-	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -12,166 +12,65 @@ import (
 	"github.com/google/uuid"
 )
 
-type MockRepository struct {
-	GetEpicByIDFunc               func(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error)
-	GetEpicsByTeamIDAndStatusFunc func(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
-	GetAllRolesFunc               func(ctx context.Context) ([]domain.Role, error)
-	GetRoleByIDFunc               func(ctx context.Context, roleID uuid.UUID) (*domain.Role, error)
-	GetAllTeamsFunc               func(ctx context.Context) ([]domain.Team, error)
-	GetTeamByIDFunc               func(ctx context.Context, teamID uuid.UUID) (*domain.Team, error)
-	GetEpicRoleScoresByEpicIDFunc func(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
-	CreateGanttTaskFunc           func(ctx context.Context, task *domain.GanttTask) (*domain.GanttTask, error)
-	GetGanttTasksByTeamIDFunc     func(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error)
-	GetGanttTasksByEpicIDFunc     func(ctx context.Context, epicID uuid.UUID) ([]domain.GanttTask, error)
-	GetGanttTaskByIDFunc          func(ctx context.Context, taskID uuid.UUID) (*domain.GanttTask, error)
-	GetGanttChildTasksFunc        func(ctx context.Context, parentTaskID uuid.UUID) ([]domain.GanttTask, error)
-	UpdateGanttTaskDatesFunc      func(ctx context.Context, taskID uuid.UUID, startDate, endDate time.Time) error
-	UpdateGanttTaskProgressFunc   func(ctx context.Context, taskID uuid.UUID, progress float64) error
-	UpdateGanttTaskSortOrderFunc  func(ctx context.Context, taskID uuid.UUID, sortOrder int) error
-	DeleteGanttTasksByEpicIDFunc  func(ctx context.Context, epicID uuid.UUID) error
-	HasGanttTasksForEpicFunc      func(ctx context.Context, epicID uuid.UUID) (bool, error)
-	GetRisksByEpicIDFunc          func(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
-	GetStoriesByEpicIDFunc        func(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
+func newTestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func (m *MockRepository) GetEpicByID(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error) {
-	if m.GetEpicByIDFunc != nil {
-		return m.GetEpicByIDFunc(ctx, epicID)
-	}
-	return nil, nil
+func floatPtr(f float64) *float64 {
+	return &f
 }
-func (m *MockRepository) GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error) {
-	if m.GetEpicsByTeamIDAndStatusFunc != nil {
-		return m.GetEpicsByTeamIDAndStatusFunc(ctx, teamID, status)
-	}
-	return nil, nil
+
+// storyName mirrors the "<number>: <name>" format used to build story/epic
+// Gantt task names in GenerateTasksForEpic/recalculateEpicSchedule.
+func storyName(e *domain.Epic) string {
+	return fmt.Sprintf("%s: %s", e.Number, e.Name)
 }
-func (m *MockRepository) GetAllRoles(ctx context.Context) ([]domain.Role, error) {
-	if m.GetAllRolesFunc != nil {
-		return m.GetAllRolesFunc(ctx)
-	}
-	return nil, nil
-}
-func (m *MockRepository) GetRoleByID(ctx context.Context, roleID uuid.UUID) (*domain.Role, error) {
-	if m.GetRoleByIDFunc != nil {
-		return m.GetRoleByIDFunc(ctx, roleID)
-	}
-	return nil, nil
-}
-func (m *MockRepository) GetAllTeams(ctx context.Context) ([]domain.Team, error) {
-	if m.GetAllTeamsFunc != nil {
-		return m.GetAllTeamsFunc(ctx)
-	}
-	return nil, nil
-}
-func (m *MockRepository) GetTeamByID(ctx context.Context, teamID uuid.UUID) (*domain.Team, error) {
-	if m.GetTeamByIDFunc != nil {
-		return m.GetTeamByIDFunc(ctx, teamID)
-	}
-	return nil, nil
-}
-func (m *MockRepository) GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error) {
-	if m.GetEpicRoleScoresByEpicIDFunc != nil {
-		return m.GetEpicRoleScoresByEpicIDFunc(ctx, epicID)
-	}
-	return nil, nil
-}
-func (m *MockRepository) CreateGanttTask(ctx context.Context, task *domain.GanttTask) (*domain.GanttTask, error) {
-	if m.CreateGanttTaskFunc != nil {
-		return m.CreateGanttTaskFunc(ctx, task)
-	}
-	return task, nil
-}
-func (m *MockRepository) GetGanttTasksByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error) {
-	if m.GetGanttTasksByTeamIDFunc != nil {
-		return m.GetGanttTasksByTeamIDFunc(ctx, teamID)
-	}
-	return nil, nil
-}
-func (m *MockRepository) GetGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.GanttTask, error) {
-	if m.GetGanttTasksByEpicIDFunc != nil {
-		return m.GetGanttTasksByEpicIDFunc(ctx, epicID)
-	}
-	return nil, nil
-}
-func (m *MockRepository) GetGanttTaskByID(ctx context.Context, taskID uuid.UUID) (*domain.GanttTask, error) {
-	if m.GetGanttTaskByIDFunc != nil {
-		return m.GetGanttTaskByIDFunc(ctx, taskID)
-	}
-	return nil, nil
-}
-func (m *MockRepository) GetGanttChildTasks(ctx context.Context, parentTaskID uuid.UUID) ([]domain.GanttTask, error) {
-	if m.GetGanttChildTasksFunc != nil {
-		return m.GetGanttChildTasksFunc(ctx, parentTaskID)
-	}
-	return nil, nil
-}
-func (m *MockRepository) UpdateGanttTaskDates(ctx context.Context, taskID uuid.UUID, startDate, endDate time.Time) error {
-	if m.UpdateGanttTaskDatesFunc != nil {
-		return m.UpdateGanttTaskDatesFunc(ctx, taskID, startDate, endDate)
+
+// findTaskByParentAndName locates a task by its parent task ID and name
+// (used to find a specific role task after generation/recalculation).
+func findTaskByParentAndName(f *fakeRepo, parentID uuid.UUID, name string) *domain.GanttTask {
+	for _, t := range f.tasks {
+		if t.ParentTaskID != nil && *t.ParentTaskID == parentID && t.Name == name {
+			return t
+		}
 	}
 	return nil
 }
-func (m *MockRepository) UpdateGanttTaskProgress(ctx context.Context, taskID uuid.UUID, progress float64) error {
-	if m.UpdateGanttTaskProgressFunc != nil {
-		return m.UpdateGanttTaskProgressFunc(ctx, taskID, progress)
+
+// findStoryTask locates a story-level (IsParent) task by its epic-scoped
+// name (e.g. "E-1-S1: Story 1"), regardless of its current ParentTaskID.
+func findStoryTask(f *fakeRepo, name string) *domain.GanttTask {
+	for _, t := range f.tasks {
+		if t.IsParent && t.Name == name {
+			return t
+		}
 	}
 	return nil
-}
-func (m *MockRepository) UpdateGanttTaskSortOrder(ctx context.Context, taskID uuid.UUID, sortOrder int) error {
-	if m.UpdateGanttTaskSortOrderFunc != nil {
-		return m.UpdateGanttTaskSortOrderFunc(ctx, taskID, sortOrder)
-	}
-	return nil
-}
-func (m *MockRepository) DeleteGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID) error {
-	if m.DeleteGanttTasksByEpicIDFunc != nil {
-		return m.DeleteGanttTasksByEpicIDFunc(ctx, epicID)
-	}
-	return nil
-}
-func (m *MockRepository) HasGanttTasksForEpic(ctx context.Context, epicID uuid.UUID) (bool, error) {
-	if m.HasGanttTasksForEpicFunc != nil {
-		return m.HasGanttTasksForEpicFunc(ctx, epicID)
-	}
-	return false, nil
-}
-func (m *MockRepository) GetRisksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error) {
-	if m.GetRisksByEpicIDFunc != nil {
-		return m.GetRisksByEpicIDFunc(ctx, epicID)
-	}
-	return nil, nil
-}
-func (m *MockRepository) GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error) {
-	if m.GetStoriesByEpicIDFunc != nil {
-		return m.GetStoriesByEpicIDFunc(ctx, epicID)
-	}
-	return nil, nil
 }
 
 func TestMoveToWorkDay(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		input time.Time
 		want  time.Time
 	}{
 		{
-			name: "Monday remains Monday",
+			name:  "Monday remains Monday",
 			input: time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC), // Monday
 			want:  time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC),
 		},
 		{
-			name: "Friday remains Friday",
+			name:  "Friday remains Friday",
 			input: time.Date(2026, 7, 10, 15, 30, 0, 0, time.UTC), // Friday
 			want:  time.Date(2026, 7, 10, 15, 30, 0, 0, time.UTC),
 		},
 		{
-			name: "Saturday moves to Monday",
+			name:  "Saturday moves to Monday",
 			input: time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC), // Saturday
 			want:  time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC), // Monday
 		},
 		{
-			name: "Sunday moves to Monday",
+			name:  "Sunday moves to Monday",
 			input: time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC), // Sunday
 			want:  time.Date(2026, 7, 13, 9, 0, 0, 0, time.UTC), // Monday
 		},
@@ -285,101 +184,77 @@ func TestCountWorkDays(t *testing.T) {
 	}
 }
 
-func TestGenerateTasksForEpic(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ctx := context.Background()
-
-	epicID := uuid.New()
-	roleID1 := uuid.New()
-	roleID2 := uuid.New()
-
-	mockEpic := &domain.Epic{
-		ID:     epicID,
-		Number: "E-1",
-		Name:   "Epic One",
+// TestRiskCoefficient проверяет граничные значения взвешенного риск-скора,
+// от которых напрямую зависит длительность (workDays) ролевых задач в
+// конвейерном планировщике.
+func TestRiskCoefficient(t *testing.T) {
+	tests := []struct {
+		name          string
+		weightedScore float64
+		want          float64
+	}{
+		{name: "well below lowest threshold", weightedScore: 0, want: 1.03},
+		{name: "just below 5 -> lowest tier", weightedScore: 4, want: 1.03},
+		{name: "exactly 5 -> crosses into 1.05 tier", weightedScore: 5, want: 1.05},
+		{name: "just below 9 -> still 1.05 tier", weightedScore: 8, want: 1.05},
+		{name: "exactly 9 -> crosses into 1.10 tier", weightedScore: 9, want: 1.10},
+		{name: "just below 13 -> still 1.10 tier", weightedScore: 12, want: 1.10},
+		{name: "exactly 13 -> crosses into 1.20 tier", weightedScore: 13, want: 1.20},
+		{name: "well above highest threshold", weightedScore: 20, want: 1.20},
 	}
 
-	mockRoleScores := []domain.EpicRoleScore{
-		{
-			EpicID:      epicID,
-			RoleID:      roleID1,
-			WeightedAvg: 3.0,
-		},
-		{
-			EpicID:      epicID,
-			RoleID:      roleID2,
-			WeightedAvg: 2.0,
-		},
-	}
-
-	mockRisks := []domain.Risk{
-		{
-			EpicID:        epicID,
-			WeightedScore: floatPtr(8.0), // coeff 1.05
-		},
-	}
-
-	mockRepo := &MockRepository{
-		GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
-			return mockEpic, nil
-		},
-		HasGanttTasksForEpicFunc: func(ctx context.Context, id uuid.UUID) (bool, error) {
-			return false, nil
-		},
-		GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.EpicRoleScore, error) {
-			return mockRoleScores, nil
-		},
-		GetRisksByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.Risk, error) {
-			return mockRisks, nil
-		},
-		GetRoleByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Role, error) {
-			if id == roleID1 {
-				return &domain.Role{ID: roleID1, Name: "Аналитик"}, nil
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RiskCoefficient(tt.weightedScore)
+			if got != tt.want {
+				t.Errorf("RiskCoefficient(%v) = %v, want %v", tt.weightedScore, got, tt.want)
 			}
-			return &domain.Role{ID: roleID2, Name: "BE разработчик"}, nil
-		},
-		CreateGanttTaskFunc: func(ctx context.Context, task *domain.GanttTask) (*domain.GanttTask, error) {
-			task.ID = uuid.New()
-			return task, nil
-		},
-		UpdateGanttTaskDatesFunc: func(ctx context.Context, id uuid.UUID, start, end time.Time) error {
-			return nil
-		},
+		})
 	}
+}
 
-	service := New(logger, mockRepo)
+// TestGenerateTasksForEpic_Legacy проверяет генерацию плоского Ганта для
+// эпика без сторей (обратная совместимость) и итоговую раскладку дат ролей.
+func TestGenerateTasksForEpic_Legacy(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
 
-	// Wednesday start
+	teamID := uuid.New()
+	epicID := uuid.New()
+	roleID1 := uuid.New() // Аналитик
+	roleID2 := uuid.New() // BE разработчик
+
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic One", TeamID: teamID})
+	f.addRole(&domain.Role{ID: roleID1, Name: "Аналитик"})
+	f.addRole(&domain.Role{ID: roleID2, Name: "BE разработчик"})
+	f.roleScores[epicID] = []domain.EpicRoleScore{
+		{EpicID: epicID, RoleID: roleID1, WeightedAvg: 3.0},
+		{EpicID: epicID, RoleID: roleID2, WeightedAvg: 2.0},
+	}
+	f.risks[epicID] = []domain.Risk{{EpicID: epicID, WeightedScore: floatPtr(8.0)}} // coeff 1.05
+
+	// Wednesday start.
 	start := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
-	tasks, err := service.GenerateTasksForEpic(ctx, epicID, start)
+	tasks, err := svc.GenerateTasksForEpic(ctx, epicID, start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 1 parent task + 2 child tasks
+	// 1 parent task + 2 child tasks.
 	if len(tasks) != 3 {
 		t.Fatalf("expected 3 tasks, got %d", len(tasks))
 	}
 
 	parent := tasks[0]
 	if !parent.IsParent {
-		t.Errorf("expected parent task first")
+		t.Fatalf("expected parent task first")
 	}
 
-	// Coefficients check:
-	// Final coefficient is 1.05.
-	// Role 1 ("Аналитик"): 3.0 * 1.05 = 3.15 -> Ceil -> 4 workDays.
-	// Role 2 ("BE разработчик"): 2.0 * 1.05 = 2.10 -> Ceil -> 3 workDays.
-	// Role 1 starts on Wed Jul 8 (workday).
-	// Wed Jul 8 + 4 workdays (wed, thu, fri, mon) -> ends on Mon Jul 13.
-	// Next group starts on moveToWorkDay(Mon Jul 13 + 1 day) = Tue Jul 14.
-	// Role 2 starts on Tue Jul 14.
-	// Tue Jul 14 + 3 workdays (tue, wed, thu) -> ends on Thu Jul 16.
-	// Parent task should span Wed Jul 8 to Thu Jul 16.
-
+	// Role 1 ("Аналитик"): 3.0 * 1.05 = 3.15 -> ceil -> 4 workDays: Wed Jul8 -> Mon Jul13.
+	// Role 2 ("BE разработчик"): 2.0 * 1.05 = 2.10 -> ceil -> 3 workDays: Tue Jul14 -> Thu Jul16.
 	expectedParentStart := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
 	expectedParentEnd := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
-
 	if !parent.StartDate.Equal(expectedParentStart) {
 		t.Errorf("parent start %v, want %v", parent.StartDate, expectedParentStart)
 	}
@@ -387,326 +262,53 @@ func TestGenerateTasksForEpic(t *testing.T) {
 		t.Errorf("parent end %v, want %v", parent.EndDate, expectedParentEnd)
 	}
 
-	child1 := tasks[1]
-	child2 := tasks[2]
-
-	if child1.Name != "Аналитик" {
-		t.Errorf("expected Аналитик, got %s", child1.Name)
+	analyst := findTaskByParentAndName(f, parent.ID, "Аналитик")
+	if analyst == nil {
+		t.Fatalf("analyst task not found")
 	}
-	expectedChild1End := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
-	if !child1.EndDate.Equal(expectedChild1End) {
-		t.Errorf("Аналитик end %v, want %v", child1.EndDate, expectedChild1End)
+	expectedAnalystEnd := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
+	if !analyst.EndDate.Equal(expectedAnalystEnd) {
+		t.Errorf("Аналитик end %v, want %v", analyst.EndDate, expectedAnalystEnd)
 	}
 
-	if child2.Name != "BE разработчик" {
-		t.Errorf("expected BE разработчик, got %s", child2.Name)
+	dev := findTaskByParentAndName(f, parent.ID, "BE разработчик")
+	if dev == nil {
+		t.Fatalf("dev task not found")
 	}
-	expectedChild2Start := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
-	expectedChild2End := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
-
-	if !child2.StartDate.Equal(expectedChild2Start) {
-		t.Errorf("BE разработчик start %v, want %v", child2.StartDate, expectedChild2Start)
+	expectedDevStart := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
+	expectedDevEnd := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
+	if !dev.StartDate.Equal(expectedDevStart) {
+		t.Errorf("BE разработчик start %v, want %v", dev.StartDate, expectedDevStart)
 	}
-	if !child2.EndDate.Equal(expectedChild2End) {
-		t.Errorf("BE разработчик end %v, want %v", child2.EndDate, expectedChild2End)
+	if !dev.EndDate.Equal(expectedDevEnd) {
+		t.Errorf("BE разработчик end %v, want %v", dev.EndDate, expectedDevEnd)
 	}
 }
 
-func TestRecalcSiblingDates(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ctx := context.Background()
-
-	parentID := uuid.New()
-	childID1 := uuid.New()
-	childID2 := uuid.New()
-
-	parentTask := &domain.GanttTask{
-		ID:        parentID,
-		StartDate: time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC), // Wed Jul 8
-		EndDate:   time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
-		IsParent:  true,
-	}
-
-	children := []domain.GanttTask{
-		{
-			ID:           childID1,
-			ParentTaskID: &parentID,
-			Name:         "Аналитик",
-			StartDate:    time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC),
-			EndDate:      time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC), // 4 workDays (wed, thu, fri, mon)
-			SortOrder:    1,
-		},
-		{
-			ID:           childID2,
-			ParentTaskID: &parentID,
-			Name:         "BE разработчик",
-			StartDate:    time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC),
-			EndDate:      time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC), // 4 workDays (fri, mon, tue, wed)
-			SortOrder:    2,
-		},
-	}
-
-	mockRepo := &MockRepository{
-		GetGanttTaskByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.GanttTask, error) {
-			if id == parentID {
-				return parentTask, nil
-			}
-			return nil, errors.New("not found")
-		},
-		GetGanttChildTasksFunc: func(ctx context.Context, pid uuid.UUID) ([]domain.GanttTask, error) {
-			return children, nil
-		},
-		UpdateGanttTaskDatesFunc: func(ctx context.Context, id uuid.UUID, start, end time.Time) error {
-			return nil
-		},
-	}
-
-	service := New(logger, mockRepo)
-
-	updatedTasks, err := service.recalcSiblingDates(ctx, parentID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// 1 parent + 2 children
-	if len(updatedTasks) != 3 {
-		t.Fatalf("expected 3 tasks, got %d", len(updatedTasks))
-	}
-
-	// Sibling dates layout logic check:
-	// parentStart = Wed Jul 8
-	// child1 starts at Wed Jul 8, workDays = 4 -> ends on Mon Jul 13.
-	// Next group starts on moveToWorkDay(Mon Jul 13 + 1 day) = Tue Jul 14.
-	// child2 starts at Tue Jul 14, workDays = 4 -> ends on Fri Jul 17 (tue, wed, thu, fri).
-	// Parent task should span Wed Jul 8 to Fri Jul 17.
-
-	gotParent := updatedTasks[0]
-	if !gotParent.StartDate.Equal(time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("parent start %v, want Wed Jul 8", gotParent.StartDate)
-	}
-	if !gotParent.EndDate.Equal(time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("parent end %v, want Fri Jul 17", gotParent.EndDate)
-	}
-
-	gotChild1 := updatedTasks[1]
-	gotChild2 := updatedTasks[2]
-
-	if !gotChild1.StartDate.Equal(time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("child1 start %v, want Wed Jul 8", gotChild1.StartDate)
-	}
-	if !gotChild1.EndDate.Equal(time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("child1 end %v, want Mon Jul 13", gotChild1.EndDate)
-	}
-
-	if !gotChild2.StartDate.Equal(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("child2 start %v, want Tue Jul 14", gotChild2.StartDate)
-	}
-	if !gotChild2.EndDate.Equal(time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("child2 end %v, want Fri Jul 17", gotChild2.EndDate)
-	}
-}
-
-func TestUpdateTaskDates(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ctx := context.Background()
-
-	parentID := uuid.New()
-	taskID := uuid.New()
-
-	task := &domain.GanttTask{
-		ID:           taskID,
-		ParentTaskID: &parentID,
-		StartDate:    time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC), // Fri Jul 10
-		EndDate:      time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC),
-		IsParent:     false,
-	}
-
-	mockRepo := &MockRepository{
-		GetGanttTaskByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.GanttTask, error) {
-			if id == taskID {
-				return task, nil
-			}
-			return nil, errors.New("not found")
-		},
-		UpdateGanttTaskDatesFunc: func(ctx context.Context, id uuid.UUID, start, end time.Time) error {
-			task.StartDate = start
-			task.EndDate = end
-			return nil
-		},
-		GetGanttChildTasksFunc: func(ctx context.Context, pid uuid.UUID) ([]domain.GanttTask, error) {
-			return []domain.GanttTask{*task}, nil
-		},
-	}
-
-	service := New(logger, mockRepo)
-
-	// Update task dates (moving to Saturday -> should move to Monday, with 2 workDays duration -> Monday to Tuesday)
-	err := service.UpdateTaskDates(ctx, taskID, 
-		time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC), // Sat Jul 11 (becomes Mon Jul 13)
-		time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC), // Tue Jul 14 (Mon Jul 13 to Tue Jul 14 is 2 workDays)
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !task.StartDate.Equal(time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("expected adjusted start Mon Jul 13, got %v", task.StartDate)
-	}
-	if !task.EndDate.Equal(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("expected adjusted end Tue Jul 14, got %v", task.EndDate)
-	}
-}
-
-func TestReorderTask(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ctx := context.Background()
-
-	parentID := uuid.New()
-	taskID := uuid.New()
-
-	parentTask := &domain.GanttTask{
-		ID:        parentID,
-		StartDate: time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC),
-		EndDate:   time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC),
-		IsParent:  true,
-	}
-
-	task := &domain.GanttTask{
-		ID:           taskID,
-		ParentTaskID: &parentID,
-		StartDate:    time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC),
-		EndDate:      time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC),
-		IsParent:     false,
-		SortOrder:    2,
-	}
-
-	mockRepo := &MockRepository{
-		GetGanttTaskByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.GanttTask, error) {
-			if id == taskID {
-				return task, nil
-			}
-			if id == parentID {
-				return parentTask, nil
-			}
-			return nil, errors.New("not found")
-		},
-		UpdateGanttTaskSortOrderFunc: func(ctx context.Context, id uuid.UUID, order int) error {
-			task.SortOrder = order
-			return nil
-		},
-		GetGanttChildTasksFunc: func(ctx context.Context, pid uuid.UUID) ([]domain.GanttTask, error) {
-			return []domain.GanttTask{*task}, nil
-		},
-		UpdateGanttTaskDatesFunc: func(ctx context.Context, id uuid.UUID, start, end time.Time) error {
-			if id == taskID {
-				task.StartDate = start
-				task.EndDate = end
-			}
-			if id == parentID {
-				parentTask.StartDate = start
-				parentTask.EndDate = end
-			}
-			return nil
-		},
-	}
-
-	service := New(logger, mockRepo)
-
-	updated, err := service.ReorderTask(ctx, taskID, 1)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(updated) != 2 {
-		t.Fatalf("expected 2 updated tasks, got %d", len(updated))
-	}
-	if task.SortOrder != 1 {
-		t.Errorf("expected sort order 1, got %d", task.SortOrder)
-	}
-}
-
-func floatPtr(f float64) *float64 {
-	return &f
-}
-
+// TestGenerateTasksForEpic_WithStories проверяет 3-уровневую генерацию
+// (эпик -> стори -> роли) на эпике с одной сторей.
 func TestGenerateTasksForEpic_WithStories(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
 
+	teamID := uuid.New()
 	epicID := uuid.New()
-	storyID1 := uuid.New()
+	storyID := uuid.New()
 	roleID1 := uuid.New()
 	roleID2 := uuid.New()
 
-	mockEpic := &domain.Epic{
-		ID:     epicID,
-		Number: "E-100",
-		Name:   "Parent Epic",
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-100", Name: "Parent Epic", TeamID: teamID})
+	f.addEpic(&domain.Epic{ID: storyID, Number: "E-100-S1", Name: "Story 1", TeamID: teamID, ParentEpicID: &epicID})
+	f.addRole(&domain.Role{ID: roleID1, Name: "Аналитик"})
+	f.addRole(&domain.Role{ID: roleID2, Name: "BE разработчик"})
+	f.roleScores[storyID] = []domain.EpicRoleScore{
+		{EpicID: storyID, RoleID: roleID1, WeightedAvg: 3.0},
+		{EpicID: storyID, RoleID: roleID2, WeightedAvg: 2.0},
 	}
-
-	mockStories := []domain.Epic{
-		{
-			ID:           storyID1,
-			Number:       "E-100-S1",
-			Name:         "Story 1",
-			ParentEpicID: &epicID,
-		},
-	}
-
-	mockRoleScores := []domain.EpicRoleScore{
-		{
-			EpicID:      storyID1,
-			RoleID:      roleID1,
-			WeightedAvg: 3.0,
-		},
-		{
-			EpicID:      storyID1,
-			RoleID:      roleID2,
-			WeightedAvg: 2.0,
-		},
-	}
-
-	mockRepo := &MockRepository{
-		GetEpicByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Epic, error) {
-			if id == epicID {
-				return mockEpic, nil
-			}
-			return &mockStories[0], nil
-		},
-		HasGanttTasksForEpicFunc: func(ctx context.Context, id uuid.UUID) (bool, error) {
-			return false, nil
-		},
-		GetStoriesByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.Epic, error) {
-			return mockStories, nil
-		},
-		GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.EpicRoleScore, error) {
-			if id == storyID1 {
-				return mockRoleScores, nil
-			}
-			return nil, nil
-		},
-		GetRisksByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.Risk, error) {
-			return nil, nil
-		},
-		GetRoleByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Role, error) {
-			if id == roleID1 {
-				return &domain.Role{ID: roleID1, Name: "Аналитик"}, nil
-			}
-			return &domain.Role{ID: roleID2, Name: "BE разработчик"}, nil
-		},
-		CreateGanttTaskFunc: func(ctx context.Context, task *domain.GanttTask) (*domain.GanttTask, error) {
-			task.ID = uuid.New()
-			return task, nil
-		},
-		UpdateGanttTaskDatesFunc: func(ctx context.Context, id uuid.UUID, start, end time.Time) error {
-			return nil
-		},
-	}
-
-	service := New(logger, mockRepo)
 
 	start := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
-	tasks, err := service.GenerateTasksForEpic(ctx, epicID, start)
+	tasks, err := svc.GenerateTasksForEpic(ctx, epicID, start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -714,17 +316,489 @@ func TestGenerateTasksForEpic_WithStories(t *testing.T) {
 	if len(tasks) != 4 {
 		t.Fatalf("expected 4 tasks, got %d", len(tasks))
 	}
-
 	if tasks[0].IsParent != true || tasks[0].ParentTaskID != nil {
 		t.Errorf("invalid parent epic task: %+v", tasks[0])
 	}
-
 	if tasks[1].IsParent != true || *tasks[1].ParentTaskID != tasks[0].ID {
 		t.Errorf("invalid story task: %+v", tasks[1])
 	}
-
 	if tasks[2].IsParent != false || *tasks[2].ParentTaskID != tasks[1].ID {
 		t.Errorf("invalid child role task 1: %+v", tasks[2])
 	}
 }
 
+// TestReorderTask проверяет, что переупорядочение роли внутри стори
+// (или, для legacy-эпика, внутри самого эпика) пересчитывает расписание.
+func TestReorderTask(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epicID := uuid.New()
+	roleID1 := uuid.New()
+	roleID2 := uuid.New()
+
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic One", TeamID: teamID})
+	f.addRole(&domain.Role{ID: roleID1, Name: "Аналитик"})
+	f.addRole(&domain.Role{ID: roleID2, Name: "BE разработчик"})
+	f.roleScores[epicID] = []domain.EpicRoleScore{
+		{EpicID: epicID, RoleID: roleID1, WeightedAvg: 2.0},
+		{EpicID: epicID, RoleID: roleID2, WeightedAvg: 2.0},
+	}
+
+	start := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC) // Monday
+	_, err := svc.GenerateTasksForEpic(ctx, epicID, start)
+	if err != nil {
+		t.Fatalf("unexpected error generating tasks: %v", err)
+	}
+
+	var parentID uuid.UUID
+	for _, task := range f.tasks {
+		if task.IsParent {
+			parentID = task.ID
+		}
+	}
+	analyst := findTaskByParentAndName(f, parentID, "Аналитик")
+	dev := findTaskByParentAndName(f, parentID, "BE разработчик")
+	if analyst == nil || dev == nil {
+		t.Fatalf("expected both role tasks to exist")
+	}
+
+	// До реордера: Аналитик идёт первым (sort_order 1), BE dev — вторым (sort_order 2).
+	if !analyst.StartDate.Before(dev.StartDate) {
+		t.Fatalf("expected Аналитик to start before BE разработчик before reorder")
+	}
+
+	// Меняем местами роли: BE dev теперь идёт первым, Аналитик — вторым
+	// (как и при реальном drag&drop, фронтенд пересылает новый sort_order
+	// для каждого элемента списка).
+	if _, err := svc.ReorderTask(ctx, dev.ID, 1); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	updated, err := svc.ReorderTask(ctx, analyst.ID, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updated) == 0 {
+		t.Fatalf("expected non-empty updated task list")
+	}
+
+	devAfter := f.tasks[dev.ID]
+	analystAfter := f.tasks[analyst.ID]
+	if !devAfter.StartDate.Before(analystAfter.StartDate) {
+		t.Errorf("expected BE разработчик to start before Аналитик after reorder, got dev=%v analyst=%v",
+			devAfter.StartDate, analystAfter.StartDate)
+	}
+}
+
+// TestRecalculateTeamSchedule_Pipeline проверяет ключевое свойство
+// конвейерного планировщика: роль не простаивает между сторями — как
+// только она закончила задачу в стори N, она сразу берёт свою задачу в
+// стори N+1, не дожидаясь другой роли (BE-разработчика) той же N-й стори.
+func TestRecalculateTeamSchedule_Pipeline(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epicID := uuid.New()
+	story1ID := uuid.New()
+	story2ID := uuid.New()
+	analystID := uuid.New()
+	devID := uuid.New()
+
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic", TeamID: teamID})
+	story1 := f.addEpic(&domain.Epic{ID: story1ID, Number: "E-1-S1", Name: "Story 1", TeamID: teamID, ParentEpicID: &epicID})
+	story2 := f.addEpic(&domain.Epic{ID: story2ID, Number: "E-1-S2", Name: "Story 2", TeamID: teamID, ParentEpicID: &epicID})
+	f.addRole(&domain.Role{ID: analystID, Name: "Аналитик"})
+	f.addRole(&domain.Role{ID: devID, Name: "BE разработчик"})
+
+	f.roleScores[story1ID] = []domain.EpicRoleScore{
+		{EpicID: story1ID, RoleID: analystID, WeightedAvg: 2.0}, // 2 workdays
+		{EpicID: story1ID, RoleID: devID, WeightedAvg: 3.0},     // 3 workdays
+	}
+	f.roleScores[story2ID] = []domain.EpicRoleScore{
+		{EpicID: story2ID, RoleID: analystID, WeightedAvg: 1.0}, // 1 workday
+		{EpicID: story2ID, RoleID: devID, WeightedAvg: 2.0},     // 2 workdays
+	}
+
+	start := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC) // Monday
+	if _, err := svc.GenerateTasksForEpic(ctx, epicID, start); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	story1Task := findStoryTask(f, storyName(story1))
+	story2Task := findStoryTask(f, storyName(story2))
+	if story1Task == nil || story2Task == nil {
+		t.Fatalf("expected both story tasks to exist")
+	}
+
+	analystStory1 := findTaskByParentAndName(f, story1Task.ID, "Аналитик")
+	devStory1 := findTaskByParentAndName(f, story1Task.ID, "BE разработчик")
+	analystStory2 := findTaskByParentAndName(f, story2Task.ID, "Аналитик")
+	devStory2 := findTaskByParentAndName(f, story2Task.ID, "BE разработчик")
+	if analystStory1 == nil || devStory1 == nil || analystStory2 == nil || devStory2 == nil {
+		t.Fatalf("expected all 4 role tasks to exist")
+	}
+
+	// Аналитик story1: Mon Jul13 - Tue Jul14 (2 workdays).
+	if !analystStory1.StartDate.Equal(time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("analyst story1 start = %v, want Jul13", analystStory1.StartDate)
+	}
+	if !analystStory1.EndDate.Equal(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("analyst story1 end = %v, want Jul14", analystStory1.EndDate)
+	}
+
+	// BE dev story1: Wed Jul15 - Fri Jul17 (starts after analyst story1 within the same story).
+	if !devStory1.StartDate.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("dev story1 start = %v, want Jul15", devStory1.StartDate)
+	}
+	if !devStory1.EndDate.Equal(time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("dev story1 end = %v, want Jul17", devStory1.EndDate)
+	}
+
+	// Ключевая проверка конвейера: Аналитик story2 стартует сразу после
+	// своей задачи по story1 (Wed Jul15, на следующий рабочий день после
+	// Tue Jul14) — НЕ дожидаясь BE-разработчика story1 (который заканчивает
+	// только в Fri Jul17).
+	if !analystStory2.StartDate.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("analyst story2 start = %v, want Jul15 (immediately after analyst story1, not waiting for dev story1)",
+			analystStory2.StartDate)
+	}
+	if !analystStory2.StartDate.Before(devStory1.EndDate) {
+		t.Errorf("analyst story2 (%v) should start before dev story1 finishes (%v) — role must not idle",
+			analystStory2.StartDate, devStory1.EndDate)
+	}
+
+	// BE dev story2 стартует после освобождения BE-разработчика от story1 (Mon Jul20).
+	if !devStory2.StartDate.Equal(time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("dev story2 start = %v, want Jul20", devStory2.StartDate)
+	}
+}
+
+// TestRecalculateTeamSchedule_FreezesStartedTask проверяет, что задача с
+// Progress > 0 (начатая) не двигается планировщиком, даже если её текущие
+// даты расходятся с тем, что рассчитал бы планировщик "с нуля".
+func TestRecalculateTeamSchedule_FreezesStartedTask(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epicID := uuid.New()
+	roleID := uuid.New()
+
+	epicFloor := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC) // Monday
+	f.addRole(&domain.Role{ID: roleID, Name: "Аналитик"})
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic", TeamID: teamID})
+
+	epicParent, err := f.CreateGanttTask(ctx, &domain.GanttTask{
+		EpicID: epicID, Name: "E-1: Epic", StartDate: epicFloor, EndDate: epicFloor, IsParent: true,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Задача уже начата (Progress=40) и её плановые даты (Jul1-Jul10)
+	// НЕ совпадают с тем, что рассчитал бы планировщик от epicFloor=Jul13.
+	frozenStart := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	frozenEnd := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	frozenTask, err := f.CreateGanttTask(ctx, &domain.GanttTask{
+		EpicID: epicID, RoleID: &roleID, Name: "Аналитик",
+		StartDate: frozenStart, EndDate: frozenEnd,
+		Progress: 40, SortOrder: 1, IsParent: false, ParentTaskID: &epicParent.ID,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	if _, err := svc.RecalculateTeamSchedule(ctx, teamID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := f.tasks[frozenTask.ID]
+	if !got.StartDate.Equal(frozenStart) || !got.EndDate.Equal(frozenEnd) {
+		t.Errorf("frozen task dates changed: got [%v, %v], want [%v, %v]",
+			got.StartDate, got.EndDate, frozenStart, frozenEnd)
+	}
+	if got.Progress != 40 {
+		t.Errorf("frozen task progress changed: got %v, want 40", got.Progress)
+	}
+
+	// Прогресс эпика должен агрегироваться от единственного ребёнка (40%),
+	// а его даты — от границ ребёнка (тоже застывших).
+	gotParent := f.tasks[epicParent.ID]
+	if gotParent.Progress != 40 {
+		t.Errorf("epic progress = %v, want 40 (aggregated from the single frozen child)", gotParent.Progress)
+	}
+	if !gotParent.StartDate.Equal(frozenStart) || !gotParent.EndDate.Equal(frozenEnd) {
+		t.Errorf("epic dates = [%v, %v], want [%v, %v] (aggregated from child bounds)",
+			gotParent.StartDate, gotParent.EndDate, frozenStart, frozenEnd)
+	}
+}
+
+// TestReorderStory_MovesSchedule проверяет, что реордер сторей внутри
+// эпика меняет итоговую раскладку дат в соответствии с новым порядком.
+func TestReorderStory_MovesSchedule(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epicID := uuid.New()
+	story1ID := uuid.New()
+	story2ID := uuid.New()
+	analystID := uuid.New()
+
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic", TeamID: teamID})
+	story1 := f.addEpic(&domain.Epic{ID: story1ID, Number: "E-1-S1", Name: "Story 1", TeamID: teamID, ParentEpicID: &epicID})
+	story2 := f.addEpic(&domain.Epic{ID: story2ID, Number: "E-1-S2", Name: "Story 2", TeamID: teamID, ParentEpicID: &epicID})
+	f.addRole(&domain.Role{ID: analystID, Name: "Аналитик"})
+
+	f.roleScores[story1ID] = []domain.EpicRoleScore{{EpicID: story1ID, RoleID: analystID, WeightedAvg: 2.0}}
+	f.roleScores[story2ID] = []domain.EpicRoleScore{{EpicID: story2ID, RoleID: analystID, WeightedAvg: 2.0}}
+
+	start := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC) // Monday
+	if _, err := svc.GenerateTasksForEpic(ctx, epicID, start); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	story1Task := findStoryTask(f, storyName(story1))
+	story2Task := findStoryTask(f, storyName(story2))
+	analystStory1 := findTaskByParentAndName(f, story1Task.ID, "Аналитик")
+	analystStory2 := findTaskByParentAndName(f, story2Task.ID, "Аналитик")
+
+	// До реордера: story1 идёт первой (Jul13-14), story2 — второй (Jul15-16).
+	if !analystStory1.StartDate.Equal(time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("precondition failed: analyst story1 start = %v, want Jul13", analystStory1.StartDate)
+	}
+	if !analystStory2.StartDate.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("precondition failed: analyst story2 start = %v, want Jul15", analystStory2.StartDate)
+	}
+
+	// Меняем порядок: story2 теперь первая, story1 — вторая.
+	if _, err := svc.ReorderStory(ctx, story2ID, 1); err != nil {
+		t.Fatalf("unexpected error reordering story2: %v", err)
+	}
+	if _, err := svc.ReorderStory(ctx, story1ID, 2); err != nil {
+		t.Fatalf("unexpected error reordering story1: %v", err)
+	}
+
+	gotAnalystStory1 := f.tasks[analystStory1.ID]
+	gotAnalystStory2 := f.tasks[analystStory2.ID]
+
+	if !gotAnalystStory2.StartDate.Equal(time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("after reorder: analyst story2 start = %v, want Jul13 (story2 now first)", gotAnalystStory2.StartDate)
+	}
+	if !gotAnalystStory1.StartDate.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("after reorder: analyst story1 start = %v, want Jul15 (story1 now second)", gotAnalystStory1.StartDate)
+	}
+
+	// gantt_tasks.sort_order строк сторей должен быть синхронизирован с
+	// новым порядком epics.sort_order (используется деревом рендера).
+	gotStory1Task := f.tasks[story1Task.ID]
+	gotStory2Task := f.tasks[story2Task.ID]
+	if gotStory2Task.SortOrder >= gotStory1Task.SortOrder {
+		t.Errorf("expected story2 gantt task sort_order (%d) < story1 (%d) after reorder",
+			gotStory2Task.SortOrder, gotStory1Task.SortOrder)
+	}
+}
+
+// TestReorderEpic_MovesSchedule проверяет, что реордер топ-эпиков в
+// очереди команды меняет то, в каком порядке общая роль обслуживает эпики.
+func TestReorderEpic_MovesSchedule(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epic1ID := uuid.New()
+	epic2ID := uuid.New()
+	analystID := uuid.New()
+
+	f.addEpic(&domain.Epic{ID: epic1ID, Number: "E-1", Name: "Epic One", TeamID: teamID})
+	f.addEpic(&domain.Epic{ID: epic2ID, Number: "E-2", Name: "Epic Two", TeamID: teamID})
+	f.addRole(&domain.Role{ID: analystID, Name: "Аналитик"})
+	f.roleScores[epic1ID] = []domain.EpicRoleScore{{EpicID: epic1ID, RoleID: analystID, WeightedAvg: 2.0}}
+	f.roleScores[epic2ID] = []domain.EpicRoleScore{{EpicID: epic2ID, RoleID: analystID, WeightedAvg: 2.0}}
+
+	start := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC) // Monday
+	if _, err := svc.GenerateTasksForEpic(ctx, epic1ID, start); err != nil {
+		t.Fatalf("unexpected error generating epic1: %v", err)
+	}
+	if _, err := svc.GenerateTasksForEpic(ctx, epic2ID, start); err != nil {
+		t.Fatalf("unexpected error generating epic2: %v", err)
+	}
+
+	epic1Parent := findStoryTask(f, "E-1: Epic One")
+	epic2Parent := findStoryTask(f, "E-2: Epic Two")
+	analyst1 := findTaskByParentAndName(f, epic1Parent.ID, "Аналитик")
+	analyst2 := findTaskByParentAndName(f, epic2Parent.ID, "Аналитик")
+
+	// До реордера: epic1 идёт первым в очереди команды (Jul13-14),
+	// epic2 — вторым (Jul15-16), т.к. делит роль "Аналитик" с epic1.
+	if !analyst1.StartDate.Equal(time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("precondition failed: analyst epic1 start = %v, want Jul13", analyst1.StartDate)
+	}
+	if !analyst2.StartDate.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("precondition failed: analyst epic2 start = %v, want Jul15", analyst2.StartDate)
+	}
+
+	// Меняем порядок эпиков: epic2 теперь первый в очереди.
+	if _, err := svc.ReorderEpic(ctx, epic2ID, 1); err != nil {
+		t.Fatalf("unexpected error reordering epic2: %v", err)
+	}
+	if _, err := svc.ReorderEpic(ctx, epic1ID, 2); err != nil {
+		t.Fatalf("unexpected error reordering epic1: %v", err)
+	}
+
+	gotAnalyst1 := f.tasks[analyst1.ID]
+	gotAnalyst2 := f.tasks[analyst2.ID]
+	if !gotAnalyst2.StartDate.Equal(time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("after reorder: analyst epic2 start = %v, want Jul13 (epic2 now first)", gotAnalyst2.StartDate)
+	}
+	if !gotAnalyst1.StartDate.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("after reorder: analyst epic1 start = %v, want Jul15 (epic1 now second)", gotAnalyst1.StartDate)
+	}
+
+	// Реордер эпика-стори (ParentEpicID != nil) через ReorderEpic должен отклоняться.
+	storyEpicID := uuid.New()
+	f.addEpic(&domain.Epic{ID: storyEpicID, Number: "E-1-S1", Name: "Story", TeamID: teamID, ParentEpicID: &epic1ID})
+	if _, err := svc.ReorderEpic(ctx, storyEpicID, 1); err == nil {
+		t.Errorf("expected error when calling ReorderEpic on a story")
+	}
+}
+
+// TestRecalculateTeamSchedule_FactShiftsDownstream проверяет, что факт
+// завершения задачи (раньше или позже плана) сдвигает последующую задачу
+// той же роли в следующей сторе — планировщик считает от факта, а не от плана.
+func TestRecalculateTeamSchedule_FactShiftsDownstream(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epicID := uuid.New()
+	story1ID := uuid.New()
+	story2ID := uuid.New()
+	analystID := uuid.New()
+
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic", TeamID: teamID})
+	story1 := f.addEpic(&domain.Epic{ID: story1ID, Number: "E-1-S1", Name: "Story 1", TeamID: teamID, ParentEpicID: &epicID})
+	story2 := f.addEpic(&domain.Epic{ID: story2ID, Number: "E-1-S2", Name: "Story 2", TeamID: teamID, ParentEpicID: &epicID})
+	f.addRole(&domain.Role{ID: analystID, Name: "Аналитик"})
+
+	f.roleScores[story1ID] = []domain.EpicRoleScore{{EpicID: story1ID, RoleID: analystID, WeightedAvg: 2.0}} // plan: Jul13-Jul14
+	f.roleScores[story2ID] = []domain.EpicRoleScore{{EpicID: story2ID, RoleID: analystID, WeightedAvg: 2.0}} // plan: Jul15-Jul16
+
+	start := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC) // Monday
+	if _, err := svc.GenerateTasksForEpic(ctx, epicID, start); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	story1Task := findStoryTask(f, storyName(story1))
+	story2Task := findStoryTask(f, storyName(story2))
+	analystStory1 := findTaskByParentAndName(f, story1Task.ID, "Аналитик")
+	analystStory2 := findTaskByParentAndName(f, story2Task.ID, "Аналитик")
+
+	if !analystStory2.StartDate.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("precondition failed: analyst story2 plan start = %v, want Jul15", analystStory2.StartDate)
+	}
+
+	// Факт раньше плана: story1 завершена на день раньше (Jul13 вместо Jul14).
+	earlyFact := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
+	f.tasks[analystStory1.ID].Progress = 100
+	f.tasks[analystStory1.ID].ActualEndDate = &earlyFact
+
+	if _, err := svc.RecalculateTeamSchedule(ctx, teamID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	gotEarly := f.tasks[analystStory2.ID]
+	wantEarly := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC) // day after the early fact
+	if !gotEarly.StartDate.Equal(wantEarly) {
+		t.Errorf("after early fact: analyst story2 start = %v, want %v", gotEarly.StartDate, wantEarly)
+	}
+
+	// Факт позже плана: story1 на самом деле завершена на 2 дня позже (Jul16).
+	lateFact := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
+	f.tasks[analystStory1.ID].ActualEndDate = &lateFact
+
+	if _, err := svc.RecalculateTeamSchedule(ctx, teamID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	gotLate := f.tasks[analystStory2.ID]
+	wantLate := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC) // day after the late fact
+	if !gotLate.StartDate.Equal(wantLate) {
+		t.Errorf("after late fact: analyst story2 start = %v, want %v", gotLate.StartDate, wantLate)
+	}
+}
+
+// TestSetTaskProgress_FixesActualsAt100 проверяет, что простановка 100%
+// автоматически фиксирует факт (дату и трудоёмкость), а откат ниже 100% —
+// сбрасывает его (переоткрытие), и что прогресс родительской задачи
+// выставить напрямую нельзя.
+func TestSetTaskProgress_FixesActualsAt100(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epicID := uuid.New()
+	roleID := uuid.New()
+
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic", TeamID: teamID})
+	f.addRole(&domain.Role{ID: roleID, Name: "Аналитик"})
+
+	epicParent, err := f.CreateGanttTask(ctx, &domain.GanttTask{
+		EpicID: epicID, Name: "E-1: Epic",
+		StartDate: time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC),
+		IsParent:  true,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	roleTask, err := f.CreateGanttTask(ctx, &domain.GanttTask{
+		EpicID: epicID, RoleID: &roleID, Name: "Аналитик",
+		StartDate: time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC), // far in the past, deterministic effort > 0
+		EndDate:   time.Date(2000, 1, 4, 0, 0, 0, 0, time.UTC),
+		SortOrder: 1, IsParent: false, ParentTaskID: &epicParent.ID,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Нельзя выставить прогресс родительской (is_parent) задаче напрямую.
+	if _, err := svc.SetTaskProgress(ctx, epicParent.ID, 50); err == nil {
+		t.Errorf("expected error when setting progress on a parent task")
+	}
+
+	if _, err := svc.SetTaskProgress(ctx, roleTask.ID, 100); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := f.tasks[roleTask.ID]
+	if got.Progress != 100 {
+		t.Errorf("progress = %v, want 100", got.Progress)
+	}
+	if got.ActualEndDate == nil {
+		t.Fatalf("expected ActualEndDate to be set at 100%%")
+	}
+	if got.ActualEffortDays == nil || *got.ActualEffortDays < 1 {
+		t.Errorf("expected ActualEffortDays >= 1, got %v", got.ActualEffortDays)
+	}
+
+	// Переоткрытие: прогресс падает ниже 100% -> факт должен сброситься.
+	if _, err := svc.SetTaskProgress(ctx, roleTask.ID, 60); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got = f.tasks[roleTask.ID]
+	if got.Progress != 60 {
+		t.Errorf("progress = %v, want 60", got.Progress)
+	}
+	if got.ActualEndDate != nil || got.ActualEffortDays != nil {
+		t.Errorf("expected actuals to be cleared after reopening, got end=%v effort=%v",
+			got.ActualEndDate, got.ActualEffortDays)
+	}
+}

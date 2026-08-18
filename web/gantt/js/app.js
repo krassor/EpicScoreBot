@@ -93,6 +93,14 @@ function handleProfileLoaded(profile) {
         }
     }
 
+    // Переупорядочивание эпиков/историй — тот же уровень доступа, что и генерация Ганта.
+    const btnReorderEpics = document.getElementById('btn-reorder-epics');
+    const btnReorderStories = document.getElementById('btn-reorder-stories');
+    [btnReorderEpics, btnReorderStories].forEach(btn => {
+        if (!btn) return;
+        btn.style.display = profile.role === 'member' ? 'none' : 'inline-flex';
+    });
+
     // Expand Telegram WebApp if available
     if (window.Telegram && window.Telegram.WebApp) {
         window.Telegram.WebApp.expand();
