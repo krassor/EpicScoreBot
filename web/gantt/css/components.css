@@ -902,12 +902,16 @@
 
 .role-item .role-order {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 6px;
     flex-shrink: 0;
 }
 
 .role-item .role-order input {
+    /* Инпут рендерится с классом .select ради общего скина, но его
+       безусловный min-width:180px (см. .select) иначе перебивает width
+       ниже и раздувает .role-order, вытесняя .role-name в узкую колонку. */
+    min-width: 0;
     width: 56px;
 }
 
