@@ -415,7 +415,7 @@ function openOrderModal(title, items, config, onSave) {
             <span class="role-name">${label}</span>
             <div class="role-order">
                 <label>Порядок:</label>
-                <input type="number" min="1" max="99" class="select"
+                <input type="number" min="1" max="99" class="input"
                        value="${order}"
                        data-item-id="${id}">
             </div>
