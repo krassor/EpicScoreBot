@@ -44,9 +44,10 @@ type mockGanttSvc struct {
 		taskID    uuid.UUID
 		sortOrder int
 	}
-	reorderEpicFunc     func(ctx context.Context, epicID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
-	reorderStoryFunc    func(ctx context.Context, storyID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
-	setTaskProgressFunc func(ctx context.Context, taskID uuid.UUID, progress float64) ([]domain.GanttTask, error)
+	reorderEpicFunc        func(ctx context.Context, epicID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
+	reorderStoryFunc       func(ctx context.Context, storyID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
+	setTaskProgressFunc    func(ctx context.Context, taskID uuid.UUID, progress float64) ([]domain.GanttTask, error)
+	setTaskStartOffsetFunc func(ctx context.Context, taskID uuid.UUID, offsetDays int) ([]domain.GanttTask, error)
 }
 
 func (m *mockGanttSvc) ReorderEpic(ctx context.Context, epicID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error) {
@@ -66,6 +67,13 @@ func (m *mockGanttSvc) ReorderStory(ctx context.Context, storyID uuid.UUID, newS
 func (m *mockGanttSvc) SetTaskProgress(ctx context.Context, taskID uuid.UUID, progress float64) ([]domain.GanttTask, error) {
 	if m.setTaskProgressFunc != nil {
 		return m.setTaskProgressFunc(ctx, taskID, progress)
+	}
+	return nil, nil
+}
+
+func (m *mockGanttSvc) SetTaskStartOffset(ctx context.Context, taskID uuid.UUID, offsetDays int) ([]domain.GanttTask, error) {
+	if m.setTaskStartOffsetFunc != nil {
+		return m.setTaskStartOffsetFunc(ctx, taskID, offsetDays)
 	}
 	return nil, nil
 }
@@ -407,7 +415,9 @@ func TestUpdateTask_ProgressRoutesThroughSetTaskProgress(t *testing.T) {
 	repo := &mockGanttRepo{}
 	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
 
-	reqBody, _ := json.Marshal(map[string]float64{"progress": 75})
+	// Реальный контракт с фронтендом — дробь 0.0-1.0 (фронтенд шлёт
+	// progress/100), а не проценты 0-100.
+	reqBody, _ := json.Marshal(map[string]float64{"progress": 0.75})
 	req := httptest.NewRequest("PUT", "/api/gantt/tasks/"+taskID.String()+"/", bytes.NewReader(reqBody))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID.String())
@@ -422,8 +432,81 @@ func TestUpdateTask_ProgressRoutesThroughSetTaskProgress(t *testing.T) {
 	if !called {
 		t.Fatalf("expected SetTaskProgress to be called")
 	}
-	if calledWith != 75 {
-		t.Errorf("expected progress 75, got %v", calledWith)
+	if calledWith != 0.75 {
+		t.Errorf("expected progress 0.75, got %v", calledWith)
+	}
+}
+
+// TestUpdateTask_StartOffsetRoutesThroughSetTaskStartOffset проверяет, что
+// простановка start_offset_days через PUT /tasks/{id}/ маршрутизируется
+// через svc.SetTaskStartOffset (по образцу теста для progress).
+func TestUpdateTask_StartOffsetRoutesThroughSetTaskStartOffset(t *testing.T) {
+	taskID := uuid.New()
+	cfg := config.BotConfig{}
+
+	var calledWith int
+	var called bool
+	svc := &mockGanttSvc{}
+	svc.setTaskStartOffsetFunc = func(ctx context.Context, id uuid.UUID, offsetDays int) ([]domain.GanttTask, error) {
+		called = true
+		calledWith = offsetDays
+		return nil, nil
+	}
+	repo := &mockGanttRepo{}
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+
+	reqBody, _ := json.Marshal(map[string]int{"start_offset_days": -2})
+	req := httptest.NewRequest("PUT", "/api/gantt/tasks/"+taskID.String()+"/", bytes.NewReader(reqBody))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handler.UpdateTask(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body: %s", w.Code, w.Body.String())
+	}
+	if !called {
+		t.Fatalf("expected SetTaskStartOffset to be called")
+	}
+	if calledWith != -2 {
+		t.Errorf("expected offset -2, got %v", calledWith)
+	}
+}
+
+// TestUpdateTask_StartOffsetOnParentReturnsBadRequest проверяет, что ошибка
+// сервиса при попытке задать офсет родительской задаче транслируется в 400
+// со стандартным кодом OFFSET_NOT_ALLOWED_ON_PARENT.
+func TestUpdateTask_StartOffsetOnParentReturnsBadRequest(t *testing.T) {
+	taskID := uuid.New()
+	cfg := config.BotConfig{}
+
+	svc := &mockGanttSvc{}
+	svc.setTaskStartOffsetFunc = func(ctx context.Context, id uuid.UUID, offsetDays int) ([]domain.GanttTask, error) {
+		return nil, errors.New("start offset can only be set on a leaf (role) task, not a story/epic")
+	}
+	repo := &mockGanttRepo{}
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+
+	reqBody, _ := json.Marshal(map[string]int{"start_offset_days": 1})
+	req := httptest.NewRequest("PUT", "/api/gantt/tasks/"+taskID.String()+"/", bytes.NewReader(reqBody))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	handler.UpdateTask(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d, body: %s", w.Code, w.Body.String())
+	}
+	code, message := unmarshalErrorResp(t, w.Body.Bytes())
+	if code != "OFFSET_NOT_ALLOWED_ON_PARENT" {
+		t.Errorf("expected error code OFFSET_NOT_ALLOWED_ON_PARENT, got %q", code)
+	}
+	if message == "" {
+		t.Errorf("expected non-empty error message")
 	}
 }
 

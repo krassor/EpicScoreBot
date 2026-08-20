@@ -289,6 +289,9 @@ function applyPostRenderEnhancements(tasks) {
 // способ для тех, кто уже знает про него, но не единственный.
 
 let currentDetailsTaskId = null;
+// Исходные значения открытой задачи — чтобы отправлять в PUT только реально
+// изменившиеся поля (progress / start_offset_days независимы друг от друга).
+let currentDetailsOriginal = null;
 
 function formatDisplayDate(isoDate) {
     if (!isoDate) return '';
@@ -320,8 +323,12 @@ function openTaskDetailsModal(feTask) {
         factGroup.classList.add('hidden');
     }
 
-    const progressInput = document.getElementById('task-details-progress');
-    progressInput.value = Math.round((t.progress || 0) * 100);
+    const percent = Math.round((t.progress || 0) * 100);
+    const offset = t.start_offset_days || 0;
+
+    document.getElementById('task-details-progress').value = percent;
+    document.getElementById('task-details-offset').value = offset;
+    currentDetailsOriginal = { percent, offset };
 
     document.getElementById('task-details-modal').classList.remove('hidden');
 }
@@ -329,6 +336,7 @@ function openTaskDetailsModal(feTask) {
 function closeTaskDetailsModal() {
     document.getElementById('task-details-modal').classList.add('hidden');
     currentDetailsTaskId = null;
+    currentDetailsOriginal = null;
 }
 
 async function saveTaskDetails() {
@@ -337,22 +345,42 @@ async function saveTaskDetails() {
         return;
     }
 
-    const input = document.getElementById('task-details-progress');
-    const percent = parseInt(input.value, 10);
+    const percent = parseInt(document.getElementById('task-details-progress').value, 10);
     if (isNaN(percent) || percent < 0 || percent > 100) {
         showToast('Прогресс должен быть числом от 0 до 100', 'error');
         return;
     }
 
-    try {
-        await apiPut(`/tasks/${currentDetailsTaskId}`, { progress: percent / 100 });
-        showToast('Прогресс задачи обновлён', 'success');
+    const offset = parseInt(document.getElementById('task-details-offset').value, 10);
+    if (isNaN(offset)) {
+        showToast('Смещение должно быть целым числом дней', 'error');
+        return;
+    }
+
+    // Отправляем только реально изменившиеся поля — progress и
+    // start_offset_days независимы друг от друга на бэкенде.
+    const payload = {};
+    if (!currentDetailsOriginal || percent !== currentDetailsOriginal.percent) {
+        payload.progress = percent / 100;
+    }
+    if (!currentDetailsOriginal || offset !== currentDetailsOriginal.offset) {
+        payload.start_offset_days = offset;
+    }
+    if (Object.keys(payload).length === 0) {
         closeTaskDetailsModal();
-        // Прогресс листовой задачи может сдвинуть расписание всей команды
-        // (конвейер) и зафиксировать факт закрытия — тянем полный список заново.
+        return;
+    }
+
+    try {
+        await apiPut(`/tasks/${currentDetailsTaskId}`, payload);
+        showToast('Задача обновлена', 'success');
+        closeTaskDetailsModal();
+        // Прогресс/смещение листовой задачи может сдвинуть расписание всей
+        // команды (конвейер) и зафиксировать факт закрытия — тянем полный
+        // список заново.
         await reloadCurrentTeamTasks();
     } catch (err) {
-        showToast('Не удалось обновить прогресс: ' + err.message, 'error');
+        showToast('Не удалось сохранить: ' + err.message, 'error');
     }
 }
 

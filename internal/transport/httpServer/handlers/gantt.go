@@ -165,7 +165,7 @@ func (h *GanttHandler) GetEpics(w http.ResponseWriter, r *http.Request) {
 			r.Context(), teamID, "SCORED",
 		)
 	}
-	
+
 	if err != nil {
 		h.log.Error("failed to get epics", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "failed to get epics")
@@ -238,6 +238,10 @@ type ganttTaskResp struct {
 	ActualEndDate *string `json:"actual_end_date,omitempty"`
 	// ActualEffortDays — фактическая трудоёмкость в рабочих днях.
 	ActualEffortDays *int `json:"actual_effort_days,omitempty"`
+	// StartOffsetDays — смещение (lead/lag, в днях) планового старта листовой
+	// задачи относительно окончания предыдущей ролевой группы внутри стори.
+	// Без omitempty — 0 такое же значимое значение, как и любое другое.
+	StartOffsetDays int `json:"start_offset_days"`
 }
 
 // roleToCSS maps role names to CSS class names.
@@ -326,15 +330,16 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 		}
 
 		item := ganttTaskResp{
-			ID:           t.ID.String(),
-			Name:         name,
-			Start:        t.StartDate.Format("2006-01-02"),
-			End:          t.EndDate.Format("2006-01-02"),
-			Progress:     t.Progress,
-			Dependencies: deps,
-			CustomClass:  css,
-			IsParent:     t.IsParent,
-			SortOrder:    t.SortOrder,
+			ID:              t.ID.String(),
+			Name:            name,
+			Start:           t.StartDate.Format("2006-01-02"),
+			End:             t.EndDate.Format("2006-01-02"),
+			Progress:        t.Progress,
+			Dependencies:    deps,
+			CustomClass:     css,
+			IsParent:        t.IsParent,
+			SortOrder:       t.SortOrder,
+			StartOffsetDays: t.StartOffsetDays,
 		}
 		if t.ParentTaskID != nil {
 			item.ParentID = t.ParentTaskID.String()
@@ -408,9 +413,10 @@ func (h *GanttHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Start    *string  `json:"start"`
-		End      *string  `json:"end"`
-		Progress *float64 `json:"progress"`
+		Start           *string  `json:"start"`
+		End             *string  `json:"end"`
+		Progress        *float64 `json:"progress"`
+		StartOffsetDays *int     `json:"start_offset_days"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -432,6 +438,18 @@ func (h *GanttHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 				slog.String("error", err.Error()))
 			writeError(w, http.StatusInternalServerError,
 				"failed to update progress")
+			return
+		}
+	}
+
+	if req.StartOffsetDays != nil {
+		if _, err := h.svc.SetTaskStartOffset(
+			r.Context(), taskID, *req.StartOffsetDays,
+		); err != nil {
+			h.log.Error("failed to update start offset",
+				slog.String("error", err.Error()))
+			writeErrorCode(w, http.StatusBadRequest, "OFFSET_NOT_ALLOWED_ON_PARENT",
+				"смещение старта можно задать только для листовой (ролевой) задачи")
 			return
 		}
 	}
@@ -991,6 +1009,3 @@ func (h *GanttHandler) GetEpicRisks(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{"risks": resp})
 }
-
-
-

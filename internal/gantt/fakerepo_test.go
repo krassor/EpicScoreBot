@@ -252,6 +252,15 @@ func (f *fakeRepo) UpdateGanttTaskSortOrder(ctx context.Context, taskID uuid.UUI
 	return nil
 }
 
+func (f *fakeRepo) UpdateGanttTaskStartOffset(ctx context.Context, taskID uuid.UUID, offsetDays int) error {
+	t, ok := f.tasks[taskID]
+	if !ok {
+		return errors.New("task not found")
+	}
+	t.StartOffsetDays = offsetDays
+	return nil
+}
+
 func (f *fakeRepo) UpdateGanttTaskActuals(ctx context.Context, taskID uuid.UUID, actualEndDate time.Time, effortDays int) error {
 	t, ok := f.tasks[taskID]
 	if !ok {

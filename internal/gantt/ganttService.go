@@ -458,7 +458,14 @@ func (s *Service) recalculateEpicSchedule(
 					if !roleNextAvailable.IsZero() {
 						roleNextAvailable = moveToWorkDay(roleNextAvailable.AddDate(0, 0, 1))
 					}
-					newStart := moveToWorkDay(maxTime(groupPrevEnd, roleNextAvailable, epicFloor))
+					// StartOffsetDays — lead/lag на FS-зависимости между ролевыми
+					// группами внутри стори: сдвигает groupPrevEnd на целое число
+					// календарных дней (отрицательное значение — начать раньше,
+					// положительное — намеренная задержка). roleNextAvailable и
+					// epicFloor остаются жёсткими нижними границами через maxTime —
+					// офсет не может нарушить непрерывность самой роли в конвейере.
+					target := groupPrevEnd.AddDate(0, 0, task.StartOffsetDays)
+					newStart := moveToWorkDay(maxTime(target, roleNextAvailable, epicFloor))
 					newEnd := addWorkDays(newStart, workDays)
 					if !newStart.Equal(task.StartDate) || !newEnd.Equal(task.EndDate) {
 						if err := s.repo.UpdateGanttTaskDates(ctx, task.ID, newStart, newEnd); err != nil {
@@ -575,17 +582,57 @@ func (s *Service) SetTaskProgress(
 		return nil, fmt.Errorf("%s: update progress: %w", op, err)
 	}
 
+	// Контракт progress между фронтендом и бэкендом — дробь 0.0-1.0 (фронтенд
+	// шлёт progress/100, читает progress*100 для Frappe Gantt), поэтому порог
+	// фиксации/снятия факта сравнивается с 1, а не со 100.
 	switch {
-	case progress >= 100 && task.ActualEndDate == nil:
+	case progress >= 1 && task.ActualEndDate == nil:
 		actualEnd := toMidnight(time.Now())
 		effort := max(1, countWorkDays(task.StartDate, actualEnd))
 		if err := s.repo.UpdateGanttTaskActuals(ctx, taskID, actualEnd, effort); err != nil {
 			return nil, fmt.Errorf("%s: update actuals: %w", op, err)
 		}
-	case progress < 100 && task.ActualEndDate != nil:
+	case progress < 1 && task.ActualEndDate != nil:
 		if err := s.repo.ClearGanttTaskActuals(ctx, taskID); err != nil {
 			return nil, fmt.Errorf("%s: clear actuals: %w", op, err)
 		}
+	}
+
+	epic, err := s.repo.GetEpicByID(ctx, task.EpicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get epic: %w", op, err)
+	}
+
+	result, err := s.RecalculateTeamSchedule(ctx, epic.TeamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: recalc schedule: %w", op, err)
+	}
+	return result, nil
+}
+
+// SetTaskStartOffset sets the start offset (lead/lag, in days) of a leaf
+// (role) Gantt task — see recalculateEpicSchedule for how it's applied.
+// Cannot be set on a parent (story/epic) task, which has no role of its
+// own to offset. Recalculates the whole team's pipeline schedule afterwards.
+func (s *Service) SetTaskStartOffset(
+	ctx context.Context,
+	taskID uuid.UUID,
+	offsetDays int,
+) ([]domain.GanttTask, error) {
+	op := "gantt.SetTaskStartOffset"
+
+	task, err := s.repo.GetGanttTaskByID(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get task: %w", op, err)
+	}
+	if task.IsParent {
+		return nil, fmt.Errorf(
+			"%s: start offset can only be set on a leaf (role) task, not a story/epic", op,
+		)
+	}
+
+	if err := s.repo.UpdateGanttTaskStartOffset(ctx, taskID, offsetDays); err != nil {
+		return nil, fmt.Errorf("%s: update start offset: %w", op, err)
 	}
 
 	epic, err := s.repo.GetEpicByID(ctx, task.EpicID)

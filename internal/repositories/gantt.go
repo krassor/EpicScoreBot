@@ -17,14 +17,14 @@ func (r *Repository) CreateGanttTask(ctx context.Context, task *domain.GanttTask
 	query := `INSERT INTO gantt_tasks
 		(id, epic_id, role_id, name, start_date, end_date,
 		 progress, sort_order, is_parent, parent_task_id,
-		 actual_end_date, actual_effort_days)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		 actual_end_date, actual_effort_days, start_offset_days)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING created_at, updated_at`
 	err := r.DB.QueryRowContext(ctx, query,
 		task.ID, task.EpicID, task.RoleID, task.Name,
 		task.StartDate, task.EndDate, task.Progress,
 		task.SortOrder, task.IsParent, task.ParentTaskID,
-		task.ActualEndDate, task.ActualEffortDays,
+		task.ActualEndDate, task.ActualEffortDays, task.StartOffsetDays,
 	).Scan(&task.CreatedAt, &task.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
@@ -38,7 +38,7 @@ func (r *Repository) GetGanttTasksByTeamID(ctx context.Context, teamID uuid.UUID
 	query := `SELECT gt.id, gt.epic_id, gt.role_id, gt.name,
 		gt.start_date, gt.end_date, gt.progress,
 		gt.sort_order, gt.is_parent, gt.parent_task_id,
-		gt.actual_end_date, gt.actual_effort_days,
+		gt.actual_end_date, gt.actual_effort_days, gt.start_offset_days,
 		gt.created_at, gt.updated_at
 		FROM gantt_tasks gt
 		INNER JOIN epics e ON e.id = gt.epic_id
@@ -57,7 +57,7 @@ func (r *Repository) GetGanttTasksByTeamID(ctx context.Context, teamID uuid.UUID
 			&t.ID, &t.EpicID, &t.RoleID, &t.Name,
 			&t.StartDate, &t.EndDate, &t.Progress,
 			&t.SortOrder, &t.IsParent, &t.ParentTaskID,
-			&t.ActualEndDate, &t.ActualEffortDays,
+			&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays,
 			&t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
@@ -73,7 +73,7 @@ func (r *Repository) GetGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID
 	query := `SELECT id, epic_id, role_id, name,
 		start_date, end_date, progress,
 		sort_order, is_parent, parent_task_id,
-		actual_end_date, actual_effort_days,
+		actual_end_date, actual_effort_days, start_offset_days,
 		created_at, updated_at
 		FROM gantt_tasks WHERE epic_id = $1
 		ORDER BY sort_order, name`
@@ -90,7 +90,7 @@ func (r *Repository) GetGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID
 			&t.ID, &t.EpicID, &t.RoleID, &t.Name,
 			&t.StartDate, &t.EndDate, &t.Progress,
 			&t.SortOrder, &t.IsParent, &t.ParentTaskID,
-			&t.ActualEndDate, &t.ActualEffortDays,
+			&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays,
 			&t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
@@ -107,14 +107,14 @@ func (r *Repository) GetGanttTaskByID(ctx context.Context, taskID uuid.UUID) (*d
 	query := `SELECT id, epic_id, role_id, name,
 		start_date, end_date, progress,
 		sort_order, is_parent, parent_task_id,
-		actual_end_date, actual_effort_days,
+		actual_end_date, actual_effort_days, start_offset_days,
 		created_at, updated_at
 		FROM gantt_tasks WHERE id = $1`
 	err := r.DB.QueryRowContext(ctx, query, taskID).Scan(
 		&t.ID, &t.EpicID, &t.RoleID, &t.Name,
 		&t.StartDate, &t.EndDate, &t.Progress,
 		&t.SortOrder, &t.IsParent, &t.ParentTaskID,
-		&t.ActualEndDate, &t.ActualEffortDays,
+		&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -163,6 +163,20 @@ func (r *Repository) UpdateGanttTaskSortOrder(ctx context.Context, taskID uuid.U
 	return nil
 }
 
+// UpdateGanttTaskStartOffset updates the start offset (lead/lag, in days)
+// of a leaf (role) Gantt task.
+func (r *Repository) UpdateGanttTaskStartOffset(ctx context.Context, taskID uuid.UUID, offsetDays int) error {
+	op := "Repository.UpdateGanttTaskStartOffset"
+	query := `UPDATE gantt_tasks
+		SET start_offset_days = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2`
+	_, err := r.DB.ExecContext(ctx, query, offsetDays, taskID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
 // DeleteGanttTasksByEpicID removes all Gantt tasks for a given epic.
 func (r *Repository) DeleteGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID) error {
 	op := "Repository.DeleteGanttTasksByEpicID"
@@ -180,7 +194,7 @@ func (r *Repository) GetGanttChildTasks(ctx context.Context, parentTaskID uuid.U
 	query := `SELECT id, epic_id, role_id, name,
 		start_date, end_date, progress,
 		sort_order, is_parent, parent_task_id,
-		actual_end_date, actual_effort_days,
+		actual_end_date, actual_effort_days, start_offset_days,
 		created_at, updated_at
 		FROM gantt_tasks WHERE parent_task_id = $1
 		ORDER BY sort_order, name`
@@ -197,7 +211,7 @@ func (r *Repository) GetGanttChildTasks(ctx context.Context, parentTaskID uuid.U
 			&t.ID, &t.EpicID, &t.RoleID, &t.Name,
 			&t.StartDate, &t.EndDate, &t.Progress,
 			&t.SortOrder, &t.IsParent, &t.ParentTaskID,
-			&t.ActualEndDate, &t.ActualEffortDays,
+			&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays,
 			&t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)

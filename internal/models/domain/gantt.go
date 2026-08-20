@@ -25,6 +25,13 @@ type GanttTask struct {
 	// ActualEffortDays — фактическая трудоёмкость в рабочих днях между
 	// плановым стартом задачи и ActualEndDate, вычисляется автоматически.
 	ActualEffortDays *int
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// StartOffsetDays — целочисленное смещение (lead/lag) планового старта
+	// листовой (ролевой) задачи относительно окончания предыдущей ролевой
+	// группы внутри той же стори. Отрицательное значение позволяет начать
+	// раньше (не дожидаясь полного завершения предыдущей роли), положительное —
+	// намеренно задержать старт. Не может нарушить непрерывность самой роли
+	// в конвейере команды — см. recalculateEpicSchedule.
+	StartOffsetDays int `db:"start_offset_days"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }

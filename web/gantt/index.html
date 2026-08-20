@@ -474,9 +474,16 @@
                         <label for="task-details-progress">Прогресс выполнения, %</label>
                         <input type="number" id="task-details-progress" min="0" max="100" step="1" class="input">
                     </div>
+                    <div class="form-group">
+                        <label for="task-details-offset">Смещение начала, дней (можно отрицательное)</label>
+                        <input type="number" id="task-details-offset" step="1" class="input">
+                        <div class="form-help">Отрицательное — начать раньше, не дожидаясь полного
+                            завершения предыдущей роли в этой стори. Не может быть раньше окончания
+                            предыдущей задачи этой же роли в конвейере.</div>
+                    </div>
                 </div>
                 <div class="modal-footer">
-                    <button id="task-details-save" class="btn btn-primary">💾 Сохранить прогресс</button>
+                    <button id="task-details-save" class="btn btn-primary">💾 Сохранить</button>
                     <button id="task-details-cancel" class="btn btn-secondary">Отмена</button>
                 </div>
             </div>

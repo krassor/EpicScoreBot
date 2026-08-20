@@ -39,6 +39,10 @@ type Repository interface {
 	UpdateGanttTaskDates(ctx context.Context, taskID uuid.UUID, startDate, endDate time.Time) error
 	UpdateGanttTaskProgress(ctx context.Context, taskID uuid.UUID, progress float64) error
 	UpdateGanttTaskSortOrder(ctx context.Context, taskID uuid.UUID, sortOrder int) error
+	// UpdateGanttTaskStartOffset меняет смещение (lead/lag, в днях) старта
+	// листовой (ролевой) задачи относительно окончания предыдущей ролевой
+	// группы внутри той же стори.
+	UpdateGanttTaskStartOffset(ctx context.Context, taskID uuid.UUID, offsetDays int) error
 	// UpdateGanttTaskActuals фиксирует факт завершения задачи (дата + трудоёмкость).
 	UpdateGanttTaskActuals(ctx context.Context, taskID uuid.UUID, actualEndDate time.Time, effortDays int) error
 	// ClearGanttTaskActuals сбрасывает факт завершения задачи (переоткрытие).

@@ -19,6 +19,10 @@ type GanttService interface {
 	// SetTaskProgress выставляет прогресс листовой (ролевой) задачи и
 	// автоматически фиксирует факт завершения при достижении 100%.
 	SetTaskProgress(ctx context.Context, taskID uuid.UUID, progress float64) ([]domain.GanttTask, error)
+	// SetTaskStartOffset выставляет смещение (lead/lag, в днях) старта
+	// листовой (ролевой) задачи относительно окончания предыдущей ролевой
+	// группы внутри той же стори.
+	SetTaskStartOffset(ctx context.Context, taskID uuid.UUID, offsetDays int) ([]domain.GanttTask, error)
 	GetTeamTasks(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error)
 }
 

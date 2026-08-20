@@ -771,34 +771,193 @@ func TestSetTaskProgress_FixesActualsAt100(t *testing.T) {
 	}
 
 	// Нельзя выставить прогресс родительской (is_parent) задаче напрямую.
-	if _, err := svc.SetTaskProgress(ctx, epicParent.ID, 50); err == nil {
+	if _, err := svc.SetTaskProgress(ctx, epicParent.ID, 0.5); err == nil {
 		t.Errorf("expected error when setting progress on a parent task")
 	}
 
-	if _, err := svc.SetTaskProgress(ctx, roleTask.ID, 100); err != nil {
+	// Реальный контракт с фронтендом — дробь 0.0-1.0 (фронтенд шлёт
+	// progress/100), поэтому порог фиксации факта проверяется как >= 1, а не >= 100.
+	if _, err := svc.SetTaskProgress(ctx, roleTask.ID, 1); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got := f.tasks[roleTask.ID]
-	if got.Progress != 100 {
-		t.Errorf("progress = %v, want 100", got.Progress)
+	if got.Progress != 1 {
+		t.Errorf("progress = %v, want 1", got.Progress)
 	}
 	if got.ActualEndDate == nil {
-		t.Fatalf("expected ActualEndDate to be set at 100%%")
+		t.Fatalf("expected ActualEndDate to be set at 100%% (progress=1)")
 	}
 	if got.ActualEffortDays == nil || *got.ActualEffortDays < 1 {
 		t.Errorf("expected ActualEffortDays >= 1, got %v", got.ActualEffortDays)
 	}
 
-	// Переоткрытие: прогресс падает ниже 100% -> факт должен сброситься.
-	if _, err := svc.SetTaskProgress(ctx, roleTask.ID, 60); err != nil {
+	// Переоткрытие: прогресс падает ниже 1 (100%) -> факт должен сброситься.
+	if _, err := svc.SetTaskProgress(ctx, roleTask.ID, 0.6); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	got = f.tasks[roleTask.ID]
-	if got.Progress != 60 {
-		t.Errorf("progress = %v, want 60", got.Progress)
+	if got.Progress != 0.6 {
+		t.Errorf("progress = %v, want 0.6", got.Progress)
 	}
 	if got.ActualEndDate != nil || got.ActualEffortDays != nil {
 		t.Errorf("expected actuals to be cleared after reopening, got end=%v effort=%v",
 			got.ActualEndDate, got.ActualEffortDays)
+	}
+}
+
+// TestSetTaskStartOffset_PositiveDelaysStart проверяет, что положительный
+// офсет сдвигает старт роли позже конца предыдущей группы (groupPrevEnd)
+// внутри эпика (legacy-раскладка без сторей).
+func TestSetTaskStartOffset_PositiveDelaysStart(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epicID := uuid.New()
+	analystID := uuid.New()
+	devID := uuid.New()
+
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic One", TeamID: teamID})
+	f.addRole(&domain.Role{ID: analystID, Name: "Аналитик"})
+	f.addRole(&domain.Role{ID: devID, Name: "BE разработчик"})
+	f.roleScores[epicID] = []domain.EpicRoleScore{
+		{EpicID: epicID, RoleID: analystID, WeightedAvg: 2.0}, // 2 workdays
+		{EpicID: epicID, RoleID: devID, WeightedAvg: 2.0},     // 2 workdays
+	}
+
+	start := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC) // Monday
+	if _, err := svc.GenerateTasksForEpic(ctx, epicID, start); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parentID uuid.UUID
+	for _, task := range f.tasks {
+		if task.IsParent {
+			parentID = task.ID
+		}
+	}
+	dev := findTaskByParentAndName(f, parentID, "BE разработчик")
+	if dev == nil {
+		t.Fatalf("expected dev task to exist")
+	}
+	// Без офсета: Аналитик Jul13-14, dev стартует сразу на следующий рабочий день (Jul15).
+	if !dev.StartDate.Equal(time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("precondition failed: dev start = %v, want Jul15", dev.StartDate)
+	}
+
+	// Положительный офсет: намеренная задержка старта на 3 календарных дня
+	// относительно конца предыдущей группы (Аналитик). Jul15 + 3 = Jul18
+	// (суббота) -> переносится на ближайший рабочий день, понедельник Jul20.
+	if _, err := svc.SetTaskStartOffset(ctx, dev.ID, 3); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := f.tasks[dev.ID]
+	want := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	if !got.StartDate.Equal(want) {
+		t.Errorf("dev start with offset=+3 = %v, want %v", got.StartDate, want)
+	}
+	if got.StartOffsetDays != 3 {
+		t.Errorf("StartOffsetDays = %d, want 3", got.StartOffsetDays)
+	}
+}
+
+// TestSetTaskStartOffset_NegativeClampedByRoleContinuity проверяет, что
+// отрицательный офсет позволяет роли стартовать раньше конца предыдущей
+// группы внутри стори, но не раньше, чем освободится сама роль в конвейере
+// команды — roleNextAvailable (непрерывность роли) остаётся жёсткой нижней
+// границей и в этом кейсе строже, чем groupPrevEnd+offset.
+func TestSetTaskStartOffset_NegativeClampedByRoleContinuity(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epicID := uuid.New()
+	story1ID := uuid.New()
+	story2ID := uuid.New()
+	analystID := uuid.New()
+	devID := uuid.New()
+
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic", TeamID: teamID})
+	story1 := f.addEpic(&domain.Epic{ID: story1ID, Number: "E-1-S1", Name: "Story 1", TeamID: teamID, ParentEpicID: &epicID})
+	story2 := f.addEpic(&domain.Epic{ID: story2ID, Number: "E-1-S2", Name: "Story 2", TeamID: teamID, ParentEpicID: &epicID})
+	f.addRole(&domain.Role{ID: analystID, Name: "Аналитик"})
+	f.addRole(&domain.Role{ID: devID, Name: "BE разработчик"})
+
+	f.roleScores[story1ID] = []domain.EpicRoleScore{
+		{EpicID: story1ID, RoleID: analystID, WeightedAvg: 2.0}, // 2 workdays
+		{EpicID: story1ID, RoleID: devID, WeightedAvg: 3.0},     // 3 workdays
+	}
+	f.roleScores[story2ID] = []domain.EpicRoleScore{
+		{EpicID: story2ID, RoleID: analystID, WeightedAvg: 1.0}, // 1 workday
+		{EpicID: story2ID, RoleID: devID, WeightedAvg: 2.0},     // 2 workdays
+	}
+
+	start := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC) // Monday
+	if _, err := svc.GenerateTasksForEpic(ctx, epicID, start); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	story1Task := findStoryTask(f, storyName(story1))
+	story2Task := findStoryTask(f, storyName(story2))
+	devStory1 := findTaskByParentAndName(f, story1Task.ID, "BE разработчик")
+	devStory2 := findTaskByParentAndName(f, story2Task.ID, "BE разработчик")
+	if devStory1 == nil || devStory2 == nil {
+		t.Fatalf("expected dev tasks to exist")
+	}
+
+	// Без офсета dev story2 стартует Jul20 (dev story1 заканчивает Fri Jul17,
+	// +1 рабочий день -> Jul18 суббота -> перенос на понедельник Jul20).
+	if !devStory2.StartDate.Equal(time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("precondition failed: dev story2 start = %v, want Jul20", devStory2.StartDate)
+	}
+
+	// Ставим большой отрицательный офсет — попытка начать намного раньше
+	// конца предыдущей группы (аналитика story2) внутри стори.
+	if _, err := svc.SetTaskStartOffset(ctx, devStory2.ID, -10); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := f.tasks[devStory2.ID]
+	// roleNextAvailable (непрерывность роли dev, Jul20) строже, чем
+	// groupPrevEnd + offset (глубоко в прошлом) — старт должен быть прижат
+	// именно к непрерывности роли, а не к смещённой дате.
+	want := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	if !got.StartDate.Equal(want) {
+		t.Errorf("dev story2 start with offset=-10 = %v, want %v (clamped by role continuity, not the offset)",
+			got.StartDate, want)
+	}
+	if got.StartOffsetDays != -10 {
+		t.Errorf("StartOffsetDays = %d, want -10", got.StartOffsetDays)
+	}
+}
+
+// TestSetTaskStartOffset_RejectsParentTask проверяет, что офсет старта
+// нельзя выставить родительской (is_parent) задаче — только листовой
+// (ролевой), у которой есть собственная роль в конвейере.
+func TestSetTaskStartOffset_RejectsParentTask(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeRepo()
+	svc := New(newTestLogger(), f)
+
+	teamID := uuid.New()
+	epicID := uuid.New()
+
+	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic", TeamID: teamID})
+
+	epicParent, err := f.CreateGanttTask(ctx, &domain.GanttTask{
+		EpicID: epicID, Name: "E-1: Epic",
+		StartDate: time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC),
+		IsParent:  true,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	if _, err := svc.SetTaskStartOffset(ctx, epicParent.ID, -2); err == nil {
+		t.Errorf("expected error when setting start offset on a parent task")
 	}
 }
