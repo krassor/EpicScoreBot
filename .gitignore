@@ -30,3 +30,10 @@ template.html
 run_docker_build.sh
 
 .agents/
+
+# Локальные ассистенты/конфиги — не для общего репозитория
+.claude/
+.kilocode/
+.env
+CLAUDE.md
+coverage.out
