@@ -1,0 +1,38 @@
+schema: spec-driven
+
+context: |
+  EpicScoreBot — сервис скоринга эпиков/рисков с Telegram-ботом и веб-Gantt.
+  Backend: Go 1.26, chi/v5, sqlx+lib/pq (PostgreSQL), cleanenv, go-telegram/bot,
+  revrost/go-openrouter, nativebpm/gotenberg (PDF). Слои: transport → services →
+  repositories (нижние не знают о верхних), доменные модели — internal/models/domain/.
+  Frontend: Vanilla JS/CSS/HTML (web/gantt/), без фреймворков.
+  Формат ошибок HTTP API стандартизирован во всём проекте:
+  { "error": { "code": "...", "message": "..." } } — не отклоняться.
+  Комментарии и коммиты — русский, идентификаторы в коде — английский.
+  Новые зависимости не добавлять без обоснования и одобрения пользователя.
+  Подробности по областям: .agents/tasks/task_backend.md, task_frontend.md,
+  task_devops.md, task_qa.md.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+rules:
+  proposal:
+    - Явно указывай затронутые слои (transport/services/repositories) и области
+      (backend/frontend/devops/qa), чтобы было понятно, каких субагентов задействовать
+    - Изменение формата ошибок API — отдельное архитектурное решение, требует
+      явного согласования, не делать по умолчанию
+  tasks:
+    - Группируй задачи по областям (backend/frontend/devops/qa) в порядке,
+      удобном для делегирования
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
