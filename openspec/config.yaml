@@ -13,6 +13,19 @@ context: |
   Подробности по областям: .agents/tasks/task_backend.md, task_frontend.md,
   task_devops.md, task_qa.md.
 
+  Специализированные субагенты проекта (см. .claude/agents/*.md) — при
+  реализации задач делегируй им, а не пиши код за них напрямую:
+  - backend (.claude/agents/backend.md) — Go-бэкенд: HTTP API (chi),
+    PostgreSQL (sqlx), скоринг, Telegram-бот, миграции (internal/, app/, go.mod)
+  - frontend (.claude/agents/frontend.md) — веб-интерфейс Gantt/админ-панели,
+    Vanilla JS/CSS/HTML (web/gantt/)
+  - devops (.claude/agents/devops.md) — Docker/docker-compose, CI/CD, деплой,
+    бэкапы, мониторинг (Dockerfile, docker-compose.yml, scripts/, .github/workflows/)
+  - qa (.claude/agents/qa.md) — тестирование и покрытие кода
+  Изменения, затрагивающие несколько субагентов (новый API-эндпоинт, новая
+  сущность, изменение схемы БД), требуют явного подтверждения пользователя
+  перед реализацией, даже если планирование уже завершено.
+
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
 rules:
@@ -28,11 +41,18 @@ rules:
 # Per-operation guidance (optional)
 # Add advisory guidance for how apply and archive work should be conducted.
 # This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+operations:
+  apply:
+    guidance:
+      - Секции tasks.md сгруппированы по областям (backend/frontend/devops/qa,
+        см. rules.tasks) — делегируй каждую секцию соответствующему субагенту
+        через Agent tool вместо реализации backend/frontend/devops/qa-кода
+        напрямую в координаторской сессии
+      - Соблюдай порядок с учётом зависимостей между областями: backend перед
+        frontend, если frontend использует новые/изменённые HTTP-эндпоинты;
+        qa — последней секцией, после того как остальные затронутые области
+        реализованы
+      - Изменения, затрагивающие несколько субагентов (новый API-эндпоинт,
+        новая сущность, изменение схемы БД), требуют явного подтверждения
+        пользователя перед стартом реализации, даже если планирование уже
+        завершено
