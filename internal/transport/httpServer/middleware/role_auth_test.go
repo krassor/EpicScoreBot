@@ -20,10 +20,20 @@ func (m *mockUserFinder) FindUserByTelegramID(ctx context.Context, telegramID st
 	return m.user, nil
 }
 
+// mockTeamAdminChecker — конфигурируемая заглушка TeamAdminChecker для
+// тестов team-scoped роли admin.
+type mockTeamAdminChecker struct {
+	isAdmin bool
+	err     error
+}
+
+func (m *mockTeamAdminChecker) IsTeamAdminOfAny(ctx context.Context, telegramID string) (bool, error) {
+	return m.isAdmin, m.err
+}
+
 func TestRoleAuth(t *testing.T) {
 	cfg := config.BotConfig{
 		SuperAdmins: []string{"super"},
-		Admins:      []string{"admin_user"},
 	}
 
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +44,8 @@ func TestRoleAuth(t *testing.T) {
 	// Case 1: SuperAdmin has access to superadmin, admin and member
 	{
 		finder := &mockUserFinder{}
-		mw := RoleAuth(finder, cfg, "superadmin")(nextHandler)
+		teamAdmin := &mockTeamAdminChecker{isAdmin: false}
+		mw := RoleAuth(finder, teamAdmin, cfg, "superadmin")(nextHandler)
 		req := httptest.NewRequest("GET", "/", nil)
 		session := &UserSession{TelegramID: "1", Username: "super"}
 		req = req.WithContext(context.WithValue(req.Context(), UserSessionKey, session))
@@ -45,11 +56,13 @@ func TestRoleAuth(t *testing.T) {
 		}
 	}
 
-	// Case 2: Admin does not have access to superadmin, but has access to admin and member
+	// Case 2: Team-admin (team_admins в БД) не имеет доступа к superadmin, но
+	// имеет доступ к admin и member.
 	{
 		finder := &mockUserFinder{}
-		mwSuper := RoleAuth(finder, cfg, "superadmin")(nextHandler)
-		mwAdmin := RoleAuth(finder, cfg, "admin")(nextHandler)
+		teamAdmin := &mockTeamAdminChecker{isAdmin: true}
+		mwSuper := RoleAuth(finder, teamAdmin, cfg, "superadmin")(nextHandler)
+		mwAdmin := RoleAuth(finder, teamAdmin, cfg, "admin")(nextHandler)
 		session := &UserSession{TelegramID: "2", Username: "admin_user"}
 
 		// check superadmin
@@ -74,8 +87,9 @@ func TestRoleAuth(t *testing.T) {
 	// Case 3: Regular member has access to member but not admin/superadmin
 	{
 		finder := &mockUserFinder{user: &domain.User{ID: uuid.New(), TelegramID: "3"}}
-		mwAdmin := RoleAuth(finder, cfg, "admin")(nextHandler)
-		mwMember := RoleAuth(finder, cfg, "member")(nextHandler)
+		teamAdmin := &mockTeamAdminChecker{isAdmin: false}
+		mwAdmin := RoleAuth(finder, teamAdmin, cfg, "admin")(nextHandler)
+		mwMember := RoleAuth(finder, teamAdmin, cfg, "member")(nextHandler)
 		session := &UserSession{TelegramID: "3", Username: "member_user"}
 
 		// check admin
@@ -100,7 +114,8 @@ func TestRoleAuth(t *testing.T) {
 	// Case 4: Non-existent user gets 403
 	{
 		finder := &mockUserFinder{user: nil} // DB user not found
-		mwMember := RoleAuth(finder, cfg, "member")(nextHandler)
+		teamAdmin := &mockTeamAdminChecker{isAdmin: false}
+		mwMember := RoleAuth(finder, teamAdmin, cfg, "member")(nextHandler)
 		session := &UserSession{TelegramID: "4", Username: "some_guest"}
 
 		req := httptest.NewRequest("GET", "/", nil)
@@ -109,6 +124,23 @@ func TestRoleAuth(t *testing.T) {
 		mwMember.ServeHTTP(rr, req)
 		if rr.Code != http.StatusForbidden {
 			t.Errorf("Guest passed member check: got status %d", rr.Code)
+		}
+	}
+
+	// Case 5: team_admins недоступна (ошибка репозитория) — трактуется как
+	// "не admin", не 500.
+	{
+		finder := &mockUserFinder{}
+		teamAdmin := &mockTeamAdminChecker{isAdmin: false, err: context.DeadlineExceeded}
+		mwAdmin := RoleAuth(finder, teamAdmin, cfg, "admin")(nextHandler)
+		session := &UserSession{TelegramID: "5", Username: "flaky_user"}
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req = req.WithContext(context.WithValue(req.Context(), UserSessionKey, session))
+		rr := httptest.NewRecorder()
+		mwAdmin.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 on team-admin lookup error, got %d", rr.Code)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"EpicScoreBot/internal/models/domain"
+	"EpicScoreBot/internal/transport/httpServer/middleware"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -334,6 +335,12 @@ func (h *GanttHandler) UpdateEpic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	session, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	isSuper := isSuperAdminSession(session, &h.cfg)
+
 	var req struct {
 		Number            string   `json:"number"`
 		Name              string   `json:"name"`
@@ -359,6 +366,14 @@ func (h *GanttHandler) UpdateEpic(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, "epic not found")
 		return
+	}
+
+	if !isSuper {
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epic.TeamID)
+		if err != nil || !isAdminOf {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	if epic.ParentEpicID != nil {
@@ -437,7 +452,6 @@ func sameRoleIDs(a, b []uuid.UUID) bool {
 	}
 	return true
 }
-
 
 // StartEpicScoring starts the scoring stage for an epic and its risks/stories.
 func (h *GanttHandler) StartEpicScoring(w http.ResponseWriter, r *http.Request) {
@@ -675,9 +689,29 @@ func (h *GanttHandler) UpdateRisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.repo.GetRiskByID(r.Context(), riskUUID); err != nil {
+	session, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	isSuper := isSuperAdminSession(session, &h.cfg)
+
+	risk, err := h.repo.GetRiskByID(r.Context(), riskUUID)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "risk not found")
 		return
+	}
+
+	if !isSuper {
+		riskEpic, err := h.repo.GetEpicByID(r.Context(), risk.EpicID)
+		if err != nil || riskEpic == nil {
+			writeError(w, http.StatusNotFound, "epic not found")
+			return
+		}
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, riskEpic.TeamID)
+		if err != nil || !isAdminOf {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	if err := h.repo.UpdateRisk(r.Context(), riskUUID, req.Description); err != nil {
@@ -783,10 +817,32 @@ func (h *GanttHandler) DeleteRisk(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// GetUsersList возвращает список всех зарегистрированных пользователей со всеми связями.
+// GetUsersList возвращает список зарегистрированных пользователей со всеми
+// связями. Для team-admin (не superadmin) выдача ограничивается
+// пользователями команд, где он назначен team-admin.
 func (h *GanttHandler) GetUsersList(w http.ResponseWriter, r *http.Request) {
 	op := "handlers.GetUsersList"
 	h.log.Info("executing get users list", slog.String("op", op))
+
+	session, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	isSuper := isSuperAdminSession(session, &h.cfg)
+
+	var allowedTeams map[uuid.UUID]bool
+	if !isSuper {
+		teamIDs, err := h.repo.AdminTeamIDs(r.Context(), session.TelegramID)
+		if err != nil {
+			h.log.Error("failed to get admin team ids", slog.String("op", op), slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "failed to get users")
+			return
+		}
+		allowedTeams = make(map[uuid.UUID]bool, len(teamIDs))
+		for _, tid := range teamIDs {
+			allowedTeams[tid] = true
+		}
+	}
 
 	users, err := h.repo.GetAllUsers(r.Context())
 	if err != nil {
@@ -823,6 +879,19 @@ func (h *GanttHandler) GetUsersList(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to load user relations")
 			return
 		}
+		if allowedTeams != nil {
+			inScope := false
+			for _, t := range userTeams {
+				if allowedTeams[t.ID] {
+					inScope = true
+					break
+				}
+			}
+			if !inScope {
+				continue
+			}
+		}
+
 		teams := make([]teamResp, len(userTeams))
 		for i, t := range userTeams {
 			teams[i] = teamResp{ID: t.ID.String(), Name: t.Name}
@@ -854,7 +923,9 @@ func (h *GanttHandler) GetUsersList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// GetUserDetails возвращает детальную информацию о пользователе, включая списки ID привязанных команд и ролей.
+// GetUserDetails возвращает детальную информацию о пользователе, включая
+// списки ID привязанных команд и ролей. Для team-admin (не superadmin)
+// доступны только пользователи команд, где он назначен team-admin.
 func (h *GanttHandler) GetUserDetails(w http.ResponseWriter, r *http.Request) {
 	op := "handlers.GetUserDetails"
 	userIDStr := chi.URLParam(r, "id")
@@ -865,6 +936,12 @@ func (h *GanttHandler) GetUserDetails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("executing get user details", slog.String("op", op), slog.String("user_id", userIDStr))
+
+	session, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	isSuper := isSuperAdminSession(session, &h.cfg)
 
 	user, err := h.repo.GetUserByID(r.Context(), userID)
 	if err != nil {
@@ -878,6 +955,30 @@ func (h *GanttHandler) GetUserDetails(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("failed to get user relations", slog.String("op", op), slog.String("user_id", userIDStr), slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "failed to load user relations")
 		return
+	}
+
+	if !isSuper {
+		adminTeamIDs, err := h.repo.AdminTeamIDs(r.Context(), session.TelegramID)
+		if err != nil {
+			h.log.Error("failed to get admin team ids", slog.String("op", op), slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "failed to load user relations")
+			return
+		}
+		allowed := make(map[uuid.UUID]bool, len(adminTeamIDs))
+		for _, tid := range adminTeamIDs {
+			allowed[tid] = true
+		}
+		inScope := false
+		for _, tid := range teamIDs {
+			if allowed[tid] {
+				inScope = true
+				break
+			}
+		}
+		if !inScope {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	teamIDsStr := make([]string, len(teamIDs))
@@ -901,10 +1002,43 @@ func (h *GanttHandler) GetUserDetails(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// CreateSingleUser создает нового пользователя со всеми связями с командами и ролями в одной транзакции.
+// teamsInAdminScope проверяет, что все переданные teamUUIDs — подмножество
+// команд, где сессия является team-admin. superadmin не ограничен.
+// Возвращает false, если хотя бы одна команда не входит в scope, или при
+// ошибке резолвинга (трактуется консервативно как "не входит").
+func (h *GanttHandler) teamsInAdminScope(r *http.Request, session *middleware.UserSession, isSuper bool, teamUUIDs []uuid.UUID) bool {
+	if isSuper || len(teamUUIDs) == 0 {
+		return true
+	}
+	adminTeamIDs, err := h.repo.AdminTeamIDs(r.Context(), session.TelegramID)
+	if err != nil {
+		return false
+	}
+	allowed := make(map[uuid.UUID]bool, len(adminTeamIDs))
+	for _, tid := range adminTeamIDs {
+		allowed[tid] = true
+	}
+	for _, tid := range teamUUIDs {
+		if !allowed[tid] {
+			return false
+		}
+	}
+	return true
+}
+
+// CreateSingleUser создает нового пользователя со всеми связями с командами и
+// ролями в одной транзакции. Team-admin (не superadmin) может назначать
+// только команды из своего списка (team_ids запроса — подмножество
+// AdminTeamIDs), иначе 403.
 func (h *GanttHandler) CreateSingleUser(w http.ResponseWriter, r *http.Request) {
 	op := "handlers.CreateSingleUser"
 	h.log.Info("executing single user creation", slog.String("op", op))
+
+	session, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	isSuper := isSuperAdminSession(session, &h.cfg)
 
 	var req struct {
 		TelegramID string   `json:"telegram_id"`
@@ -938,6 +1072,11 @@ func (h *GanttHandler) CreateSingleUser(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		teamUUIDs = append(teamUUIDs, tid)
+	}
+
+	if !h.teamsInAdminScope(r, session, isSuper, teamUUIDs) {
+		writeError(w, http.StatusForbidden, "team_id outside of admin scope")
+		return
 	}
 
 	var roleUUIDs []uuid.UUID
@@ -984,6 +1123,12 @@ func (h *GanttHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	h.log.Info("executing user update", slog.String("op", op), slog.String("user_id", userIDStr))
 
+	session, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	isSuper := isSuperAdminSession(session, &h.cfg)
+
 	var req struct {
 		FirstName string   `json:"first_name"`
 		LastName  string   `json:"last_name"`
@@ -1026,6 +1171,11 @@ func (h *GanttHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		roleUUIDs = append(roleUUIDs, rid)
+	}
+
+	if !h.teamsInAdminScope(r, session, isSuper, teamUUIDs) {
+		writeError(w, http.StatusForbidden, "team_id outside of admin scope")
+		return
 	}
 
 	err = h.repo.UpdateUserWithRelations(r.Context(), userID, req.FirstName, req.LastName, req.Weight, teamUUIDs, roleUUIDs)

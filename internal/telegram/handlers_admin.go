@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -52,7 +51,7 @@ func (epicBot *Bot) handleAddTeam(ctx context.Context, msg *models.Message) erro
 // ─── /adduser ─────────────────────────────────────────────────────────────
 
 func (epicBot *Bot) handleAddUser(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
@@ -107,7 +106,7 @@ func (epicBot *Bot) handleAddUser(ctx context.Context, msg *models.Message) erro
 // ─── /assignrole — inline keyboard ────────────────────────────────────────
 
 func (epicBot *Bot) handleAssignRole(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
@@ -226,75 +225,33 @@ func (epicBot *Bot) handleChangeRate(ctx context.Context, msg *models.Message) e
 }
 
 // ─── /addadmin ────────────────────────────────────────────────────────────
+//
+// Назначение team-admin переведено с правки config.yaml (BotConfig.Admins) на
+// запись в БД (таблица team_admins), т.к. привязка теперь team-scoped, а не
+// глобальной ролью. Флоу интерактивный (выбор команды → выбор пользователя →
+// подтверждение), т.к. username нигде не хранится персистентно вне сессии
+// Telegram-бота — см. handleAdmTeamSelected (case "addadmin") и
+// handleAdmUserSelected (case "addadminconfirm") в admin_callbacks.go.
 
 func (epicBot *Bot) handleAddAdmin(ctx context.Context, msg *models.Message) error {
-	op := "bot.handleAddAdmin"
-	log := epicBot.log.With(
-		slog.String("op", op),
-		slog.Int64("chatID", msg.Chat.ID),
-	)
-
 	if !epicBot.isSuperAdmin(msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для супер-администраторов.")
 		return err
 	}
-	args := strings.TrimSpace(commandArguments(msg))
-	if args == "" {
-		_, err := epicBot.sendReply(ctx, msg, "⚠️ Использование: /addadmin <username>")
-		return err
-	}
-	username := strings.TrimPrefix(args, "@")
-
-	epicBot.cfg.BotConfig.Admins = append(epicBot.cfg.BotConfig.Admins, username)
-	err := epicBot.cfg.Write()
-	if err != nil {
-		epicBot.cfg.BotConfig.Admins = epicBot.cfg.BotConfig.Admins[:len(epicBot.cfg.BotConfig.Admins)-1]
-		log.Error("failed to add admin", slog.String("username", username), sl.Err(err))
-		_, retErr := epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка добавления администратора: %v", err))
-		return retErr
-	}
-	log.Info("admin added", slog.String("username", username))
-	_, retErr := epicBot.sendReply(ctx, msg, fmt.Sprintf("✅ Администратор @%s добавлен.", username))
-	return retErr
+	return epicBot.showTeamPickerInitial(ctx, msg, "addadmin")
 }
 
 // ─── /removeadmin ─────────────────────────────────────────────────────────
+//
+// Аналогично /addadmin — интерактивный флоу (выбор команды → выбор одного из
+// текущих team-admin этой команды → подтверждение снятия), см.
+// handleAdmTeamSelected (case "removeadmin") и handleAdmUserSelected
+// (case "removeadminconfirm") в admin_callbacks.go.
 
 func (epicBot *Bot) handleRemoveAdmin(ctx context.Context, msg *models.Message) error {
-	op := "bot.handleRemoveAdmin"
-	log := epicBot.log.With(
-		slog.String("op", op),
-		slog.Int64("chatID", msg.Chat.ID),
-	)
-
 	if !epicBot.isSuperAdmin(msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для супер-администраторов.")
 		return err
 	}
-	args := strings.TrimSpace(commandArguments(msg))
-	if args == "" {
-		_, err := epicBot.sendReply(ctx, msg, "⚠️ Использование: /removeadmin <username>")
-		return err
-	}
-	username := strings.TrimPrefix(args, "@")
-
-	idx := slices.Index(epicBot.cfg.BotConfig.Admins, username)
-	if idx == -1 {
-		_, err := epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Администратор @%s не найден.", username))
-		return err
-	}
-
-	removed := epicBot.cfg.BotConfig.Admins[idx]
-	epicBot.cfg.BotConfig.Admins = slices.Delete(epicBot.cfg.BotConfig.Admins, idx, idx+1)
-
-	if err := epicBot.cfg.Write(); err != nil {
-		epicBot.cfg.BotConfig.Admins = slices.Insert(epicBot.cfg.BotConfig.Admins, idx, removed)
-		log.Error("failed to remove admin", slog.String("username", username), sl.Err(err))
-		_, retErr := epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Ошибка удаления администратора: %v", err))
-		return retErr
-	}
-
-	log.Info("admin removed", slog.String("username", username))
-	_, retErr := epicBot.sendReply(ctx, msg, fmt.Sprintf("✅ Администратор @%s удалён.", username))
-	return retErr
+	return epicBot.showTeamPickerInitial(ctx, msg, "removeadmin")
 }

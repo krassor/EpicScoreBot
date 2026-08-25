@@ -28,6 +28,26 @@ type mockAdminScoresRepo struct {
 	createdRiskScore     bool
 	completedEpicScoring bool
 	completedRiskScoring bool
+	// denyTeamAdmin переключает мок team-admin проверок (IsTeamAdminOfAny/
+	// IsTeamAdminOf) в состояние "не admin" — по умолчанию (false) сессия
+	// считается team-admin, чтобы не трогать существующие "success"-тесты.
+	denyTeamAdmin bool
+	// allowedTeamID, если задан, делает IsTeamAdminOf team-specific: true
+	// только для этой конкретной команды (для тестов "team-admin команды A
+	// не может работать с командой B"). Если nil — используется denyTeamAdmin
+	// без учёта конкретной команды.
+	allowedTeamID *uuid.UUID
+}
+
+func (m *mockAdminScoresRepo) IsTeamAdminOfAny(ctx context.Context, telegramID string) (bool, error) {
+	return !m.denyTeamAdmin, nil
+}
+
+func (m *mockAdminScoresRepo) IsTeamAdminOf(ctx context.Context, telegramID string, teamID uuid.UUID) (bool, error) {
+	if m.allowedTeamID != nil {
+		return *m.allowedTeamID == teamID, nil
+	}
+	return !m.denyTeamAdmin, nil
 }
 
 func (m *mockAdminScoresRepo) GetUserByID(ctx context.Context, userID uuid.UUID) (*domain.User, error) {
@@ -144,11 +164,40 @@ func TestAdminSubmitEpicScore(t *testing.T) {
 		}
 	})
 
+	t.Run("cross_team_forbidden", func(t *testing.T) {
+		// team-admin команды A не может проставлять оценку эпика команды B.
+		teamA := uuid.New()
+		teamB := uuid.New()
+		repo := &mockAdminScoresRepo{
+			user:          &domain.User{ID: userID, TelegramID: "user_tg"},
+			role:          &domain.Role{ID: roleID, Name: "BE разработчик"},
+			epic:          &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: teamB},
+			allowedTeamID: &teamA,
+		}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+
+		body := `{"epic_id":"` + epicID.String() + `","user_id":"` + userID.String() + `","score":8}`
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/epic", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminSubmitEpicScore(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for cross-team epic, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+		if repo.createdEpicScore {
+			t.Error("expected epic score not to be created for cross-team epic")
+		}
+	})
+
 	t.Run("forbidden_for_member", func(t *testing.T) {
 		repo := &mockAdminScoresRepo{
-			user: &domain.User{ID: userID, TelegramID: "user_tg"},
-			role: &domain.Role{ID: roleID, Name: "BE разработчик"},
-			epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()},
+			user:          &domain.User{ID: userID, TelegramID: "user_tg"},
+			role:          &domain.Role{ID: roleID, Name: "BE разработчик"},
+			epic:          &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()},
+			denyTeamAdmin: true,
 		}
 		svc := &mockAdminScoresSvc{repo: repo}
 		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
@@ -226,9 +275,11 @@ func TestAdminSubmitRiskScore(t *testing.T) {
 	}
 
 	t.Run("success_as_admin", func(t *testing.T) {
+		riskEpicID := uuid.New()
 		repo := &mockAdminScoresRepo{
 			user: &domain.User{ID: userID, TelegramID: "user_tg"},
-			risk: &domain.Risk{ID: riskID, Status: domain.StatusScoring, EpicID: uuid.New()},
+			risk: &domain.Risk{ID: riskID, Status: domain.StatusScoring, EpicID: riskEpicID},
+			epic: &domain.Epic{ID: riskEpicID, TeamID: uuid.New()},
 		}
 		svc := &mockAdminScoresSvc{repo: repo}
 		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
@@ -253,8 +304,9 @@ func TestAdminSubmitRiskScore(t *testing.T) {
 
 	t.Run("forbidden_for_member", func(t *testing.T) {
 		repo := &mockAdminScoresRepo{
-			user: &domain.User{ID: userID, TelegramID: "user_tg"},
-			risk: &domain.Risk{ID: riskID, Status: domain.StatusScoring, EpicID: uuid.New()},
+			user:          &domain.User{ID: userID, TelegramID: "user_tg"},
+			risk:          &domain.Risk{ID: riskID, Status: domain.StatusScoring, EpicID: uuid.New()},
+			denyTeamAdmin: true,
 		}
 		svc := &mockAdminScoresSvc{repo: repo}
 		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
@@ -304,7 +356,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 	}
 
 	t.Run("forbidden_for_member", func(t *testing.T) {
-		repo := &mockAdminScoresRepo{}
+		repo := &mockAdminScoresRepo{denyTeamAdmin: true}
 		svc := &mockAdminScoresSvc{repo: repo}
 		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
 
@@ -324,7 +376,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 	})
 
 	t.Run("bad_request_when_scoring_not_complete", func(t *testing.T) {
-		repo := &mockAdminScoresRepo{}
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, TeamID: uuid.New()}}
 		svc := &mockAdminScoresSvc{repo: repo, manualFinalScoreErr: scoring.ErrScoringNotComplete}
 		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
 
@@ -352,7 +404,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 
 	t.Run("success_with_parent_epic_id", func(t *testing.T) {
 		finalScore := 42.0
-		repo := &mockAdminScoresRepo{}
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, TeamID: uuid.New()}}
 		svc := &mockAdminScoresSvc{
 			repo: repo,
 			manualFinalScoreEpic: &domain.Epic{
@@ -409,7 +461,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 
 	t.Run("success_without_parent_epic_id", func(t *testing.T) {
 		finalScore := 15.0
-		repo := &mockAdminScoresRepo{}
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, TeamID: uuid.New()}}
 		svc := &mockAdminScoresSvc{
 			repo: repo,
 			manualFinalScoreEpic: &domain.Epic{

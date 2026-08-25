@@ -91,17 +91,24 @@ func (h *GanttHandler) GetTeams(w http.ResponseWriter, r *http.Request) {
 		teams, err = h.repo.GetAllTeams(r.Context())
 		role = "superadmin"
 	} else {
-		// 2. Is Admin?
-		isAdmin := false
-		for _, ad := range h.cfg.Admins {
-			if strings.EqualFold(session.Username, ad) {
-				isAdmin = true
-				break
-			}
+		// 2. Is team-admin (team_admins в БД, team-scoped) хотя бы одной команды?
+		isAdmin, errAdmin := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		if errAdmin != nil {
+			isAdmin = false
 		}
 
 		if isAdmin {
-			teams, err = h.repo.GetTeamsByUserTelegramID(r.Context(), session.TelegramID)
+			// Team-admin видит команды, где он назначен team-admin (не
+			// обязательно совпадает с командами членства через user_teams).
+			var teamIDs []uuid.UUID
+			teamIDs, err = h.repo.AdminTeamIDs(r.Context(), session.TelegramID)
+			if err == nil {
+				for _, tid := range teamIDs {
+					if t, errT := h.repo.GetTeamByID(r.Context(), tid); errT == nil && t != nil {
+						teams = append(teams, *t)
+					}
+				}
+			}
 			role = "admin"
 		} else {
 			// 3. Regular member?
@@ -685,13 +692,10 @@ func (h *GanttHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	if isSuperAdmin {
 		role = "superadmin"
 	} else {
-		// 2. Is Admin?
-		isAdmin := false
-		for _, ad := range h.cfg.Admins {
-			if strings.EqualFold(session.Username, ad) {
-				isAdmin = true
-				break
-			}
+		// 2. Is team-admin (team_admins в БД, team-scoped) хотя бы одной команды?
+		isAdmin, errAdmin := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		if errAdmin != nil {
+			isAdmin = false
 		}
 
 		if isAdmin {

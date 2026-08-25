@@ -112,11 +112,12 @@ export async function apiPut(path, body) {
     }
 }
 
-export async function apiDelete(path) {
+export async function apiDelete(path, body) {
     try {
         const resp = await fetch(`${API_BASE}${path}`, {
             method: 'DELETE',
-            headers: getHeaders()
+            headers: getHeaders(),
+            body: body !== undefined ? JSON.stringify(body) : undefined
         });
         
         if (!resp.ok) {

@@ -57,7 +57,7 @@ func (r *Router) Mount(mux *chi.Mux) {
 
 				// User management (Admin only)
 				mux.Group(func(mux chi.Router) {
-					mux.Use(myMiddleware.RoleAuth(r.ganttHandler.Repo(), r.ganttHandler.Config(), "admin"))
+					mux.Use(myMiddleware.RoleAuth(r.ganttHandler.Repo(), r.ganttHandler.Repo(), r.ganttHandler.Config(), "admin"))
 					mux.Get("/admin/users", r.ganttHandler.GetUsersList)
 					mux.Get("/admin/users/{id}", r.ganttHandler.GetUserDetails)
 					mux.Post("/admin/users", r.ganttHandler.CreateSingleUser)
@@ -74,13 +74,20 @@ func (r *Router) Mount(mux *chi.Mux) {
 					mux.Put("/risks/{id}", r.ganttHandler.UpdateRisk)
 				})
 
+				// Team-admin bindings management (SuperAdmin only).
+				mux.Group(func(mux chi.Router) {
+					mux.Use(myMiddleware.RoleAuth(r.ganttHandler.Repo(), r.ganttHandler.Repo(), r.ganttHandler.Config(), "superadmin"))
+					mux.Get("/admin/team-admins", r.ganttHandler.GetTeamAdmins)
+					mux.Post("/admin/team-admins", r.ganttHandler.AssignTeamAdmin)
+					mux.Delete("/admin/team-admins", r.ganttHandler.RemoveTeamAdmin)
+				})
 
 				// Scoring endpoints
 				mux.Post("/epics/start", r.ganttHandler.StartEpicScoring)
 				mux.Post("/scores/epic", r.ganttHandler.SubmitEpicScore)
 				mux.Post("/scores/risk", r.ganttHandler.SubmitRiskScore)
 				mux.Get("/scores/my", r.ganttHandler.GetMyScores)
-				
+
 				mux.Get("/epics/{epic_id}/scores", r.ganttHandler.GetEpicScores)
 				mux.Get("/epics/{epic_id}/role-scores", r.ganttHandler.GetEpicRoleScores)
 				mux.Get("/epics/{epic_id}/risks", r.ganttHandler.GetEpicRisks)

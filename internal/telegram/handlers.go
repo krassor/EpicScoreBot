@@ -123,7 +123,7 @@ func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 	sb.WriteString("/score — меню оценки эпиков и рисков\n")
 	sb.WriteString("/epicinfo — информация по неоценённым эпикам\n")
 
-	if epicBot.isAdmin(msg) {
+	if epicBot.isTeamAdminAny(ctx, msg) {
 		sb.WriteString("\n<b>🔧 Для администраторов:</b>\n")
 		sb.WriteString("/addteam &lt;название&gt; — создать команду\n")
 		sb.WriteString("/adduser — добавить пользователя\n")
@@ -152,7 +152,7 @@ func (epicBot *Bot) handleHelp(ctx context.Context, msg *models.Message) error {
 		sb.WriteString("/removeadmin — удалить администратора\n")
 	}
 
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		sb.WriteString("\nДля управления — обратитесь к администратору.")
 	}
 

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"EpicScoreBot/internal/config"
 	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/scoring"
 	"EpicScoreBot/internal/transport/httpServer/middleware"
@@ -10,26 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/google/uuid"
 )
-
-// isAdminOrSuperAdmin проверяет, входит ли пользователь сессии в список
-// администраторов или суперадминистраторов, заданный в конфигурации.
-func isAdminOrSuperAdmin(session *middleware.UserSession, cfg *config.BotConfig) bool {
-	for _, ad := range cfg.Admins {
-		if strings.EqualFold(session.Username, ad) {
-			return true
-		}
-	}
-	for _, sa := range cfg.SuperAdmins {
-		if strings.EqualFold(session.Username, sa) {
-			return true
-		}
-	}
-	return false
-}
 
 // AdminSubmitEpicScore позволяет администратору проставить оценку эпика вместо участника.
 func (h *GanttHandler) AdminSubmitEpicScore(w http.ResponseWriter, r *http.Request) {
@@ -48,9 +30,14 @@ func (h *GanttHandler) AdminSubmitEpicScore(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if !isAdminOrSuperAdmin(session, &h.cfg) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
+	isSuper := isSuperAdminSession(session, &h.cfg)
+	if !isSuper {
+		// Грубый гейт: superadmin ИЛИ team-admin хотя бы одной команды.
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		if err != nil || !isAdminAny {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	// 2. Декодирование тела запроса
@@ -80,6 +67,21 @@ func (h *GanttHandler) AdminSubmitEpicScore(w http.ResponseWriter, r *http.Reque
 	if req.Score < 0 || req.Score > 500 {
 		writeError(w, http.StatusBadRequest, "score must be between 0 and 500")
 		return
+	}
+
+	// Точечная проверка: team-admin может проставлять оценку только в
+	// эпиках своей команды (superadmin — без ограничения).
+	epicForScope, err := h.repo.GetEpicByID(r.Context(), epicUUID)
+	if err != nil || epicForScope == nil {
+		writeError(w, http.StatusNotFound, "epic not found")
+		return
+	}
+	if !isSuper {
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		if err != nil || !isAdminOf {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	// 3. Получение целевого пользователя
@@ -144,9 +146,13 @@ func (h *GanttHandler) AdminSubmitRiskScore(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if !isAdminOrSuperAdmin(session, &h.cfg) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
+	isSuper := isSuperAdminSession(session, &h.cfg)
+	if !isSuper {
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		if err != nil || !isAdminAny {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	// 2. Декодирование тела запроса
@@ -177,6 +183,26 @@ func (h *GanttHandler) AdminSubmitRiskScore(w http.ResponseWriter, r *http.Reque
 	if req.Probability < 1 || req.Probability > 4 || req.Impact < 1 || req.Impact > 4 {
 		writeError(w, http.StatusBadRequest, "probability and impact must be between 1 and 4")
 		return
+	}
+
+	// Точечная проверка: team-admin может проставлять оценку риска только в
+	// эпиках своей команды (superadmin — без ограничения).
+	riskForScope, err := h.repo.GetRiskByID(r.Context(), riskUUID)
+	if err != nil || riskForScope == nil {
+		writeError(w, http.StatusNotFound, "risk not found")
+		return
+	}
+	if !isSuper {
+		riskEpic, err := h.repo.GetEpicByID(r.Context(), riskForScope.EpicID)
+		if err != nil || riskEpic == nil {
+			writeError(w, http.StatusNotFound, "epic not found")
+			return
+		}
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, riskEpic.TeamID)
+		if err != nil || !isAdminOf {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	// 3. Получение целевого пользователя
@@ -239,9 +265,13 @@ func (h *GanttHandler) AdminOverrideFinalScore(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if !isAdminOrSuperAdmin(session, &h.cfg) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
+	isSuper := isSuperAdminSession(session, &h.cfg)
+	if !isSuper {
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		if err != nil || !isAdminAny {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	// 2. Декодирование тела запроса
@@ -264,6 +294,21 @@ func (h *GanttHandler) AdminOverrideFinalScore(w http.ResponseWriter, r *http.Re
 	if req.FinalScore < 0 {
 		writeError(w, http.StatusBadRequest, "final_score must be >= 0")
 		return
+	}
+
+	// Точечная проверка: team-admin может переопределять итоговую оценку
+	// только в эпиках своей команды (superadmin — без ограничения).
+	if !isSuper {
+		epicForScope, err := h.repo.GetEpicByID(r.Context(), epicUUID)
+		if err != nil || epicForScope == nil {
+			writeError(w, http.StatusNotFound, "epic not found")
+			return
+		}
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		if err != nil || !isAdminOf {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	// 3. Применение ручного переопределения итоговой оценки

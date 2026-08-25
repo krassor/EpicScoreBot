@@ -49,6 +49,7 @@ func main() {
 	epicService := services.NewEpicService(log, repositoryService)
 	riskService := services.NewRiskService(log, repositoryService)
 	roleService := services.NewRoleService(log, repositoryService)
+	teamAdminService := services.NewTeamAdminService(log, repositoryService)
 
 	// ai.New may return nil when AI is disabled. We must pass a nil interface
 	// (not a typed-nil pointer) so that telegram's epicBot.ai == nil check works.
@@ -67,6 +68,7 @@ func main() {
 		epicService,
 		riskService,
 		roleService,
+		teamAdminService,
 		scoringService,
 		reportService,
 		aiClient,
@@ -76,8 +78,14 @@ func main() {
 	}
 
 	// Gantt chart service and HTTP server.
+	// teamAdminAuth оборачивает repositoryService, добавляя telegram_id-
+	// ориентированные проверки team-admin (см. repositories.TeamAdminAuth) —
+	// используется вместо repositoryService везде, где HTTP-слою нужен
+	// Repository, т.к. промоутит все его методы и одновременно
+	// удовлетворяет middleware.TeamAdminChecker/handlers.TeamAdminScoper.
+	teamAdminAuth := repositories.NewTeamAdminAuth(repositoryService)
 	ganttService := gantt.New(log, repositoryService)
-	ganttHandler := handlers.NewGanttHandler(log, ganttService, repositoryService, scoringService, aiClient, cfg.BotConfig)
+	ganttHandler := handlers.NewGanttHandler(log, ganttService, teamAdminAuth, scoringService, aiClient, cfg.BotConfig)
 	router := routers.NewRouter(ganttHandler, cfg.BotConfig.TgbotApiToken)
 	server := httpServer.NewHttpServer(log, router, cfg)
 

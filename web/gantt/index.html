@@ -369,6 +369,47 @@
                             </table>
                         </div>
                     </div>
+
+                    <!-- Team Admins Management Card (только для superadmin) -->
+                    <div class="admin-card full-width-card hidden" id="admin-card-team-admins" style="margin-top: 24px;">
+                        <div class="card-header-with-action">
+                            <h2>Администраторы команд</h2>
+                        </div>
+                        <div class="form-group">
+                            <label for="team-admins-team-select">Команда</label>
+                            <select id="team-admins-team-select" class="select">
+                                <option value="">Выберите команду...</option>
+                            </select>
+                        </div>
+
+                        <form id="form-assign-team-admin" class="admin-form" style="margin-top: 12px;">
+                            <div class="form-group">
+                                <label for="team-admins-user-select">Назначить администратором</label>
+                                <select id="team-admins-user-select" class="select" disabled>
+                                    <option value="">Сначала выберите команду...</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Назначить</button>
+                        </form>
+
+                        <div class="table-responsive" style="margin-top: 16px;">
+                            <table class="admin-table" id="table-team-admins">
+                                <thead>
+                                    <tr>
+                                        <th>Telegram ID</th>
+                                        <th>Имя</th>
+                                        <th>Фамилия</th>
+                                        <th>Действия</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="table-team-admins-body">
+                                    <tr>
+                                        <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">Выберите команду, чтобы увидеть список администраторов</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </section>
 

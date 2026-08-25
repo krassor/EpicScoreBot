@@ -19,17 +19,77 @@ import (
 
 type mockRepository struct {
 	Repository
-	users          map[string]*domain.User
-	teams          map[uuid.UUID]*domain.Team
-	bulkCreated    []domain.User
-	bulkTeamID     *uuid.UUID
-	bulkRoleID     *uuid.UUID
-	findUserFunc   func(ctx context.Context, telegramID string) (*domain.User, error)
-	bulkCreateFunc func(ctx context.Context, users []domain.User, teamID *uuid.UUID, roleID *uuid.UUID) error
+	users                       map[string]*domain.User
+	teams                       map[uuid.UUID]*domain.Team
+	bulkCreated                 []domain.User
+	bulkTeamID                  *uuid.UUID
+	bulkRoleID                  *uuid.UUID
+	findUserFunc                func(ctx context.Context, telegramID string) (*domain.User, error)
+	bulkCreateFunc              func(ctx context.Context, users []domain.User, teamID *uuid.UUID, roleID *uuid.UUID) error
 	createUserWithRelationsFunc func(ctx context.Context, user *domain.User, teamUUIDs, roleUUIDs []uuid.UUID) error
 	updateUserWithRelationsFunc func(ctx context.Context, userID uuid.UUID, firstName, lastName string, weight int, teamUUIDs, roleUUIDs []uuid.UUID) error
 	getUserRelationsFunc        func(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, []uuid.UUID, error)
 	getAllUsersFunc             func(ctx context.Context) ([]domain.User, error)
+	getUserTeamsFunc            func(ctx context.Context, userID uuid.UUID) ([]domain.Team, error)
+
+	// Team-admins (team-scoped роль admin) — по умолчанию сессия не
+	// считается team-admin; тесты team-scoped флоу настраивают явно.
+	teamAdminOfAny  bool
+	teamAdminOf     bool
+	adminTeamIDs    []uuid.UUID
+	adminTeamIDsErr error
+
+	// Управление привязками team_admins (UUID-ориентированные методы,
+	// см. handlers/team_admin.go).
+	teamAdmins            []domain.User
+	assignTeamAdminCalled bool
+	assignTeamAdminArgs   struct {
+		userID, teamID, assignedBy uuid.UUID
+	}
+	removeTeamAdminCalled bool
+	removeTeamAdminArgs   struct {
+		userID, teamID uuid.UUID
+	}
+	team           *domain.Team
+	getTeamByIDErr error
+}
+
+func (m *mockRepository) IsTeamAdminOfAny(ctx context.Context, telegramID string) (bool, error) {
+	return m.teamAdminOfAny, nil
+}
+
+func (m *mockRepository) IsTeamAdminOf(ctx context.Context, telegramID string, teamID uuid.UUID) (bool, error) {
+	return m.teamAdminOf, nil
+}
+
+func (m *mockRepository) AdminTeamIDs(ctx context.Context, telegramID string) ([]uuid.UUID, error) {
+	return m.adminTeamIDs, m.adminTeamIDsErr
+}
+
+func (m *mockRepository) AssignTeamAdmin(ctx context.Context, userID, teamID, assignedBy uuid.UUID) error {
+	m.assignTeamAdminCalled = true
+	m.assignTeamAdminArgs.userID = userID
+	m.assignTeamAdminArgs.teamID = teamID
+	m.assignTeamAdminArgs.assignedBy = assignedBy
+	return nil
+}
+
+func (m *mockRepository) RemoveTeamAdmin(ctx context.Context, userID, teamID uuid.UUID) error {
+	m.removeTeamAdminCalled = true
+	m.removeTeamAdminArgs.userID = userID
+	m.removeTeamAdminArgs.teamID = teamID
+	return nil
+}
+
+func (m *mockRepository) GetTeamAdminsByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error) {
+	return m.teamAdmins, nil
+}
+
+func (m *mockRepository) GetTeamByID(ctx context.Context, teamID uuid.UUID) (*domain.Team, error) {
+	if m.team != nil && m.team.ID == teamID {
+		return m.team, nil
+	}
+	return nil, m.getTeamByIDErr
 }
 
 func (m *mockRepository) FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error) {
@@ -61,6 +121,9 @@ func (m *mockRepository) CreateUserWithRelations(ctx context.Context, user *doma
 }
 
 func (m *mockRepository) GetUserTeams(ctx context.Context, userID uuid.UUID) ([]domain.Team, error) {
+	if m.getUserTeamsFunc != nil {
+		return m.getUserTeamsFunc(ctx, userID)
+	}
 	return nil, nil
 }
 
@@ -160,8 +223,9 @@ func TestGetProfile(t *testing.T) {
 		t.Errorf("expected member role, got %v", resp["role"])
 	}
 
-	// Case 3: Admin
+	// Case 3: Admin (team-admin хотя бы одной команды, team_admins в БД)
 	session.Username = "admin_user"
+	repo.teamAdminOfAny = true
 	rr = httptest.NewRecorder()
 	handler.GetProfile(rr, req)
 	json.Unmarshal(rr.Body.Bytes(), &resp)
@@ -209,11 +273,16 @@ func TestSingleUserCRUD(t *testing.T) {
 	repo := &mockRepository{
 		users: make(map[string]*domain.User),
 	}
-	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, config.BotConfig{})
+	cfg := config.BotConfig{SuperAdmins: []string{"root"}}
+	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	// superadmin-сессия: team-scoped ограничения (team_ids ⊆ AdminTeamIDs)
+	// на CreateSingleUser/UpdateUser/GetUserDetails её не касаются.
+	superadminSession := &middleware.UserSession{TelegramID: "1", Username: "root"}
 
 	// 1. Тест создания пользователя (CreateSingleUser)
 	createBody := `{"telegram_id":"test_user","first_name":"Test","last_name":"User","weight":90,"team_ids":["00000000-0000-0000-0000-000000000001"],"role_ids":["00000000-0000-0000-0000-000000000002"]}`
 	reqCreate := httptest.NewRequest("POST", "/api/admin/users", strings.NewReader(createBody))
+	reqCreate = reqCreate.WithContext(context.WithValue(reqCreate.Context(), middleware.UserSessionKey, superadminSession))
 	rrCreate := httptest.NewRecorder()
 
 	var createdUser *domain.User
@@ -257,6 +326,7 @@ func TestSingleUserCRUD(t *testing.T) {
 	chiCtx := chi.NewRouteContext()
 	chiCtx.URLParams.Add("id", userID.String())
 	reqGet = reqGet.WithContext(context.WithValue(reqGet.Context(), chi.RouteCtxKey, chiCtx))
+	reqGet = reqGet.WithContext(context.WithValue(reqGet.Context(), middleware.UserSessionKey, superadminSession))
 
 	rrGet := httptest.NewRecorder()
 	handler.GetUserDetails(rrGet, reqGet)
@@ -274,6 +344,7 @@ func TestSingleUserCRUD(t *testing.T) {
 	updateBody := `{"first_name":"Updated","last_name":"User2","weight":85,"team_ids":["00000000-0000-0000-0000-000000000003"],"role_ids":["00000000-0000-0000-0000-000000000004"]}`
 	reqUpdate := httptest.NewRequest("PUT", "/api/admin/users/"+userID.String(), strings.NewReader(updateBody))
 	reqUpdate = reqUpdate.WithContext(context.WithValue(reqUpdate.Context(), chi.RouteCtxKey, chiCtx))
+	reqUpdate = reqUpdate.WithContext(context.WithValue(reqUpdate.Context(), middleware.UserSessionKey, superadminSession))
 
 	var updateCalled bool
 	repo.updateUserWithRelationsFunc = func(ctx context.Context, uID uuid.UUID, firstName, lastName string, weight int, teamUUIDs, roleUUIDs []uuid.UUID) error {

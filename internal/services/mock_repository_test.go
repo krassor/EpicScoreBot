@@ -13,15 +13,15 @@ import (
 // что позволяет настраивать поведение репозитория в отдельных тестах.
 type MockRepository struct {
 	// Users
-	CreateUserFunc             func(ctx context.Context, firstName, lastName, telegramID string, weight int) (*domain.User, error)
-	FindUserByTelegramIDFunc   func(ctx context.Context, telegramID string) (*domain.User, error)
-	GetUserByIDFunc           func(ctx context.Context, userID uuid.UUID) (*domain.User, error)
-	GetUsersByTeamIDFunc       func(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
-	GetAllUsersFunc            func(ctx context.Context) ([]domain.User, error)
-	DeleteUserFunc             func(ctx context.Context, userID uuid.UUID) error
-	UpdateUserNameFunc         func(ctx context.Context, userID uuid.UUID, firstName, lastName string) error
-	UpdateUserWeightFunc       func(ctx context.Context, userID uuid.UUID, weight int) error
-	UpdateUserChatIDFunc       func(ctx context.Context, userID uuid.UUID, chatID int64) error
+	CreateUserFunc              func(ctx context.Context, firstName, lastName, telegramID string, weight int) (*domain.User, error)
+	FindUserByTelegramIDFunc    func(ctx context.Context, telegramID string) (*domain.User, error)
+	GetUserByIDFunc             func(ctx context.Context, userID uuid.UUID) (*domain.User, error)
+	GetUsersByTeamIDFunc        func(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
+	GetAllUsersFunc             func(ctx context.Context) ([]domain.User, error)
+	DeleteUserFunc              func(ctx context.Context, userID uuid.UUID) error
+	UpdateUserNameFunc          func(ctx context.Context, userID uuid.UUID, firstName, lastName string) error
+	UpdateUserWeightFunc        func(ctx context.Context, userID uuid.UUID, weight int) error
+	UpdateUserChatIDFunc        func(ctx context.Context, userID uuid.UUID, chatID int64) error
 	CreateUserWithRelationsFunc func(ctx context.Context, user *domain.User, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error
 	UpdateUserWithRelationsFunc func(ctx context.Context, userID uuid.UUID, firstName, lastName string, weight int, teamUUIDs []uuid.UUID, roleUUIDs []uuid.UUID) error
 	GetUserRelationsFunc        func(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, []uuid.UUID, error)
@@ -29,33 +29,41 @@ type MockRepository struct {
 	GetUserRolesFunc            func(ctx context.Context, userID uuid.UUID) ([]domain.Role, error)
 
 	// Roles
-	GetAllRolesFunc            func(ctx context.Context) ([]domain.Role, error)
-	GetRoleByIDFunc            func(ctx context.Context, roleID uuid.UUID) (*domain.Role, error)
-	GetRoleByUserIDFunc        func(ctx context.Context, userID uuid.UUID) (*domain.Role, error)
-	AssignUserRoleFunc         func(ctx context.Context, userID, roleID uuid.UUID) error
-	RemoveUserRoleFunc         func(ctx context.Context, userID, roleID uuid.UUID) error
+	GetAllRolesFunc     func(ctx context.Context) ([]domain.Role, error)
+	GetRoleByIDFunc     func(ctx context.Context, roleID uuid.UUID) (*domain.Role, error)
+	GetRoleByUserIDFunc func(ctx context.Context, userID uuid.UUID) (*domain.Role, error)
+	AssignUserRoleFunc  func(ctx context.Context, userID, roleID uuid.UUID) error
+	RemoveUserRoleFunc  func(ctx context.Context, userID, roleID uuid.UUID) error
 
 	// Teams
-	CreateTeamFunc             func(ctx context.Context, name, description string) (*domain.Team, error)
-	GetTeamByNameFunc          func(ctx context.Context, name string) (*domain.Team, error)
-	GetTeamByIDFunc            func(ctx context.Context, teamID uuid.UUID) (*domain.Team, error)
-	GetAllTeamsFunc            func(ctx context.Context) ([]domain.Team, error)
+	CreateTeamFunc               func(ctx context.Context, name, description string) (*domain.Team, error)
+	GetTeamByNameFunc            func(ctx context.Context, name string) (*domain.Team, error)
+	GetTeamByIDFunc              func(ctx context.Context, teamID uuid.UUID) (*domain.Team, error)
+	GetAllTeamsFunc              func(ctx context.Context) ([]domain.Team, error)
 	GetTeamsByUserTelegramIDFunc func(ctx context.Context, telegramID string) ([]domain.Team, error)
-	AssignUserTeamFunc         func(ctx context.Context, userID, teamID uuid.UUID) error
-	RemoveUserTeamFunc         func(ctx context.Context, userID, teamID uuid.UUID) error
+	AssignUserTeamFunc           func(ctx context.Context, userID, teamID uuid.UUID) error
+	RemoveUserTeamFunc           func(ctx context.Context, userID, teamID uuid.UUID) error
+
+	// Team-admins
+	AssignTeamAdminFunc         func(ctx context.Context, userID, teamID, assignedBy uuid.UUID) error
+	RemoveTeamAdminFunc         func(ctx context.Context, userID, teamID uuid.UUID) error
+	GetTeamAdminsByTeamIDFunc   func(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
+	GetTeamIDsByAdminUserIDFunc func(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+	IsTeamAdminFunc             func(ctx context.Context, userID, teamID uuid.UUID) (bool, error)
+	IsTeamAdminOfAnyFunc        func(ctx context.Context, userID uuid.UUID) (bool, error)
 
 	// Epics
-	CreateEpicFunc             func(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
-	CreateStoryFunc            func(ctx context.Context, parentEpicID uuid.UUID, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
+	CreateEpicFunc                func(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
+	CreateStoryFunc               func(ctx context.Context, parentEpicID uuid.UUID, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
 	GetEpicsByTeamYearQuarterFunc func(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
-	GetEpicByIDFunc            func(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error)
-	GetEpicByNumberFunc        func(ctx context.Context, number string) (*domain.Epic, error)
-	GetEpicsByStatusFunc       func(ctx context.Context, status domain.Status) ([]domain.Epic, error)
-	GetAllEpicsFunc            func(ctx context.Context) ([]domain.Epic, error)
-	GetUnscoredEpicsByUserFunc func(ctx context.Context, userID, teamID uuid.UUID) ([]domain.Epic, error)
-	UpdateEpicStatusFunc       func(ctx context.Context, epicID uuid.UUID, status domain.Status) error
-	DeleteEpicFunc             func(ctx context.Context, epicID uuid.UUID) error
-	StartEpicScoringFunc       func(ctx context.Context, epicID uuid.UUID) error
+	GetEpicByIDFunc               func(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error)
+	GetEpicByNumberFunc           func(ctx context.Context, number string) (*domain.Epic, error)
+	GetEpicsByStatusFunc          func(ctx context.Context, status domain.Status) ([]domain.Epic, error)
+	GetAllEpicsFunc               func(ctx context.Context) ([]domain.Epic, error)
+	GetUnscoredEpicsByUserFunc    func(ctx context.Context, userID, teamID uuid.UUID) ([]domain.Epic, error)
+	UpdateEpicStatusFunc          func(ctx context.Context, epicID uuid.UUID, status domain.Status) error
+	DeleteEpicFunc                func(ctx context.Context, epicID uuid.UUID) error
+	StartEpicScoringFunc          func(ctx context.Context, epicID uuid.UUID) error
 	GetEpicsByTeamIDAndStatusFunc func(ctx context.Context, teamID uuid.UUID, status domain.Status) ([]domain.Epic, error)
 	GetStoriesByEpicIDFunc        func(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 	CountStoriesByEpicIDFunc      func(ctx context.Context, epicID uuid.UUID) (int, error)
@@ -73,13 +81,13 @@ type MockRepository struct {
 	DeleteRiskFunc             func(ctx context.Context, riskID uuid.UUID) error
 
 	// Scoring data
-	CreateEpicScoreFunc        func(ctx context.Context, epicID, userID, roleID uuid.UUID, score int) error
-	HasUserScoredEpicFunc      func(ctx context.Context, epicID, userID uuid.UUID) (bool, error)
-	GetUsersWhoScoredEpicFunc  func(ctx context.Context, epicID uuid.UUID) ([]domain.User, error)
-	GetUsersWhoScoredRiskFunc  func(ctx context.Context, riskID uuid.UUID) ([]domain.User, error)
+	CreateEpicScoreFunc           func(ctx context.Context, epicID, userID, roleID uuid.UUID, score int) error
+	HasUserScoredEpicFunc         func(ctx context.Context, epicID, userID uuid.UUID) (bool, error)
+	GetUsersWhoScoredEpicFunc     func(ctx context.Context, epicID uuid.UUID) ([]domain.User, error)
+	GetUsersWhoScoredRiskFunc     func(ctx context.Context, riskID uuid.UUID) ([]domain.User, error)
 	GetEpicRoleScoresByEpicIDFunc func(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
-	CreateRiskScoreFunc        func(ctx context.Context, riskID, userID uuid.UUID, probability, impact int) error
-	GetRiskScoresByRiskIDFunc  func(ctx context.Context, riskID uuid.UUID) ([]domain.RiskScore, error)
+	CreateRiskScoreFunc           func(ctx context.Context, riskID, userID uuid.UUID, probability, impact int) error
+	GetRiskScoresByRiskIDFunc     func(ctx context.Context, riskID uuid.UUID) ([]domain.RiskScore, error)
 }
 
 // Ensure MockRepository implements Repository interface
@@ -265,6 +273,48 @@ func (m *MockRepository) RemoveUserTeam(ctx context.Context, userID, teamID uuid
 		return m.RemoveUserTeamFunc(ctx, userID, teamID)
 	}
 	return nil
+}
+
+func (m *MockRepository) AssignTeamAdmin(ctx context.Context, userID, teamID, assignedBy uuid.UUID) error {
+	if m.AssignTeamAdminFunc != nil {
+		return m.AssignTeamAdminFunc(ctx, userID, teamID, assignedBy)
+	}
+	return nil
+}
+
+func (m *MockRepository) RemoveTeamAdmin(ctx context.Context, userID, teamID uuid.UUID) error {
+	if m.RemoveTeamAdminFunc != nil {
+		return m.RemoveTeamAdminFunc(ctx, userID, teamID)
+	}
+	return nil
+}
+
+func (m *MockRepository) GetTeamAdminsByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error) {
+	if m.GetTeamAdminsByTeamIDFunc != nil {
+		return m.GetTeamAdminsByTeamIDFunc(ctx, teamID)
+	}
+	return nil, nil
+}
+
+func (m *MockRepository) GetTeamIDsByAdminUserID(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	if m.GetTeamIDsByAdminUserIDFunc != nil {
+		return m.GetTeamIDsByAdminUserIDFunc(ctx, userID)
+	}
+	return nil, nil
+}
+
+func (m *MockRepository) IsTeamAdmin(ctx context.Context, userID, teamID uuid.UUID) (bool, error) {
+	if m.IsTeamAdminFunc != nil {
+		return m.IsTeamAdminFunc(ctx, userID, teamID)
+	}
+	return false, nil
+}
+
+func (m *MockRepository) IsTeamAdminOfAny(ctx context.Context, userID uuid.UUID) (bool, error) {
+	if m.IsTeamAdminOfAnyFunc != nil {
+		return m.IsTeamAdminOfAnyFunc(ctx, userID)
+	}
+	return false, nil
 }
 
 func (m *MockRepository) CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
@@ -499,4 +549,3 @@ func (m *MockRepository) UpdateStory(ctx context.Context, story *domain.Epic) er
 	}
 	return nil
 }
-

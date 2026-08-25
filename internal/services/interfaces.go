@@ -50,6 +50,14 @@ type Repository interface {
 	AssignUserTeam(ctx context.Context, userID, teamID uuid.UUID) error
 	RemoveUserTeam(ctx context.Context, userID, teamID uuid.UUID) error
 
+	// Team-admins (team-scoped роль admin, назначается только superadmin)
+	AssignTeamAdmin(ctx context.Context, userID, teamID, assignedBy uuid.UUID) error
+	RemoveTeamAdmin(ctx context.Context, userID, teamID uuid.UUID) error
+	GetTeamAdminsByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
+	GetTeamIDsByAdminUserID(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+	IsTeamAdmin(ctx context.Context, userID, teamID uuid.UUID) (bool, error)
+	IsTeamAdminOfAny(ctx context.Context, userID uuid.UUID) (bool, error)
+
 	// Epics
 	CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
 	CreateStory(ctx context.Context, parentEpicID uuid.UUID, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
@@ -157,6 +165,21 @@ type RiskService interface {
 	CreateRiskScore(ctx context.Context, riskID, userID uuid.UUID, probability, impact int) error
 	GetRiskScoresByRiskID(ctx context.Context, riskID uuid.UUID) ([]domain.RiskScore, error)
 	GetUsersWhoScoredRisk(ctx context.Context, riskID uuid.UUID) ([]domain.User, error)
+}
+
+// TeamAdminService defines the business logic for the team-scoped admin role
+// (team_admins): назначение/снятие и проверки доступа. Используется
+// Telegram-ботом, который резолвит telegram-username в userID через
+// UserService.FindUserByTelegramID перед обращением к этим методам. HTTP-слой
+// использует telegram_id-ориентированный адаптер (см.
+// repositories.TeamAdminAuth) напрямую поверх Repository, минуя этот сервис.
+type TeamAdminService interface {
+	AssignTeamAdmin(ctx context.Context, userID, teamID, assignedBy uuid.UUID) error
+	RemoveTeamAdmin(ctx context.Context, userID, teamID uuid.UUID) error
+	GetTeamAdminsByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
+	GetTeamIDsByAdminUserID(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+	IsTeamAdmin(ctx context.Context, userID, teamID uuid.UUID) (bool, error)
+	IsTeamAdminOfAny(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // RoleService defines the business logic for roles.

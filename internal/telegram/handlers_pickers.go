@@ -58,7 +58,9 @@ func (epicBot *Bot) showUserPickerInitial(ctx context.Context, msg *models.Messa
 	return nil
 }
 
-// showTeamPickerInitial sends an inline keyboard with all teams.
+// showTeamPickerInitial sends an inline keyboard with all teams. Список
+// ограничивается командами вызывающего для team-admin (superadmin и обычные
+// участники — без ограничения, см. filterTeamsForCaller).
 func (epicBot *Bot) showTeamPickerInitial(ctx context.Context, msg *models.Message, action string) error {
 	op := "bot.showTeamPickerInitial"
 	log := epicBot.log.With(
@@ -67,10 +69,13 @@ func (epicBot *Bot) showTeamPickerInitial(ctx context.Context, msg *models.Messa
 		slog.String("action", action),
 	)
 	teams, err := epicBot.teamService.GetAllTeams(ctx)
-	if err != nil || len(teams) == 0 {
-		if err != nil {
-			log.Error("error getting all teams", sl.Err(err))
-		}
+	if err != nil {
+		log.Error("error getting all teams", sl.Err(err))
+		_, retErr := epicBot.sendReply(ctx, msg, "❌ Команды не найдены.")
+		return retErr
+	}
+	teams = epicBot.filterTeamsForCaller(ctx, msg.From.Username, teams)
+	if len(teams) == 0 {
 		_, retErr := epicBot.sendReply(ctx, msg, "❌ Команды не найдены.")
 		return retErr
 	}
@@ -99,7 +104,10 @@ func (epicBot *Bot) showTeamPickerInitial(ctx context.Context, msg *models.Messa
 	return nil
 }
 
-// showEpicPickerInitial sends an inline keyboard with epics, optionally filtered by status.
+// showEpicPickerInitial sends an inline keyboard with epics, optionally
+// filtered by status. Список ограничивается эпиками команд вызывающего для
+// team-admin (superadmin и обычные участники — без ограничения, см.
+// filterEpicsForCaller — например, /results открыт всем участникам).
 func (epicBot *Bot) showEpicPickerInitial(ctx context.Context, msg *models.Message, action, statusFilter string) error {
 	op := "bot.showEpicPickerInitial"
 	log := epicBot.log.With(
@@ -115,10 +123,13 @@ func (epicBot *Bot) showEpicPickerInitial(ctx context.Context, msg *models.Messa
 	} else {
 		epics, err = epicBot.epicService.GetAllEpics(ctx)
 	}
-	if err != nil || len(epics) == 0 {
-		if err != nil {
-			log.Error("error getting epics by status", sl.Err(err))
-		}
+	if err != nil {
+		log.Error("error getting epics by status", sl.Err(err))
+		_, retErr := epicBot.sendReply(ctx, msg, "❌ Эпики не найдены.")
+		return retErr
+	}
+	epics = epicBot.filterEpicsForCaller(ctx, msg.From.Username, epics)
+	if len(epics) == 0 {
 		_, retErr := epicBot.sendReply(ctx, msg, "❌ Эпики не найдены.")
 		return retErr
 	}
@@ -280,4 +291,65 @@ func (epicBot *Bot) showUserTeamPicker(
 	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "adm_cancel")))
 	kb := inlineKeyboard(rows...)
 	epicBot.editOrSendWithKeyboard(ctx, msg, msgID, "👥 Выберите команду:", kb)
+}
+
+// ─── Team-scoped фильтрация выдачи для team-admin ───────────────────────────
+
+// filterTeamsForCaller ограничивает список команд видимыми для вызывающего:
+// superadmin видит все команды без ограничения; team-admin видит только
+// команды, где он назначен team-admin; обычный участник (не team-admin ни
+// одной команды) получает список без ограничения — пикеры переиспользуются и
+// в открытых всем сценариях (например /results), где ограничение по
+// team_admins было бы некорректным.
+func (epicBot *Bot) filterTeamsForCaller(ctx context.Context, username string, teams []domain.Team) []domain.Team {
+	ids, restricted := epicBot.teamAdminIDSetForCaller(ctx, username)
+	if !restricted {
+		return teams
+	}
+	var filtered []domain.Team
+	for _, t := range teams {
+		if ids[t.ID] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+// filterEpicsForCaller — то же самое для списка эпиков, по TeamID эпика.
+func (epicBot *Bot) filterEpicsForCaller(ctx context.Context, username string, epics []domain.Epic) []domain.Epic {
+	ids, restricted := epicBot.teamAdminIDSetForCaller(ctx, username)
+	if !restricted {
+		return epics
+	}
+	var filtered []domain.Epic
+	for _, e := range epics {
+		if ids[e.TeamID] {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
+}
+
+// teamAdminIDSetForCaller возвращает набор ID команд, где username — team-admin,
+// и признак того, нужно ли ограничивать выдачу этим набором. restricted=false
+// означает "не ограничивать": для superadmin (видит всё) и для пользователей,
+// не являющихся team-admin ни одной команды (пикеры используются и в
+// открытых всем сценариях).
+func (epicBot *Bot) teamAdminIDSetForCaller(ctx context.Context, username string) (map[uuid.UUID]bool, bool) {
+	if epicBot.isSuperAdminUsername(username) {
+		return nil, false
+	}
+	user, err := epicBot.userService.FindUserByTelegramID(ctx, username)
+	if err != nil {
+		return nil, false
+	}
+	teamIDs, err := epicBot.teamAdminService.GetTeamIDsByAdminUserID(ctx, user.ID)
+	if err != nil || len(teamIDs) == 0 {
+		return nil, false
+	}
+	set := make(map[uuid.UUID]bool, len(teamIDs))
+	for _, id := range teamIDs {
+		set[id] = true
+	}
+	return set, true
 }

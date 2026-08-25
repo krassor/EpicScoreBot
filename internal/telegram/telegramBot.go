@@ -20,21 +20,22 @@ import (
 
 // Bot is the Telegram bot for EpicScoreBot.
 type Bot struct {
-	b           *bot.Bot
-	cfg         *config.Config
-	userService services.UserService
-	teamService services.TeamService
-	epicService services.EpicService
-	riskService services.RiskService
-	roleService services.RoleService
-	scoring     ScoringService
-	report      ReportService
-	ai          AIClient
-	sessions    *sessionStore
-	botUsername string
-	ctx         context.Context
-	cancel      context.CancelFunc
-	log         *slog.Logger
+	b                *bot.Bot
+	cfg              *config.Config
+	userService      services.UserService
+	teamService      services.TeamService
+	epicService      services.EpicService
+	riskService      services.RiskService
+	roleService      services.RoleService
+	teamAdminService services.TeamAdminService
+	scoring          ScoringService
+	report           ReportService
+	ai               AIClient
+	sessions         *sessionStore
+	botUsername      string
+	ctx              context.Context
+	cancel           context.CancelFunc
+	log              *slog.Logger
 }
 
 // New creates a new Bot instance.
@@ -46,6 +47,7 @@ func New(
 	epicSvc services.EpicService,
 	riskSvc services.RiskService,
 	roleSvc services.RoleService,
+	teamAdminSvc services.TeamAdminService,
 	scoringSvc ScoringService,
 	reportSvc ReportService,
 	aiClient AIClient,
@@ -56,19 +58,20 @@ func New(
 	ctx, cancel := context.WithCancel(context.Background())
 
 	epicBot := &Bot{
-		cfg:         cfg,
-		userService: userSvc,
-		teamService: teamSvc,
-		epicService: epicSvc,
-		riskService: riskSvc,
-		roleService: roleSvc,
-		scoring:     scoringSvc,
-		report:      reportSvc,
-		ai:          aiClient,
-		sessions:    newSessionStore(),
-		ctx:         ctx,
-		cancel:      cancel,
-		log:         log,
+		cfg:              cfg,
+		userService:      userSvc,
+		teamService:      teamSvc,
+		epicService:      epicSvc,
+		riskService:      riskSvc,
+		roleService:      roleSvc,
+		teamAdminService: teamAdminSvc,
+		scoring:          scoringSvc,
+		report:           reportSvc,
+		ai:               aiClient,
+		sessions:         newSessionStore(),
+		ctx:              ctx,
+		cancel:           cancel,
+		log:              log,
 	}
 
 	b, err := bot.New(cfg.BotConfig.TgbotApiToken,

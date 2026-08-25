@@ -53,6 +53,21 @@ type Repository interface {
 	UpdateUserWeight(ctx context.Context, userID uuid.UUID, weight int) error
 	DeleteUser(ctx context.Context, userID uuid.UUID) error
 
+	// Team-admins (team-scoped роль admin). HTTP-сессия идентифицирует
+	// пользователя по telegram_id (middleware.UserSession.TelegramID), поэтому
+	// эти методы принимают telegram_id, а не UUID пользователя — в отличие от
+	// одноимённых UUID-ориентированных методов Repository, используемых
+	// Telegram-ботом (см. repositories.TeamAdminAuth).
+	IsTeamAdminOfAny(ctx context.Context, telegramID string) (bool, error)
+	IsTeamAdminOf(ctx context.Context, telegramID string, teamID uuid.UUID) (bool, error)
+	AdminTeamIDs(ctx context.Context, telegramID string) ([]uuid.UUID, error)
+	// Управление привязками team_admins (только для superadmin, см.
+	// handlers/team_admin.go) — UUID-ориентированные, т.к. работают с уже
+	// резолвленным пользователем-целью.
+	AssignTeamAdmin(ctx context.Context, userID, teamID, assignedBy uuid.UUID) error
+	RemoveTeamAdmin(ctx context.Context, userID, teamID uuid.UUID) error
+	GetTeamAdminsByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
+
 	// Epics
 	CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)
 	GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error)
@@ -115,6 +130,16 @@ type ScoringService interface {
 	// (final_score) уже оцененного эпика/стори (статус SCORED), с каскадным
 	// пересчётом родительского эпика при необходимости.
 	SetManualFinalScore(ctx context.Context, epicID uuid.UUID, finalScore float64) (*domain.Epic, error)
+}
+
+// TeamAdminScoper предоставляет точечные team-scoped проверки роли admin по
+// telegram_id HTTP-сессии — используется в хендлерах, где team_id целевого
+// ресурса известен только после разбора тела запроса/URL-параметров (в
+// отличие от middleware.RoleAuth, грубого гейта на уровне группы роутов).
+// Удовлетворяется тем же значением Repository (см. repositories.TeamAdminAuth).
+type TeamAdminScoper interface {
+	IsTeamAdminOf(ctx context.Context, telegramID string, teamID uuid.UUID) (bool, error)
+	AdminTeamIDs(ctx context.Context, telegramID string) ([]uuid.UUID, error)
 }
 
 // AIClient defines the contract for interacting with the AI assistant.

@@ -109,7 +109,7 @@ func (epicBot *Bot) handleAdmUserSelected(
 		slog.String("data", data),
 	)
 
-	if !epicBot.isAdminCallback(callback) {
+	if !epicBot.isTeamAdminAnyCallback(ctx, callback) {
 		epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return
 	}
@@ -186,6 +186,40 @@ func (epicBot *Bot) handleAdmUserSelected(
 		epicBot.editOrSend(ctx, msg, msgID,
 			fmt.Sprintf("⚖️ Изменение веса пользователя %s %s (@%s).\nТекущий вес: %d\n📝 Введите новый вес (0–100):",
 				user.FirstName, user.LastName, user.TelegramID, user.Weight))
+	case "addadminconfirm":
+		if !epicBot.isSuperAdminCallback(callback) {
+			epicBot.sendReply(ctx, msg, "⛔ Только для супер-администраторов.")
+			return
+		}
+		if _, hasTeam := pendingTeamIDFromSession(sess); !hasTeam {
+			epicBot.sendReply(ctx, msg, "❌ Сессия истекла. Повторите команду.")
+			return
+		}
+		kb := inlineKeyboard(inlineRow(
+			inlineBtn("✅ Да, назначить", "adm_confirm_addadmin_"+userID.String()),
+			inlineBtn("❌ Отмена", "adm_deny_addadmin"),
+		))
+		epicBot.editOrSendWithKeyboard(ctx, msg, msgID,
+			fmt.Sprintf("⚠️ Назначить %s %s (@%s) администратором выбранной команды?",
+				user.FirstName, user.LastName, user.TelegramID),
+			kb)
+	case "removeadminconfirm":
+		if !epicBot.isSuperAdminCallback(callback) {
+			epicBot.sendReply(ctx, msg, "⛔ Только для супер-администраторов.")
+			return
+		}
+		if _, hasTeam := pendingTeamIDFromSession(sess); !hasTeam {
+			epicBot.sendReply(ctx, msg, "❌ Сессия истекла. Повторите команду.")
+			return
+		}
+		kb := inlineKeyboard(inlineRow(
+			inlineBtn("✅ Да, снять", "adm_confirm_removeadmin_"+userID.String()),
+			inlineBtn("❌ Отмена", "adm_deny_removeadmin"),
+		))
+		epicBot.editOrSendWithKeyboard(ctx, msg, msgID,
+			fmt.Sprintf("⚠️ Снять %s %s (@%s) с должности администратора выбранной команды?",
+				user.FirstName, user.LastName, user.TelegramID),
+			kb)
 	default:
 		epicBot.sendReply(ctx, msg, fmt.Sprintf("❌ Неизвестное действие: %s", action))
 	}
@@ -247,7 +281,7 @@ func (epicBot *Bot) handleAdmRoleSelected(
 	callback *models.CallbackQuery,
 	data string,
 ) {
-	if !epicBot.isAdminCallback(callback) {
+	if !epicBot.isTeamAdminAnyCallback(ctx, callback) {
 		epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return
 	}
@@ -324,7 +358,7 @@ func (epicBot *Bot) handleAdmTeamSelected(
 	callback *models.CallbackQuery,
 	data string,
 ) {
-	if !epicBot.isAdminCallback(callback) {
+	if !epicBot.isTeamAdminAnyCallback(ctx, callback) {
 		epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return
 	}
@@ -343,6 +377,11 @@ func (epicBot *Bot) handleAdmTeamSelected(
 		teamID, err := uuid.Parse(lastID)
 		if err != nil {
 			epicBot.sendReply(ctx, msg, "❌ Ошибка парсинга ID команды.")
+			return
+		}
+		// Финальная повторная проверка прав на выбранную команду.
+		if !epicBot.isTeamAdminFor(ctx, callback.From.Username, teamID) {
+			epicBot.sendReply(ctx, msg, "⛔ Вы не являетесь администратором этой команды.")
 			return
 		}
 		sess, _ := epicBot.sessions.get(sk)
@@ -434,6 +473,10 @@ func (epicBot *Bot) handleAdmTeamSelected(
 			epicBot.sendReply(ctx, msg, "❌ Ошибка парсинга ID команды.")
 			return
 		}
+		if !epicBot.isTeamAdminFor(ctx, callback.From.Username, teamID) {
+			epicBot.sendReply(ctx, msg, "⛔ Вы не являетесь администратором этой команды.")
+			return
+		}
 		sess, _ := epicBot.sessions.get(sk)
 		msgID := 0
 		if sess != nil {
@@ -467,6 +510,10 @@ func (epicBot *Bot) handleAdmTeamSelected(
 			epicBot.sendReply(ctx, msg, "❌ Ошибка парсинга ID команды.")
 			return
 		}
+		if !epicBot.isTeamAdminFor(ctx, callback.From.Username, teamID) {
+			epicBot.sendReply(ctx, msg, "⛔ Вы не являетесь администратором этой команды.")
+			return
+		}
 		sess, _ := epicBot.sessions.get(sk)
 		msgID := 0
 		if sess != nil {
@@ -474,9 +521,126 @@ func (epicBot *Bot) handleAdmTeamSelected(
 		}
 		epicBot.showReportYearPicker(ctx, msg, teamID, msgID)
 
+	case "addadmin", "removeadmin":
+		// Управление team-admin — только superadmin (проверка сохраняется
+		// на всех шагах отдельно от общего isTeamAdminAnyCallback наверху
+		// функции, который допускает и обычных team-admin).
+		if !epicBot.isSuperAdminCallback(callback) {
+			epicBot.sendReply(ctx, msg, "⛔ Только для супер-администраторов.")
+			return
+		}
+		teamID, err := uuid.Parse(lastID)
+		if err != nil {
+			epicBot.sendReply(ctx, msg, "❌ Ошибка парсинга ID команды.")
+			return
+		}
+		team, err := epicBot.teamService.GetTeamByID(ctx, teamID)
+		if err != nil {
+			epicBot.sendReply(ctx, msg, "❌ Команда не найдена.")
+			return
+		}
+		sess, _ := epicBot.sessions.get(sk)
+		msgID := 0
+		if sess != nil {
+			msgID = sess.MessageID
+		}
+		if action == "addadmin" {
+			epicBot.showTeamAdminCandidatePicker(ctx, msg, callback, team, msgID)
+		} else {
+			epicBot.showTeamAdminRemovalPicker(ctx, msg, callback, team, msgID)
+		}
+
 	default:
 		epicBot.sendReply(ctx, msg, "❌ Неизвестное действие.")
 	}
+}
+
+// showTeamAdminCandidatePicker показывает список зарегистрированных
+// участников команды для назначения team-admin (/addadmin, шаг 2).
+func (epicBot *Bot) showTeamAdminCandidatePicker(
+	ctx context.Context,
+	msg *models.Message,
+	callback *models.CallbackQuery,
+	team *domain.Team,
+	msgID int,
+) {
+	members, err := epicBot.userService.GetUsersByTeamID(ctx, team.ID)
+	if err != nil || len(members) == 0 {
+		epicBot.editOrSend(ctx, msg, msgID, "❌ В команде нет зарегистрированных участников.")
+		return
+	}
+
+	sk := sessionKeyFromCallback(msg, callback)
+	epicBot.sessions.set(sk, &Session{
+		ThreadID:  msg.MessageThreadID,
+		Username:  callback.From.Username,
+		MessageID: msgID,
+		Data:      map[string]string{"pendingTeamID": team.ID.String()},
+	})
+
+	var rows [][]models.InlineKeyboardButton
+	for _, u := range members {
+		label := fmt.Sprintf("👤 %s %s (@%s)", u.FirstName, u.LastName, u.TelegramID)
+		data := fmt.Sprintf("adm_user_addadminconfirm_%s", u.ID.String())
+		rows = append(rows, inlineRow(inlineBtn(label, data)))
+	}
+	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "adm_cancel")))
+	kb := inlineKeyboard(rows...)
+	epicBot.editOrSendWithKeyboard(ctx, msg, msgID,
+		fmt.Sprintf("👤 Выберите пользователя, который станет администратором команды «%s»:", team.Name), kb)
+}
+
+// showTeamAdminRemovalPicker показывает список текущих team-admin команды
+// для снятия (/removeadmin, шаг 2).
+func (epicBot *Bot) showTeamAdminRemovalPicker(
+	ctx context.Context,
+	msg *models.Message,
+	callback *models.CallbackQuery,
+	team *domain.Team,
+	msgID int,
+) {
+	admins, err := epicBot.teamAdminService.GetTeamAdminsByTeamID(ctx, team.ID)
+	if err != nil || len(admins) == 0 {
+		epicBot.editOrSend(ctx, msg, msgID, fmt.Sprintf("❌ У команды «%s» нет назначенных администраторов.", team.Name))
+		return
+	}
+
+	sk := sessionKeyFromCallback(msg, callback)
+	epicBot.sessions.set(sk, &Session{
+		ThreadID:  msg.MessageThreadID,
+		Username:  callback.From.Username,
+		MessageID: msgID,
+		Data:      map[string]string{"pendingTeamID": team.ID.String()},
+	})
+
+	var rows [][]models.InlineKeyboardButton
+	for _, u := range admins {
+		label := fmt.Sprintf("👤 %s %s (@%s)", u.FirstName, u.LastName, u.TelegramID)
+		data := fmt.Sprintf("adm_user_removeadminconfirm_%s", u.ID.String())
+		rows = append(rows, inlineRow(inlineBtn(label, data)))
+	}
+	rows = append(rows, inlineRow(inlineBtn("❌ Отмена", "adm_cancel")))
+	kb := inlineKeyboard(rows...)
+	epicBot.editOrSendWithKeyboard(ctx, msg, msgID,
+		fmt.Sprintf("👤 Выберите администратора команды «%s» для снятия:", team.Name), kb)
+}
+
+// pendingTeamIDFromSession извлекает teamID, сохранённый в сессии на шаге
+// выбора команды (/addadmin, /removeadmin), для последующего использования на
+// шаге выбора пользователя/подтверждения.
+func pendingTeamIDFromSession(sess *Session) (uuid.UUID, bool) {
+	if sess == nil {
+		return uuid.Nil, false
+	}
+	raw, ok := sess.Data["pendingTeamID"]
+	if !ok || raw == "" {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return id, true
 }
 
 // generateAndSendReport fetches scored epics for the team and generates a PDF report.
@@ -529,7 +693,7 @@ func (epicBot *Bot) handleAdmEpicSelected(
 	callback *models.CallbackQuery,
 	data string,
 ) {
-	if !epicBot.isAdminCallback(callback) {
+	if !epicBot.isTeamAdminAnyCallback(ctx, callback) {
 		epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return
 	}
@@ -550,6 +714,14 @@ func (epicBot *Bot) handleAdmEpicSelected(
 	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Эпик не найден.")
+		return
+	}
+
+	// Финальная повторная проверка прав на конкретную команду эпика — защита
+	// от гонки между выбором эпика в пикере и выполнением действия (права
+	// могли измениться, например superadmin снял team-admin с команды).
+	if !epicBot.isTeamAdminFor(ctx, callback.From.Username, epic.TeamID) {
+		epicBot.sendReply(ctx, msg, "⛔ Вы не являетесь администратором команды этого эпика.")
 		return
 	}
 
@@ -625,7 +797,7 @@ func (epicBot *Bot) handleAdmRiskSelected(
 	callback *models.CallbackQuery,
 	data string,
 ) {
-	if !epicBot.isAdminCallback(callback) {
+	if !epicBot.isTeamAdminAnyCallback(ctx, callback) {
 		epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return
 	}
@@ -652,6 +824,17 @@ func (epicBot *Bot) handleAdmRiskSelected(
 	risk, err := epicBot.riskService.GetRiskByID(ctx, riskID)
 	if err != nil {
 		epicBot.sendReply(ctx, msg, "❌ Риск не найден.")
+		return
+	}
+
+	// Финальная повторная проверка прав на команду эпика этого риска.
+	riskEpic, err := epicBot.epicService.GetEpicByID(ctx, risk.EpicID)
+	if err != nil {
+		epicBot.sendReply(ctx, msg, "❌ Эпик риска не найден.")
+		return
+	}
+	if !epicBot.isTeamAdminFor(ctx, callback.From.Username, riskEpic.TeamID) {
+		epicBot.sendReply(ctx, msg, "⛔ Вы не являетесь администратором команды этого эпика.")
 		return
 	}
 
@@ -712,6 +895,8 @@ func (epicBot *Bot) handleAdmConfirm(
 	if sess != nil {
 		msgID = sess.MessageID
 	}
+	// pendingTeamID нужен до очистки сессии — только для addadmin/removeadmin.
+	pendingTeamID, hasPendingTeamID := pendingTeamIDFromSession(sess)
 	epicBot.sessions.clear(sk)
 
 	switch action {
@@ -753,6 +938,56 @@ func (epicBot *Bot) handleAdmConfirm(
 			userLabel = fmt.Sprintf("%s %s (@%s)", user.FirstName, user.LastName, user.TelegramID)
 		}
 		epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("🗑️ Пользователь %s удалён.", userLabel))
+
+	case "addadmin":
+		if !hasPendingTeamID {
+			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Сессия истекла. Повторите команду.")
+			return
+		}
+		targetUser, err := epicBot.userService.GetUserByID(ctx, id)
+		if err != nil {
+			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Пользователь не найден.")
+			return
+		}
+		team, err := epicBot.teamService.GetTeamByID(ctx, pendingTeamID)
+		if err != nil {
+			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Команда не найдена.")
+			return
+		}
+		var assignedBy uuid.UUID
+		if superadmin, err := epicBot.userService.FindUserByTelegramID(ctx, callback.From.Username); err == nil && superadmin != nil {
+			assignedBy = superadmin.ID
+		}
+		if err := epicBot.teamAdminService.AssignTeamAdmin(ctx, id, pendingTeamID, assignedBy); err != nil {
+			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка назначения администратора: %v", err))
+			return
+		}
+		epicBot.deleteAndSend(ctx, msg, msgID,
+			fmt.Sprintf("✅ %s %s (@%s) назначен(а) администратором команды «%s».",
+				targetUser.FirstName, targetUser.LastName, targetUser.TelegramID, team.Name))
+
+	case "removeadmin":
+		if !hasPendingTeamID {
+			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Сессия истекла. Повторите команду.")
+			return
+		}
+		targetUser, err := epicBot.userService.GetUserByID(ctx, id)
+		if err != nil {
+			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Пользователь не найден.")
+			return
+		}
+		team, err := epicBot.teamService.GetTeamByID(ctx, pendingTeamID)
+		if err != nil {
+			epicBot.deleteAndSend(ctx, msg, msgID, "❌ Команда не найдена.")
+			return
+		}
+		if err := epicBot.teamAdminService.RemoveTeamAdmin(ctx, id, pendingTeamID); err != nil {
+			epicBot.deleteAndSend(ctx, msg, msgID, fmt.Sprintf("❌ Ошибка снятия администратора: %v", err))
+			return
+		}
+		epicBot.deleteAndSend(ctx, msg, msgID,
+			fmt.Sprintf("✅ %s %s (@%s) больше не администратор команды «%s».",
+				targetUser.FirstName, targetUser.LastName, targetUser.TelegramID, team.Name))
 
 	default:
 		epicBot.sendReply(ctx, msg, "❌ Неизвестное действие.")
@@ -915,7 +1150,7 @@ func (epicBot *Bot) showReportYearPicker(ctx context.Context, msg *models.Messag
 			CallbackData: "adm_cancel",
 		},
 	})
-	
+
 	text := "📅 *Выберите год для отчета:*"
 	kb := &models.InlineKeyboardMarkup{InlineKeyboard: keyboard}
 	_ = epicBot.editMarkdownWithKeyboard(ctx, msg.Chat.ID, msgID, text, kb)
@@ -949,7 +1184,7 @@ func (epicBot *Bot) handleReportYearSelected(ctx context.Context, msg *models.Me
 			CallbackData: "adm_cancel",
 		},
 	})
-	
+
 	text := fmt.Sprintf("🗓 *Выберите квартал для %s года:*", yearStr)
 	kb := &models.InlineKeyboardMarkup{InlineKeyboard: keyboard}
 	_ = epicBot.editMarkdownWithKeyboard(ctx, msg.Chat.ID, callback.Message.Message.ID, text, kb)

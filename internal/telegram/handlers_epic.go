@@ -20,7 +20,7 @@ import (
 // ─── /addepic — inline keyboard then session ──────────────────────────────
 
 func (epicBot *Bot) handleAddEpic(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
@@ -28,7 +28,7 @@ func (epicBot *Bot) handleAddEpic(ctx context.Context, msg *models.Message) erro
 }
 
 func (epicBot *Bot) handleAddStory(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
@@ -38,7 +38,7 @@ func (epicBot *Bot) handleAddStory(ctx context.Context, msg *models.Message) err
 // ─── /addrisk — inline keyboard then session ──────────────────────────────
 
 func (epicBot *Bot) handleAddRisk(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
@@ -48,7 +48,7 @@ func (epicBot *Bot) handleAddRisk(ctx context.Context, msg *models.Message) erro
 // ─── /startscore — inline keyboard ───────────────────────────────────────
 
 func (epicBot *Bot) handleStartScore(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
@@ -64,7 +64,7 @@ func (epicBot *Bot) handleResults(ctx context.Context, msg *models.Message) erro
 // ─── /epicstatus — inline keyboard ───────────────────────────────────────
 
 func (epicBot *Bot) handleEpicStatus(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
@@ -74,7 +74,7 @@ func (epicBot *Bot) handleEpicStatus(ctx context.Context, msg *models.Message) e
 // ─── /report — inline keyboard ───────────────────────────────────────────
 
 func (epicBot *Bot) handleReport(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Эта команда доступна только администраторам.")
 		return err
 	}
@@ -104,7 +104,7 @@ func (epicBot *Bot) handleDeleteRisk(ctx context.Context, msg *models.Message) e
 // ─── /list ──────────────────────────────────────────────────────────
 
 func (epicBot *Bot) handleList(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}
@@ -114,7 +114,7 @@ func (epicBot *Bot) handleList(ctx context.Context, msg *models.Message) error {
 // ─── /epicnotify ──────────────────────────────────────────────────────────
 
 func (epicBot *Bot) handleEpicNotify(ctx context.Context, msg *models.Message) error {
-	if !epicBot.isAdmin(msg) {
+	if !epicBot.isTeamAdminAny(ctx, msg) {
 		_, err := epicBot.sendReply(ctx, msg, "⛔ Только для администраторов.")
 		return err
 	}

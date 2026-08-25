@@ -164,10 +164,24 @@ func (h *GanttHandler) UpdateStory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	session, ok := requireSession(w, r)
+	if !ok {
+		return
+	}
+	isSuper := isSuperAdminSession(session, &h.cfg)
+
 	story, err := h.repo.GetEpicByID(r.Context(), storyUUID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "story not found")
 		return
+	}
+
+	if !isSuper {
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, story.TeamID)
+		if err != nil || !isAdminOf {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	if story.ParentEpicID == nil {
@@ -219,4 +233,3 @@ func (h *GanttHandler) UpdateStory(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, updatedStory)
 }
-

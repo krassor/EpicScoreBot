@@ -1,8 +1,13 @@
 // ── Admin Panel Module ────────────────────────────────────────────────
 
 import { state } from './state.js';
-import { apiPost, apiGet, apiPut } from './api.js';
+import { apiPost, apiGet, apiPut, apiDelete } from './api.js';
 import { showToast } from './utils.js';
+
+// ID команды, выбранной в разделе "Администраторы команд" (независим от глобального selectedTeamId)
+let selectedTeamAdminsTeamId = '';
+// ID пользователей, уже являющихся администраторами выбранной команды (для фильтрации формы назначения)
+let currentTeamAdminUserIds = [];
 
 export function initAdminPanel() {
     console.log('initAdminPanel: Инициализация панели администратора...');
@@ -36,8 +41,20 @@ export function initAdminPanel() {
         console.log('initAdminPanel: Получен список пользователей:', users);
         try {
             renderUsersTable(users);
+            populateTeamAdminUserSelect(users, currentTeamAdminUserIds);
         } catch (e) {
             console.error('Ошибка в подписке на users:', e);
+        }
+    });
+
+    // Подписка на профиль пользователя — раздел "Администраторы команд" виден только superadmin
+    state.subscribe('userProfile', (profile) => {
+        const card = document.getElementById('admin-card-team-admins');
+        if (!card) return;
+        if (profile && profile.role === 'superadmin') {
+            card.classList.remove('hidden');
+        } else {
+            card.classList.add('hidden');
         }
     });
 
@@ -68,7 +85,8 @@ function populateTeamSelects(teams) {
         document.getElementById('epic-team-select'),
         document.getElementById('story-team-select'),
         document.getElementById('risk-team-select'),
-        document.getElementById('import-team-select')
+        document.getElementById('import-team-select'),
+        document.getElementById('team-admins-team-select')
     ];
 
     selects.forEach(select => {
@@ -565,6 +583,153 @@ function setupFormListeners() {
     document.getElementById('btn-refresh-users')?.addEventListener('click', () => {
         loadUsers();
     });
+
+    // Раздел "Администраторы команд" (только superadmin)
+    const teamAdminsTeamSelect = document.getElementById('team-admins-team-select');
+    teamAdminsTeamSelect?.addEventListener('change', (e) => {
+        selectedTeamAdminsTeamId = e.target.value;
+        currentTeamAdminUserIds = [];
+        if (selectedTeamAdminsTeamId) {
+            loadTeamAdmins(selectedTeamAdminsTeamId);
+        } else {
+            renderTeamAdminsTable([]);
+            populateTeamAdminUserSelect(state.get('users'), currentTeamAdminUserIds);
+        }
+    });
+
+    // Форма назначения нового team-admin
+    const assignTeamAdminForm = document.getElementById('form-assign-team-admin');
+    assignTeamAdminForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const userSelect = document.getElementById('team-admins-user-select');
+        const userId = userSelect?.value;
+
+        if (!selectedTeamAdminsTeamId) {
+            showToast('Пожалуйста, выберите команду', 'error');
+            return;
+        }
+        if (!userId) {
+            showToast('Пожалуйста, выберите пользователя', 'error');
+            return;
+        }
+
+        try {
+            await apiPost('/admin/team-admins', { user_id: userId, team_id: selectedTeamAdminsTeamId });
+            showToast('Администратор команды успешно назначен!', 'success');
+            await loadTeamAdmins(selectedTeamAdminsTeamId);
+        } catch (err) {
+            showToast('Не удалось назначить администратора команды: ' + err.message, 'error');
+        }
+    });
+}
+
+// Заполняет список выбора пользователя для назначения team-admin,
+// исключая пользователей, уже являющихся администраторами выбранной команды
+function populateTeamAdminUserSelect(users, currentAdminUserIds = []) {
+    const select = document.getElementById('team-admins-user-select');
+    if (!select) return;
+
+    if (!selectedTeamAdminsTeamId) {
+        select.innerHTML = '<option value="">Сначала выберите команду...</option>';
+        select.disabled = true;
+        return;
+    }
+
+    const val = select.value;
+    const availableUsers = (users || []).filter(u => !currentAdminUserIds.includes(u.id));
+
+    select.innerHTML = '<option value="">Выберите пользователя...</option>';
+    availableUsers.forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u.id;
+        const fullName = [u.first_name, u.last_name].filter(Boolean).join(' ');
+        opt.textContent = fullName ? `${u.telegram_id} (${fullName})` : u.telegram_id;
+        select.appendChild(opt);
+    });
+    select.disabled = availableUsers.length === 0;
+
+    if (availableUsers.some(u => u.id === val)) {
+        select.value = val;
+    }
+}
+
+// Загружает список администраторов выбранной команды
+async function loadTeamAdmins(teamId) {
+    const tbody = document.getElementById('table-team-admins-body');
+    if (tbody) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">Загрузка...</td>
+            </tr>`;
+    }
+
+    try {
+        const data = await apiGet(`/admin/team-admins?team_id=${teamId}`);
+        const admins = data.admins || [];
+        currentTeamAdminUserIds = admins.map(a => a.id);
+        renderTeamAdminsTable(admins);
+        populateTeamAdminUserSelect(state.get('users'), currentTeamAdminUserIds);
+    } catch (err) {
+        showToast('Не удалось загрузить администраторов команды: ' + err.message, 'error');
+        currentTeamAdminUserIds = [];
+        renderTeamAdminsTable([]);
+    }
+}
+
+// Рендерит таблицу текущих team-admin выбранной команды
+function renderTeamAdminsTable(admins) {
+    const tbody = document.getElementById('table-team-admins-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    if (!admins || admins.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                    ${selectedTeamAdminsTeamId ? 'У этой команды нет назначенных администраторов' : 'Выберите команду, чтобы увидеть список администраторов'}
+                </td>
+            </tr>`;
+        return;
+    }
+
+    admins.forEach(admin => {
+        const tr = document.createElement('tr');
+
+        const tdTg = document.createElement('td');
+        tdTg.textContent = admin.telegram_id || '-';
+        tr.appendChild(tdTg);
+
+        const tdFirst = document.createElement('td');
+        tdFirst.textContent = admin.first_name || '-';
+        tr.appendChild(tdFirst);
+
+        const tdLast = document.createElement('td');
+        tdLast.textContent = admin.last_name || '-';
+        tr.appendChild(tdLast);
+
+        const tdActions = document.createElement('td');
+        const btnRemove = document.createElement('button');
+        btnRemove.className = 'btn btn-secondary btn-sm';
+        btnRemove.textContent = '🗑️ Снять';
+        btnRemove.addEventListener('click', () => removeTeamAdmin(admin.id));
+        tdActions.appendChild(btnRemove);
+        tr.appendChild(tdActions);
+
+        tbody.appendChild(tr);
+    });
+}
+
+// Снимает пользователя с роли администратора выбранной команды
+async function removeTeamAdmin(userId) {
+    if (!selectedTeamAdminsTeamId) return;
+
+    try {
+        await apiDelete('/admin/team-admins', { user_id: userId, team_id: selectedTeamAdminsTeamId });
+        showToast('Администратор команды успешно снят', 'success');
+        await loadTeamAdmins(selectedTeamAdminsTeamId);
+    } catch (err) {
+        showToast('Не удалось снять администратора команды: ' + err.message, 'error');
+    }
 }
 
 async function reloadTeams() {
