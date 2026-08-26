@@ -104,6 +104,13 @@ type Repository interface {
 	// Scoring
 	CreateEpicScore(ctx context.Context, epicID, userID, roleID uuid.UUID, score int) error
 	CreateRiskScore(ctx context.Context, riskID, userID uuid.UUID, probability, impact int) error
+	// HasUserScoredEpic и GetUnscoredRisksByUser используются, помимо прочего,
+	// notify.BuildEpicScoringReminders (см. handlers.NotifyEpicReminders) —
+	// GanttHandler удовлетворяет notify.ReminderRepository напрямую через
+	// Repository, без отдельного адаптера (в отличие от internal/telegram, где
+	// доступ к данным разделён на три узких сервисных интерфейса).
+	HasUserScoredEpic(ctx context.Context, epicID, userID uuid.UUID) (bool, error)
+	GetUnscoredRisksByUser(ctx context.Context, userID, epicID uuid.UUID) ([]domain.Risk, error)
 	GetEpicScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicScore, error)
 	GetEpicScoresByUserID(ctx context.Context, userID uuid.UUID) ([]domain.EpicScore, error)
 	GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
@@ -145,4 +152,13 @@ type TeamAdminScoper interface {
 // AIClient defines the contract for interacting with the AI assistant.
 type AIClient interface {
 	Ask(ctx context.Context, question string) (string, error)
+}
+
+// TelegramNotifier defines the contract for sending a direct Telegram message
+// to a user, used by NotifyEpicReminders (см. handlers/notify.go) to deliver
+// epic scoring reminders triggered from the web panel. Реализуется
+// *telegram.Bot (см. internal/telegram.Bot.SendDirectMessage) структурно,
+// без явного импорта пакета telegram в handlers.
+type TelegramNotifier interface {
+	SendDirectMessage(ctx context.Context, chatID int64, text string) error
 }

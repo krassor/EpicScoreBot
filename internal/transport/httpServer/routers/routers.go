@@ -68,6 +68,13 @@ func (r *Router) Mount(mux *chi.Mux) {
 					mux.Post("/admin/scores/risk", r.ganttHandler.AdminSubmitRiskScore)
 					mux.Post("/admin/scores/final", r.ganttHandler.AdminOverrideFinalScore)
 
+					// Рассылка напоминаний непроголосовавшим участникам эпика
+					// (веб-аналог команды /epicnotify Telegram-бота). В отличие
+					// от соседнего /epics/start (см. design.md) — умышленно
+					// защищён server-side, т.к. имеет видимый внешний побочный
+					// эффект (реальные Telegram-сообщения участникам команды).
+					mux.Post("/epics/notify", r.ganttHandler.NotifyEpicReminders)
+
 					// Admin editing epics/stories
 					mux.Put("/epics/{epic_id}", r.ganttHandler.UpdateEpic)
 					mux.Put("/stories/{story_id}", r.ganttHandler.UpdateStory)

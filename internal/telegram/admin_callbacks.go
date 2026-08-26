@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"EpicScoreBot/internal/models/domain"
+	"EpicScoreBot/internal/notify"
 	"EpicScoreBot/internal/utils/logger/sl"
 
-	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
 )
@@ -1062,66 +1062,14 @@ func (epicBot *Bot) sendEpicNotifications(ctx context.Context, msg *models.Messa
 	op := "bot.sendEpicNotifications"
 	log := epicBot.log.With(slog.String("op", op), slog.String("epic_id", epicID.String()))
 
-	epic, err := epicBot.epicService.GetEpicByID(ctx, epicID)
+	epic, reminders, err := notify.BuildEpicScoringReminders(ctx, epicBot.reminderRepository(), epicID)
 	if err != nil {
+		log.Error("failed to build epic scoring reminders", sl.Err(err))
 		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Эпик не найден.")
 		return
 	}
 
-	users, err := epicBot.userService.GetUsersByTeamID(ctx, epic.TeamID)
-	if err != nil {
-		log.Error("failed to get users by team", sl.Err(err))
-		epicBot.deleteAndSend(ctx, msg, msgID, "❌ Ошибка получения пользователей команды.")
-		return
-	}
-
-	sentCount := 0
-	var failedUsers []string
-
-	for _, user := range users {
-		effortScored, err1 := epicBot.epicService.HasUserScoredEpic(ctx, epicID, user.ID)
-		unscoredRisks, err2 := epicBot.riskService.GetUnscoredRisksByUser(ctx, user.ID, epicID)
-
-		if err1 != nil || err2 != nil {
-			continue // skip on db error
-		}
-
-		if effortScored && len(unscoredRisks) == 0 {
-			continue // all done
-		}
-
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "👋 Привет, %s! У тебя есть незаконченные оценки для эпика #%s «%s».\n\nЧто осталось оценить:\n", user.LastName, epic.Number, epic.Name)
-
-		if !effortScored {
-			sb.WriteString("  • Трудоемкость эпика\n")
-		}
-
-		for _, risk := range unscoredRisks {
-			fmt.Fprintf(&sb, "  • Риск: %s\n", risk.Description)
-		}
-
-		sb.WriteString("\nДля оценки используй команду /score")
-
-		// Try to send to the user's PM
-		if user.ChatID == 0 {
-			log.Warn("user has no ChatID", slog.String("username", user.TelegramID))
-			failedUsers = append(failedUsers, "@"+user.TelegramID)
-			continue
-		}
-
-		p := &bot.SendMessageParams{
-			ChatID: user.ChatID,
-			Text:   sb.String(),
-		}
-		_, err := epicBot.b.SendMessage(ctx, p)
-		if err != nil {
-			log.Error("failed to send notification PM to user", slog.Int64("chat_id", user.ChatID), slog.String("username", user.TelegramID), sl.Err(err))
-			failedUsers = append(failedUsers, "@"+user.TelegramID)
-		} else {
-			sentCount++
-		}
-	}
+	sentCount, failedUsers := notify.DeliverReminders(ctx, reminders, epicBot.SendDirectMessage)
 
 	var adminResp strings.Builder
 	fmt.Fprintf(&adminResp, "✅ Уведомления по эпику %s разосланы.\n", epic.Number)

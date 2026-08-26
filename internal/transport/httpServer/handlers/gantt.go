@@ -17,12 +17,13 @@ import (
 
 // GanttHandler provides HTTP handlers for the Gantt API.
 type GanttHandler struct {
-	svc     GanttService
-	repo    Repository
-	scoring ScoringService
-	ai      AIClient
-	cfg     config.BotConfig
-	log     *slog.Logger
+	svc      GanttService
+	repo     Repository
+	scoring  ScoringService
+	ai       AIClient
+	notifier TelegramNotifier
+	cfg      config.BotConfig
+	log      *slog.Logger
 }
 
 // NewGanttHandler creates a new GanttHandler.
@@ -33,14 +34,16 @@ func NewGanttHandler(
 	scoring ScoringService,
 	ai AIClient,
 	cfg config.BotConfig,
+	notifier TelegramNotifier,
 ) *GanttHandler {
 	return &GanttHandler{
-		svc:     svc,
-		repo:    repo,
-		scoring: scoring,
-		ai:      ai,
-		cfg:     cfg,
-		log:     log.With(slog.String("component", "gantt-handler")),
+		svc:      svc,
+		repo:     repo,
+		scoring:  scoring,
+		ai:       ai,
+		notifier: notifier,
+		cfg:      cfg,
+		log:      log.With(slog.String("component", "gantt-handler")),
 	}
 }
 

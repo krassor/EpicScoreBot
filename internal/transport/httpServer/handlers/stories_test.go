@@ -92,7 +92,7 @@ func TestGanttHandler_CreateStory(t *testing.T) {
 			},
 		}
 
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		reqBody, _ := json.Marshal(map[string]string{
 			"name":        "Story 3",
@@ -130,7 +130,7 @@ func TestGanttHandler_CreateStory(t *testing.T) {
 			},
 		}
 
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		reqBody, _ := json.Marshal(map[string]string{
 			"name": "Story 3",
@@ -177,7 +177,7 @@ func TestGanttHandler_DeleteStory(t *testing.T) {
 			},
 		}
 
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		req := httptest.NewRequest("DELETE", "/api/gantt/stories/"+storyID.String(), nil)
 		rctx := chi.NewRouteContext()
@@ -214,7 +214,7 @@ func TestGanttHandler_DeleteStory(t *testing.T) {
 			},
 		}
 
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		req := httptest.NewRequest("DELETE", "/api/gantt/stories/"+storyID.String(), nil)
 		rctx := chi.NewRouteContext()

@@ -177,6 +177,12 @@ type mockAIClient struct {
 	AIClient
 }
 
+// mockNotifier — заглушка TelegramNotifier для тестов, не отправляющих
+// уведомления по-настоящему.
+type mockNotifier struct {
+	TelegramNotifier
+}
+
 func TestGetProfile(t *testing.T) {
 	repo := &mockRepository{
 		users: map[string]*domain.User{
@@ -193,7 +199,7 @@ func TestGetProfile(t *testing.T) {
 		Admins:      []string{"admin_user"},
 	}
 
-	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	// Case 1: Unauthorized (no session)
 	req := httptest.NewRequest("GET", "/api/gantt/profile", nil)
@@ -245,7 +251,7 @@ func TestGetProfile(t *testing.T) {
 
 func TestBulkCreateUsers(t *testing.T) {
 	repo := &mockRepository{}
-	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, config.BotConfig{})
+	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, config.BotConfig{}, &mockNotifier{})
 
 	body := `{"users":[{"telegram_id":"tg1","first_name":"User1","weight":50}],"csv":"tg2;User2;Last2;80","team_id":"00000000-0000-0000-0000-000000000001"}`
 	req := httptest.NewRequest("POST", "/api/admin/users/bulk", strings.NewReader(body))
@@ -274,7 +280,7 @@ func TestSingleUserCRUD(t *testing.T) {
 		users: make(map[string]*domain.User),
 	}
 	cfg := config.BotConfig{SuperAdmins: []string{"root"}}
-	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 	// superadmin-сессия: team-scoped ограничения (team_ids ⊆ AdminTeamIDs)
 	// на CreateSingleUser/UpdateUser/GetUserDetails её не касаются.
 	superadminSession := &middleware.UserSession{TelegramID: "1", Username: "root"}

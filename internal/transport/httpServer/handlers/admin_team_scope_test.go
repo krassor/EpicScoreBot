@@ -45,7 +45,7 @@ func TestGetUsersList_TeamScoped(t *testing.T) {
 		repo := newRepo()
 		repo.teamAdminOfAny = true
 		repo.adminTeamIDs = []uuid.UUID{teamA}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		req := httptest.NewRequest("GET", "/api/gantt/admin/users", nil)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey,
@@ -70,7 +70,7 @@ func TestGetUsersList_TeamScoped(t *testing.T) {
 
 	t.Run("superadmin_sees_all", func(t *testing.T) {
 		repo := newRepo()
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		req := httptest.NewRequest("GET", "/api/gantt/admin/users", nil)
 		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey,
@@ -106,7 +106,7 @@ func TestCreateSingleUser_TeamScopeViolation(t *testing.T) {
 		teamAdminOfAny: true,
 		adminTeamIDs:   []uuid.UUID{ownTeam},
 	}
-	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	body := `{"telegram_id":"newbie","first_name":"New","team_ids":["` + foreignTeam.String() + `"]}`
 	req := httptest.NewRequest("POST", "/api/gantt/admin/users", strings.NewReader(body))
@@ -135,7 +135,7 @@ func TestUpdateEpic_CrossTeamForbidden(t *testing.T) {
 	// Мок GetEpicByID напрямую не настроен через func-поле в mockRepository —
 	// оборачиваем его отдельным типом, реализующим нужный метод.
 	epicRepo := &epicScopeRepo{mockRepository: repo, epic: &domain.Epic{ID: epicID, TeamID: teamB}}
-	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, epicRepo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, epicRepo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	body := `{"number":"EP-1","name":"Epic","team_id":"` + teamB.String() + `"}`
 	req := httptest.NewRequest("PUT", "/api/gantt/epics/"+epicID.String(), strings.NewReader(body))

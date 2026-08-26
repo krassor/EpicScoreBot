@@ -301,6 +301,7 @@ function renderDetails() {
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <h2>${selectedEpic.number}: ${selectedEpic.name}</h2>
                     ${isAdmin ? `<button id="btn-edit-epic" class="btn btn-secondary btn-sm" title="Редактировать эпик" style="padding: 3px 8px; font-size: 12px;">✏️ Редактировать</button>` : ''}
+                    ${isAdmin && selectedEpic.status === 'SCORING' ? `<button id="btn-notify-epic" class="btn btn-secondary btn-sm" title="Напомнить непроголосовавшим участникам" style="padding: 3px 8px; font-size: 12px;">🔔 Напомнить непроголосовавшим</button>` : ''}
                 </div>
                 <div class="scoring-epic-desc">${selectedEpic.description || 'Нет описания.'}</div>
             </div>
@@ -529,13 +530,13 @@ function renderRisksHtml(epicOrStory, scoresData, risks) {
                 <div class="risk-vote-selectors admin-risk-override" style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;">
                     <div class="risk-sel-group" style="flex: 1.5; min-width: 120px;">
                         <label style="font-size: 11px;">Участник</label>
-                        <select class="select risk-admin-user" style="width: 100%; padding: 4px; font-size: 12px;">
+                        <select class="select risk-admin-user" style="width: 100%; min-width: 0; padding: 4px; font-size: 12px;">
                             ${members.map(m => `<option value="${m.id}">${m.first_name} ${m.last_name || ''}</option>`).join('')}
                         </select>
                     </div>
                     <div class="risk-sel-group" style="flex: 1; min-width: 80px;">
                         <label style="font-size: 11px;">Вероятность</label>
-                        <select class="select risk-prob" style="width: 100%; padding: 4px; font-size: 12px;">
+                        <select class="select risk-prob" style="width: 100%; min-width: 0; padding: 4px; font-size: 12px;">
                             <option value="1">1</option>
                             <option value="2">2</option>
                             <option value="3">3</option>
@@ -544,7 +545,7 @@ function renderRisksHtml(epicOrStory, scoresData, risks) {
                     </div>
                     <div class="risk-sel-group" style="flex: 1; min-width: 80px;">
                         <label style="font-size: 11px;">Влияние</label>
-                        <select class="select risk-imp" style="width: 100%; padding: 4px; font-size: 12px;">
+                        <select class="select risk-imp" style="width: 100%; min-width: 0; padding: 4px; font-size: 12px;">
                             <option value="1">1</option>
                             <option value="2">2</option>
                             <option value="3">3</option>
@@ -962,6 +963,12 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 if (selectedEpic) openEditEpicModal(selectedEpic);
             };
         }
+        const btnNotifyEpic = document.getElementById('btn-notify-epic');
+        if (btnNotifyEpic) {
+            btnNotifyEpic.onclick = () => {
+                if (selectedEpic) notifyEpicReminders(selectedEpic.id);
+            };
+        }
         const btnEditStory = document.getElementById('btn-edit-story');
         if (btnEditStory) {
             btnEditStory.onclick = () => {
@@ -999,6 +1006,28 @@ async function startEpicScoring(epicId) {
         }
     } catch (err) {
         showToast('Не удалось запустить оценку: ' + err.message, 'error');
+    }
+}
+
+// Отправка напоминаний непроголосовавшим участникам команды эпика (доступно только admin/superadmin,
+// только для эпика в статусе SCORING) через POST /epics/notify
+async function notifyEpicReminders(epicId) {
+    try {
+        const result = await apiPost('/epics/notify', { epic_id: epicId });
+        const sentCount = result.sent_count || 0;
+        const failedIds = result.failed_telegram_ids || [];
+
+        let message = `Напоминания отправлены: ${sentCount}`;
+        // Тип тоста ограничен существующей CSS-палитрой (success/error/info),
+        // поэтому при наличии неудачных отправок используем 'error', даже если часть напоминаний ушла успешно
+        let type = 'success';
+        if (failedIds.length > 0) {
+            message += `. Не удалось отправить: ${failedIds.join(', ')}`;
+            type = 'error';
+        }
+        showToast(message, type);
+    } catch (err) {
+        showToast('Не удалось отправить напоминания: ' + err.message, 'error');
     }
 }
 

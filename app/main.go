@@ -85,7 +85,15 @@ func main() {
 	// удовлетворяет middleware.TeamAdminChecker/handlers.TeamAdminScoper.
 	teamAdminAuth := repositories.NewTeamAdminAuth(repositoryService)
 	ganttService := gantt.New(log, repositoryService)
-	ganttHandler := handlers.NewGanttHandler(log, ganttService, teamAdminAuth, scoringService, aiClient, cfg.BotConfig)
+	// tgBot может быть typed-nil (см. проверку выше), поэтому передаём его в
+	// GanttHandler как handlers.TelegramNotifier только если бот успешно
+	// инициализирован — иначе рассылка напоминаний из веб-панели будет
+	// недоступна (h.notifier == nil), без риска nil-panic в SendDirectMessage.
+	var notifier handlers.TelegramNotifier
+	if tgBot != nil {
+		notifier = tgBot
+	}
+	ganttHandler := handlers.NewGanttHandler(log, ganttService, teamAdminAuth, scoringService, aiClient, cfg.BotConfig, notifier)
 	router := routers.NewRouter(ganttHandler, cfg.BotConfig.TgbotApiToken)
 	server := httpServer.NewHttpServer(log, router, cfg)
 

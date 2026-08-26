@@ -207,6 +207,22 @@ func (epicBot *Bot) Start(_ int) {
 
 // ─── Send methods (create new messages) ───────────────────────────────────
 
+// SendDirectMessage отправляет личное сообщение пользователю по его chat ID.
+// Тонкая обёртка над Bot API, используемая как ботом, так и HTTP-слоем
+// веб-панели (см. handlers.TelegramNotifier) для рассылки напоминаний —
+// удовлетворяет интерфейсу notify-рассылки без явной ссылки/импорта.
+func (epicBot *Bot) SendDirectMessage(ctx context.Context, chatID int64, text string) error {
+	p := &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
+	}
+	_, err := epicBot.b.SendMessage(ctx, p)
+	if err != nil {
+		return fmt.Errorf("bot.SendDirectMessage: %w", err)
+	}
+	return nil
+}
+
 // sendReply sends a plain-text reply to the given chat/topic.
 func (epicBot *Bot) sendReply(ctx context.Context, msg *models.Message, text string) (*models.Message, error) {
 	chunks := splitTextIntoChunks(text, 4096)

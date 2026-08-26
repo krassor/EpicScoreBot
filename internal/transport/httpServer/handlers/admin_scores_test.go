@@ -144,7 +144,7 @@ func TestAdminSubmitEpicScore(t *testing.T) {
 			epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()},
 		}
 		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"epic_id":"` + epicID.String() + `","user_id":"` + userID.String() + `","score":8}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/epic", strings.NewReader(body))
@@ -175,7 +175,7 @@ func TestAdminSubmitEpicScore(t *testing.T) {
 			allowedTeamID: &teamA,
 		}
 		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"epic_id":"` + epicID.String() + `","user_id":"` + userID.String() + `","score":8}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/epic", strings.NewReader(body))
@@ -200,7 +200,7 @@ func TestAdminSubmitEpicScore(t *testing.T) {
 			denyTeamAdmin: true,
 		}
 		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"epic_id":"` + epicID.String() + `","user_id":"` + userID.String() + `","score":8}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/epic", strings.NewReader(body))
@@ -237,7 +237,7 @@ func TestAdminSubmitEpicScore(t *testing.T) {
 					epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()},
 				}
 				svc := &mockAdminScoresSvc{repo: repo}
-				handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+				handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 				body := fmt.Sprintf(`{"epic_id":"%s","user_id":"%s","score":%d}`, epicID.String(), userID.String(), tc.score)
 				req := httptest.NewRequest("POST", "/api/gantt/admin/scores/epic", strings.NewReader(body))
@@ -282,7 +282,7 @@ func TestAdminSubmitRiskScore(t *testing.T) {
 			epic: &domain.Epic{ID: riskEpicID, TeamID: uuid.New()},
 		}
 		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"risk_id":"` + riskID.String() + `","user_id":"` + userID.String() + `","probability":3,"impact":2}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/risk", strings.NewReader(body))
@@ -309,7 +309,7 @@ func TestAdminSubmitRiskScore(t *testing.T) {
 			denyTeamAdmin: true,
 		}
 		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"risk_id":"` + riskID.String() + `","user_id":"` + userID.String() + `","probability":3,"impact":2}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/risk", strings.NewReader(body))
@@ -332,7 +332,7 @@ func TestAdminSubmitRiskScore(t *testing.T) {
 			risk: &domain.Risk{ID: riskID, Status: domain.StatusScoring, EpicID: uuid.New()},
 		}
 		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"risk_id":"` + riskID.String() + `","user_id":"` + userID.String() + `","probability":5,"impact":2}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/risk", strings.NewReader(body))
@@ -358,7 +358,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 	t.Run("forbidden_for_member", func(t *testing.T) {
 		repo := &mockAdminScoresRepo{denyTeamAdmin: true}
 		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := fmt.Sprintf(`{"epic_id":"%s","final_score":42}`, epicID.String())
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
@@ -378,7 +378,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 	t.Run("bad_request_when_scoring_not_complete", func(t *testing.T) {
 		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, TeamID: uuid.New()}}
 		svc := &mockAdminScoresSvc{repo: repo, manualFinalScoreErr: scoring.ErrScoringNotComplete}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := fmt.Sprintf(`{"epic_id":"%s","final_score":42}`, epicID.String())
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
@@ -414,7 +414,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 				FinalScore:   &finalScore,
 			},
 		}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := fmt.Sprintf(`{"epic_id":"%s","final_score":42}`, epicID.String())
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
@@ -470,7 +470,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 				FinalScore: &finalScore,
 			},
 		}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := fmt.Sprintf(`{"epic_id":"%s","final_score":15}`, epicID.String())
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
@@ -497,7 +497,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 	t.Run("bad_request_invalid_final_score", func(t *testing.T) {
 		repo := &mockAdminScoresRepo{}
 		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := fmt.Sprintf(`{"epic_id":"%s","final_score":-1}`, epicID.String())
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))
@@ -517,7 +517,7 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 	t.Run("bad_request_invalid_epic_id", func(t *testing.T) {
 		repo := &mockAdminScoresRepo{}
 		svc := &mockAdminScoresSvc{repo: repo}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"epic_id":"not-a-uuid","final_score":42}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/final", strings.NewReader(body))

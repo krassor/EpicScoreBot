@@ -114,7 +114,7 @@ func TestReorderTask_CorrectFieldName(t *testing.T) {
 		}
 
 		repo := &mockGanttRepo{}
-		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		// Отправляем корректное имя поля new_sort_order
 		reqBody, _ := json.Marshal(map[string]int{
@@ -184,7 +184,7 @@ func TestReorderTask_OldFieldNameIgnored(t *testing.T) {
 		}
 
 		repo := &mockGanttRepo{}
-		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		// Отправляем старое имя поля sort_order вместо new_sort_order
 		reqBody, _ := json.Marshal(map[string]int{
@@ -234,7 +234,7 @@ func TestReorderTask_BothFieldsPresent(t *testing.T) {
 		}
 
 		repo := &mockGanttRepo{}
-		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		// Отправляем оба поля - должно использоваться new_sort_order=7, старое sort_order=999 должно быть проигнорировано
 		reqBody, _ := json.Marshal(map[string]int{
@@ -267,7 +267,7 @@ func TestReorderTask_InvalidTaskID(t *testing.T) {
 	t.Run("невалидный task_id должен вернуть 400", func(t *testing.T) {
 		svc := &mockGanttSvc{}
 		repo := &mockGanttRepo{}
-		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		reqBody, _ := json.Marshal(map[string]int{
 			"new_sort_order": 5,
@@ -304,7 +304,7 @@ func TestReorderTask_InvalidRequestBody(t *testing.T) {
 	t.Run("невалидный JSON должен вернуть 400", func(t *testing.T) {
 		svc := &mockGanttSvc{}
 		repo := &mockGanttRepo{}
-		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		// Отправляем невалидный JSON
 		req := httptest.NewRequest("PUT", "/api/gantt/tasks/"+taskID.String()+"/reorder", bytes.NewReader([]byte(`{invalid json`)))
@@ -334,7 +334,7 @@ func TestReorderTask_ServiceError(t *testing.T) {
 		}
 
 		repo := &mockGanttRepo{}
-		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		reqBody, _ := json.Marshal(map[string]int{
 			"new_sort_order": 5,
@@ -362,7 +362,7 @@ func TestUpdateTask_RejectsManualDates(t *testing.T) {
 
 	svc := &mockGanttSvc{}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	reqBody, _ := json.Marshal(map[string]string{
 		"start": "2026-01-01",
@@ -413,7 +413,7 @@ func TestUpdateTask_ProgressRoutesThroughSetTaskProgress(t *testing.T) {
 		return nil, nil
 	}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	// Реальный контракт с фронтендом — дробь 0.0-1.0 (фронтенд шлёт
 	// progress/100), а не проценты 0-100.
@@ -453,7 +453,7 @@ func TestUpdateTask_StartOffsetRoutesThroughSetTaskStartOffset(t *testing.T) {
 		return nil, nil
 	}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	reqBody, _ := json.Marshal(map[string]int{"start_offset_days": -2})
 	req := httptest.NewRequest("PUT", "/api/gantt/tasks/"+taskID.String()+"/", bytes.NewReader(reqBody))
@@ -487,7 +487,7 @@ func TestUpdateTask_StartOffsetOnParentReturnsBadRequest(t *testing.T) {
 		return nil, errors.New("start offset can only be set on a leaf (role) task, not a story/epic")
 	}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	reqBody, _ := json.Marshal(map[string]int{"start_offset_days": 1})
 	req := httptest.NewRequest("PUT", "/api/gantt/tasks/"+taskID.String()+"/", bytes.NewReader(reqBody))
@@ -524,7 +524,7 @@ func TestReorderEpic_Success(t *testing.T) {
 		return []domain.GanttTask{{}}, nil
 	}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	reqBody, _ := json.Marshal(map[string]int{"new_sort_order": 2})
 	req := httptest.NewRequest("PUT", "/api/gantt/epics/"+epicID.String()+"/reorder", bytes.NewReader(reqBody))
@@ -560,7 +560,7 @@ func TestReorderStory_Success(t *testing.T) {
 		return []domain.GanttTask{{}}, nil
 	}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	reqBody, _ := json.Marshal(map[string]int{"new_sort_order": 1})
 	req := httptest.NewRequest("PUT", "/api/gantt/stories/"+storyID.String()+"/reorder", bytes.NewReader(reqBody))
@@ -605,7 +605,7 @@ func TestReorderEpic_InvalidEpicID(t *testing.T) {
 
 	svc := &mockGanttSvc{}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	reqBody, _ := json.Marshal(map[string]int{"new_sort_order": 5})
 	req := httptest.NewRequest("PUT", "/api/gantt/epics/invalid-id/reorder", bytes.NewReader(reqBody))
@@ -635,7 +635,7 @@ func TestReorderEpic_InvalidRequestBody(t *testing.T) {
 
 	svc := &mockGanttSvc{}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	req := httptest.NewRequest("PUT", "/api/gantt/epics/"+epicID.String()+"/reorder", bytes.NewReader([]byte(`{invalid json`)))
 	rctx := chi.NewRouteContext()
@@ -665,7 +665,7 @@ func TestReorderEpic_ServiceError(t *testing.T) {
 		},
 	}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	reqBody, _ := json.Marshal(map[string]int{"new_sort_order": 5})
 	req := httptest.NewRequest("PUT", "/api/gantt/epics/"+epicID.String()+"/reorder", bytes.NewReader(reqBody))
@@ -691,7 +691,7 @@ func TestReorderStory_InvalidStoryID(t *testing.T) {
 
 	svc := &mockGanttSvc{}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	reqBody, _ := json.Marshal(map[string]int{"new_sort_order": 5})
 	req := httptest.NewRequest("PUT", "/api/gantt/stories/invalid-id/reorder", bytes.NewReader(reqBody))
@@ -721,7 +721,7 @@ func TestReorderStory_InvalidRequestBody(t *testing.T) {
 
 	svc := &mockGanttSvc{}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	req := httptest.NewRequest("PUT", "/api/gantt/stories/"+storyID.String()+"/reorder", bytes.NewReader([]byte(`{invalid json`)))
 	rctx := chi.NewRouteContext()
@@ -751,7 +751,7 @@ func TestReorderStory_ServiceError(t *testing.T) {
 		},
 	}
 	repo := &mockGanttRepo{}
-	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 	reqBody, _ := json.Marshal(map[string]int{"new_sort_order": 5})
 	req := httptest.NewRequest("PUT", "/api/gantt/stories/"+storyID.String()+"/reorder", bytes.NewReader(reqBody))

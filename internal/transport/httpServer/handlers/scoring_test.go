@@ -105,7 +105,7 @@ func TestSubmitEpicScore(t *testing.T) {
 	}
 	svc := &mockScoringSvc{repo: repo}
 
-	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, config.BotConfig{})
+	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, config.BotConfig{}, &mockNotifier{})
 
 	body := `{"epic_id":"` + epicID.String() + `","score":13}`
 	req := httptest.NewRequest("POST", "/api/gantt/scores/epic", strings.NewReader(body))
@@ -156,7 +156,7 @@ func TestSubmitEpicScoreValidation(t *testing.T) {
 				epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()},
 			}
 			svc := &mockScoringSvc{repo: repo}
-			handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, config.BotConfig{})
+			handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, config.BotConfig{}, &mockNotifier{})
 
 			body := fmt.Sprintf(`{"epic_id":"%s","score":%d}`, epicID.String(), tc.score)
 			req := httptest.NewRequest("POST", "/api/gantt/scores/epic", strings.NewReader(body))
@@ -194,7 +194,7 @@ func TestSubmitRiskScore(t *testing.T) {
 	}
 	svc := &mockScoringSvc{repo: repo}
 
-	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, config.BotConfig{})
+	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, config.BotConfig{}, &mockNotifier{})
 
 	body := `{"risk_id":"` + riskID.String() + `","probability":3,"impact":4}`
 	req := httptest.NewRequest("POST", "/api/gantt/scores/risk", strings.NewReader(body))
@@ -231,7 +231,7 @@ func TestGetMyScores(t *testing.T) {
 		},
 	}
 
-	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringSvc{}, &mockAIClient{}, config.BotConfig{})
+	handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringSvc{}, &mockAIClient{}, config.BotConfig{}, &mockNotifier{})
 
 	req := httptest.NewRequest("GET", "/api/gantt/scores/my", nil)
 	session := &middleware.UserSession{TelegramID: "12345", Username: "test"}

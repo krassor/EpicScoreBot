@@ -36,7 +36,7 @@ func TestGetTeamAdmins(t *testing.T) {
 				{ID: uuid.New(), TelegramID: "111", FirstName: "Иван", LastName: "Иванов"},
 			},
 		}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		req := httptest.NewRequest("GET", "/api/gantt/admin/team-admins?team_id="+teamID.String(), nil)
 		req = superadminCtx(req, "1", "root")
@@ -67,7 +67,7 @@ func TestGetTeamAdmins(t *testing.T) {
 
 	t.Run("invalid_team_id", func(t *testing.T) {
 		repo := &mockRepository{}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		req := httptest.NewRequest("GET", "/api/gantt/admin/team-admins?team_id=not-a-uuid", nil)
 		req = superadminCtx(req, "1", "root")
@@ -94,7 +94,7 @@ func TestAssignTeamAdmin(t *testing.T) {
 			},
 			team: &domain.Team{ID: teamID, Name: "Team A"},
 		}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"user_id":"` + userID.String() + `","team_id":"` + teamID.String() + `"}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/team-admins", strings.NewReader(body))
@@ -118,7 +118,7 @@ func TestAssignTeamAdmin(t *testing.T) {
 
 	t.Run("user_not_found", func(t *testing.T) {
 		repo := &mockRepository{team: &domain.Team{ID: teamID}}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"user_id":"` + userID.String() + `","team_id":"` + teamID.String() + `"}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/team-admins", strings.NewReader(body))
@@ -136,7 +136,7 @@ func TestAssignTeamAdmin(t *testing.T) {
 
 	t.Run("invalid_ids", func(t *testing.T) {
 		repo := &mockRepository{}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"user_id":"not-a-uuid","team_id":"` + teamID.String() + `"}`
 		req := httptest.NewRequest("POST", "/api/gantt/admin/team-admins", strings.NewReader(body))
@@ -157,7 +157,7 @@ func TestRemoveTeamAdmin(t *testing.T) {
 
 	t.Run("happy_path", func(t *testing.T) {
 		repo := &mockRepository{}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"user_id":"` + userID.String() + `","team_id":"` + teamID.String() + `"}`
 		req := httptest.NewRequest("DELETE", "/api/gantt/admin/team-admins", strings.NewReader(body))
@@ -178,7 +178,7 @@ func TestRemoveTeamAdmin(t *testing.T) {
 
 	t.Run("invalid_ids", func(t *testing.T) {
 		repo := &mockRepository{}
-		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg)
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 
 		body := `{"user_id":"not-a-uuid","team_id":"` + teamID.String() + `"}`
 		req := httptest.NewRequest("DELETE", "/api/gantt/admin/team-admins", strings.NewReader(body))
