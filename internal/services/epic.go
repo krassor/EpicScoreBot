@@ -386,6 +386,13 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 	return reportData, nil
 }
 
+// GetCapacityReport делегирует агрегацию отчёта о вместимости команды
+// BuildCapacityReport, используя собственный (широкий) Repository, который
+// удовлетворяет узкому CapacityReportRepository структурно.
+func (s *epicService) GetCapacityReport(ctx context.Context, teamID uuid.UUID, year, quarter int) (*report.CapacityReportResponse, error) {
+	return BuildCapacityReport(ctx, s.log, s.repo, teamID, year, quarter)
+}
+
 func (s *epicService) GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error) {
 	return s.repo.GetEvaluatingRoleIDs(ctx, epicID)
 }

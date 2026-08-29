@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"EpicScoreBot/internal/models/domain"
+	"EpicScoreBot/internal/report"
 	"context"
 	"time"
 
@@ -147,6 +148,20 @@ type ScoringService interface {
 type TeamAdminScoper interface {
 	IsTeamAdminOf(ctx context.Context, telegramID string, teamID uuid.UUID) (bool, error)
 	AdminTeamIDs(ctx context.Context, telegramID string) ([]uuid.UUID, error)
+}
+
+// ReportDataProvider предоставляет агрегированные данные для PDF-отчёта
+// команды (см. epicService.GetReportData) — используется ExportTeamReport
+// (format=pdf); GanttHandler получает конкретную реализацию (epicService)
+// через WithReportServices, не завязываясь на конкретный тип services.EpicService.
+type ReportDataProvider interface {
+	GetReportData(ctx context.Context, teamID uuid.UUID, year, quarter int) (*report.ReportData, error)
+}
+
+// PDFReportGenerator генерирует PDF-файл отчёта команды через Gotenberg по
+// данным ReportDataProvider (см. report.Generator.GenerateReport).
+type PDFReportGenerator interface {
+	GenerateReport(ctx context.Context, data report.ReportData) (string, error)
 }
 
 // AIClient defines the contract for interacting with the AI assistant.

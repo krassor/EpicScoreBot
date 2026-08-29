@@ -438,6 +438,54 @@
                                 </select>
                             </div>
                         </div>
+                        <div class="toolbar-right">
+                            <button id="btn-export-report-pdf" class="btn btn-secondary btn-sm" type="button" disabled
+                                    title="Выберите команду для скачивания отчета">📄 Скачать PDF</button>
+                            <button id="btn-export-report-xlsx" class="btn btn-secondary btn-sm" type="button" disabled
+                                    title="Выберите команду для скачивания отчета">📈 Скачать Excel</button>
+                        </div>
+                    </div>
+
+                    <!-- Пояснение формул расчёта показателей отчёта. Всегда видимый статичный
+                         блок (без сворачивания) — см. openspec/changes/add-report-formulas-legend.
+                         Текст формул синхронизирован с internal/transport/httpServer/handlers/reports.go,
+                         при изменении логики расчёта на бэкенде не забудь обновить и этот блок. -->
+                    <div class="admin-card reports-legend">
+                        <h2>🧮 Как считаются показатели</h2>
+                        <div class="reports-legend-columns">
+                            <div class="reports-legend-group">
+                                <h3>Вместимость и распределение эпиков</h3>
+                                <dl class="reports-legend-list">
+                                    <dt>Доступно (ёмкость)</dt>
+                                    <dd>Число участников роли в команде × 8 × 6 × 0.838 (чд на квартал)</dd>
+
+                                    <dt>Оценка по роли в строке эпика</dt>
+                                    <dd>Сырая сумма ролевых оценок сторей/эпика (<code>weighted_avg</code>), без риск-фактора</dd>
+
+                                    <dt>Итого (чд)</dt>
+                                    <dd>Сумма сырых оценок эпика по всем ролям (без риск-фактора)</dd>
+
+                                    <dt>С рисками (чд)</dt>
+                                    <dd>Итоговая риск-скорректированная оценка эпика (<code>final_score</code>)</dd>
+
+                                    <dt>Запланировано (трудоемкость)</dt>
+                                    <dd>Сумма риск-скорректированных оценок по эпикам этой роли за период</dd>
+
+                                    <dt>Разница (недо-/перепланирование)</dt>
+                                    <dd>«Доступно (ёмкость)» − «Запланировано (трудоемкость)»</dd>
+                                </dl>
+                            </div>
+                            <div class="reports-legend-group">
+                                <h3>Квоты по типам задач</h3>
+                                <dl class="reports-legend-list">
+                                    <dt>Целевой лимит</dt>
+                                    <dd>Фиксированный порог: 40% для Feature, 60% для Architecture + Techdebt</dd>
+
+                                    <dt>Фактический процент</dt>
+                                    <dd>Доля суммы «С рисками» (<code>final_score</code>) эпиков этого типа от суммы «С рисками» всех оценённых эпиков периода, × 100%</dd>
+                                </dl>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="reports-grid">

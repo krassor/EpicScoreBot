@@ -93,7 +93,8 @@ func main() {
 	if tgBot != nil {
 		notifier = tgBot
 	}
-	ganttHandler := handlers.NewGanttHandler(log, ganttService, teamAdminAuth, scoringService, aiClient, cfg.BotConfig, notifier)
+	ganttHandler := handlers.NewGanttHandler(log, ganttService, teamAdminAuth, scoringService, aiClient, cfg.BotConfig, notifier).
+		WithReportServices(epicService, reportService)
 	router := routers.NewRouter(ganttHandler, cfg.BotConfig.TgbotApiToken)
 	server := httpServer.NewHttpServer(log, router, cfg)
 

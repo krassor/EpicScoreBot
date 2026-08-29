@@ -17,13 +17,15 @@ import (
 
 // GanttHandler provides HTTP handlers for the Gantt API.
 type GanttHandler struct {
-	svc      GanttService
-	repo     Repository
-	scoring  ScoringService
-	ai       AIClient
-	notifier TelegramNotifier
-	cfg      config.BotConfig
-	log      *slog.Logger
+	svc        GanttService
+	repo       Repository
+	scoring    ScoringService
+	ai         AIClient
+	notifier   TelegramNotifier
+	reportData ReportDataProvider
+	reportGen  PDFReportGenerator
+	cfg        config.BotConfig
+	log        *slog.Logger
 }
 
 // NewGanttHandler creates a new GanttHandler.
@@ -45,6 +47,18 @@ func NewGanttHandler(
 		cfg:      cfg,
 		log:      log.With(slog.String("component", "gantt-handler")),
 	}
+}
+
+// WithReportServices устанавливает зависимости, нужные для файловой выгрузки
+// отчёта команды (см. ExportTeamReport, format=pdf) — источник данных PDF
+// (ReportDataProvider) и генератор PDF (PDFReportGenerator). Вынесено
+// отдельным методом, а не обязательными параметрами NewGanttHandler, чтобы
+// не менять сигнатуру конструктора и не задевать существующие тесты
+// (см. gantt_test.go и др., которые не используют экспорт отчётов файлом).
+func (h *GanttHandler) WithReportServices(reportData ReportDataProvider, reportGen PDFReportGenerator) *GanttHandler {
+	h.reportData = reportData
+	h.reportGen = reportGen
+	return h
 }
 
 // Repo возвращает Repository этого обработчика.

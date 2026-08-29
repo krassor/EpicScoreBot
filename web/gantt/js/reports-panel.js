@@ -2,6 +2,8 @@ import { state } from './state.js';
 import { apiGet } from './api.js';
 import { showToast } from './utils.js';
 
+const API_BASE = '/api/gantt';
+
 export function initReportsPanel() {
     console.log('initReportsPanel: Инициализация панели отчетов...');
 
@@ -35,6 +37,7 @@ export function initReportsPanel() {
         const select = document.getElementById('reports-team-select');
         if (select && teamId && select.value !== teamId) {
             select.value = teamId;
+            updateExportButtonsState();
             if (state.get('activeTab') === 'reports') {
                 loadCapacityReport();
             }
@@ -70,6 +73,47 @@ export function initReportsPanel() {
     document.getElementById('reports-quarter')?.addEventListener('change', () => {
         loadCapacityReport();
     });
+
+    // Кнопки скачивания отчета — прямая навигация браузера по ссылке с query-параметрами,
+    // авторизация уходит автоматически через cookie tg_sys_auth (см. design.md решение 5).
+    document.getElementById('btn-export-report-pdf')?.addEventListener('click', () => {
+        downloadReport('pdf');
+    });
+
+    document.getElementById('btn-export-report-xlsx')?.addEventListener('click', () => {
+        downloadReport('xlsx');
+    });
+
+    updateExportButtonsState();
+}
+
+// Формирует URL выгрузки отчета с текущими значениями фильтров вкладки «Отчеты»
+// и инициирует скачивание обычной навигацией браузера (без fetch+blob).
+function downloadReport(format) {
+    const teamId = document.getElementById('reports-team-select')?.value;
+    if (!teamId) {
+        return;
+    }
+    const year = document.getElementById('reports-year')?.value;
+    const quarter = document.getElementById('reports-quarter')?.value;
+
+    const params = new URLSearchParams({ team_id: teamId, format });
+    if (year) params.set('year', year);
+    if (quarter) params.set('quarter', quarter);
+
+    window.location.href = `${API_BASE}/reports/export?${params.toString()}`;
+}
+
+// Синхронизирует доступность кнопок скачивания с выбором команды —
+// активны ровно тогда, когда доступен вызов loadCapacityReport().
+function updateExportButtonsState() {
+    const teamId = document.getElementById('reports-team-select')?.value;
+    const btnPdf = document.getElementById('btn-export-report-pdf');
+    const btnXlsx = document.getElementById('btn-export-report-xlsx');
+
+    const enabled = Boolean(teamId);
+    if (btnPdf) btnPdf.disabled = !enabled;
+    if (btnXlsx) btnXlsx.disabled = !enabled;
 }
 
 function populateReportsTeamSelect(teams) {
@@ -91,12 +135,16 @@ function populateReportsTeamSelect(teams) {
     } else if (state.get('selectedTeamId') && teams.some(t => t.id === state.get('selectedTeamId'))) {
         select.value = state.get('selectedTeamId');
     }
+
+    updateExportButtonsState();
 }
 
 async function loadCapacityReport() {
     const teamId = document.getElementById('reports-team-select')?.value;
     const year = document.getElementById('reports-year')?.value;
     const quarter = document.getElementById('reports-quarter')?.value;
+
+    updateExportButtonsState();
 
     const capacityContainer = document.getElementById('reports-capacity-table-container');
     const quotasContainer = document.getElementById('reports-quotas-table-container');
@@ -181,9 +229,9 @@ function renderCapacityTable(data) {
                 </td>
         `;
 
-        // Оценки по ролям для данного эпика
+        // Оценки по ролям для данного эпика (сырые, без риск-фактора)
         roleCapacities.forEach(rc => {
-            const score = epic.role_scores ? (epic.role_scores[rc.role_name] || 0) : 0;
+            const score = epic.raw_role_scores ? (epic.raw_role_scores[rc.role_name] || 0) : 0;
             html += `
                 <td style="text-align: center; color: ${score > 0 ? 'var(--color-text)' : 'var(--color-text-muted)'};">
                     ${score > 0 ? score.toFixed(1) : '-'}
@@ -191,10 +239,10 @@ function renderCapacityTable(data) {
             `;
         });
 
-        // Посчитаем итоговые оценки по эпику
+        // Посчитаем итоговые оценки по эпику (сырые, без риск-фактора)
         let epicTotalRaw = 0;
         roleCapacities.forEach(rc => {
-            epicTotalRaw += epic.role_scores ? (epic.role_scores[rc.role_name] || 0) : 0;
+            epicTotalRaw += epic.raw_role_scores ? (epic.raw_role_scores[rc.role_name] || 0) : 0;
         });
 
         html += `
@@ -214,13 +262,13 @@ function renderCapacityTable(data) {
         totalPlannedSum += rc.planned;
         html += `<td style="text-align: center;">${rc.planned.toFixed(1)}</td>`;
     });
-    // Суммарные итоговые оценки по всем эпикам
+    // Суммарные итоговые оценки по всем эпикам (сырые, без риск-фактора)
     let totalRawScoreSum = 0;
     let totalFinalScoreSum = 0;
     sortedEpics.forEach(epic => {
         let epicTotalRaw = 0;
         roleCapacities.forEach(rc => {
-            epicTotalRaw += epic.role_scores ? (epic.role_scores[rc.role_name] || 0) : 0;
+            epicTotalRaw += epic.raw_role_scores ? (epic.raw_role_scores[rc.role_name] || 0) : 0;
         });
         totalRawScoreSum += epicTotalRaw;
         totalFinalScoreSum += epic.final_score;

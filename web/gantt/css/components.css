@@ -1143,3 +1143,45 @@
     font-size: var(--font-size-xs);
     color: var(--text-secondary);
 }
+
+/* ── Reports legend (пояснение формул расчёта, вкладка «Отчёты») ────
+   Компактный, всегда видимый блок — мелкий приглушённый шрифт,
+   без сворачивания/раскрытия. */
+.reports-legend-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--gap-fluid-lg);
+}
+
+.reports-legend-group h3 {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0 0 8px;
+}
+
+.reports-legend-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    font-size: var(--font-size-xs);
+}
+
+.reports-legend-list dt {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.reports-legend-list dd {
+    margin: 0 0 2px;
+    color: var(--text-muted);
+}
+
+.reports-legend-list code {
+    font-size: inherit;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.06);
+    padding: 1px 4px;
+    border-radius: 3px;
+}

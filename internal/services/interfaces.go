@@ -14,6 +14,9 @@ var (
 	ErrUserAlreadyExists = errors.New("user already exists")
 	ErrTeamAlreadyExists = errors.New("team already exists")
 	ErrEpicAlreadyExists = errors.New("epic already exists")
+	// ErrTeamNotFound возвращается BuildCapacityReport/GetCapacityReport,
+	// когда команда с указанным team_id не найдена в хранилище.
+	ErrTeamNotFound = errors.New("team not found")
 )
 
 // Repository defines the data-access contract.
@@ -146,6 +149,10 @@ type EpicService interface {
 	GetUsersWhoScoredEpic(ctx context.Context, epicID uuid.UUID) ([]domain.User, error)
 	GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
 	GetReportData(ctx context.Context, teamID uuid.UUID, year, quarter int) (*report.ReportData, error)
+	// GetCapacityReport агрегирует вместимость/квоты/эпики команды за
+	// год/квартал — тот же формат данных, что и GET
+	// /api/gantt/reports/capacity (см. BuildCapacityReport).
+	GetCapacityReport(ctx context.Context, teamID uuid.UUID, year, quarter int) (*report.CapacityReportResponse, error)
 	GetEvaluatingRoleIDs(ctx context.Context, epicID uuid.UUID) ([]uuid.UUID, error)
 	GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
 	CreateStory(ctx context.Context, epicID uuid.UUID, name, description string) (*domain.Epic, error)
