@@ -295,11 +295,7 @@ func TestEpicService_GetReportData(t *testing.T) {
 			t.Errorf("ожидался FinalScore = 15.5, получено: %f", eReport.FinalScore)
 		}
 
-		if eReport.TotalScore != 15.5 {
-			t.Errorf("ожидался TotalScore = 15.5, получено: %f", eReport.TotalScore)
-		}
-
-		if len(eReport.RoleScores) != 1 || eReport.RoleScores[0].RoleName != "IT-лидер" || eReport.RoleScores[0].WeightedAvg != 15.5 {
+		if len(eReport.RoleScores) != 1 || eReport.RoleScores["IT-лидер"] != 15.5 {
 			t.Errorf("неверные оценки ролей: %+v", eReport.RoleScores)
 		}
 
@@ -393,11 +389,11 @@ func TestEpicService_GetReportData(t *testing.T) {
 			t.Errorf("ожидался FinalScore = 119.0, получено: %f", eReport.FinalScore)
 		}
 
-		if len(eReport.RoleScores) != 1 || eReport.RoleScores[0].RoleName != "IT-лидер" {
+		val, exists := eReport.RoleScores["IT-лидер"]
+		if !exists {
 			t.Fatalf("ожидалась 1 роль, получено: %+v", eReport.RoleScores)
 		}
 
-		val := eReport.RoleScores[0].WeightedAvg
 		if math.Abs(val-119.0) > 0.1 {
 			t.Errorf("ожидалась масштабированная оценка 119.0, получено: %f", val)
 		}
@@ -545,8 +541,8 @@ func TestEpicService_GetReportData(t *testing.T) {
 			t.Fatalf("ожидался успешный отчет, получена ошибка: %v", err)
 		}
 
-		if len(report.Epics[0].RoleScores) != 1 || report.Epics[0].RoleScores[0].RoleName != roleID.String() {
-			t.Errorf("ожидалось название роли равным ID строкой, получено: %s", report.Epics[0].RoleScores[0].RoleName)
+		if _, exists := report.Epics[0].RoleScores[roleID.String()]; !exists || len(report.Epics[0].RoleScores) != 1 {
+			t.Errorf("ожидалось название роли равным ID строкой, получено: %+v", report.Epics[0].RoleScores)
 		}
 	})
 

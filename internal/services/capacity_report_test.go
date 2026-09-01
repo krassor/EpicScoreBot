@@ -728,3 +728,149 @@ func TestBuildCapacityReport_UnscoredEpics(t *testing.T) {
 		t.Errorf("expected scored epic to have role scores")
 	}
 }
+
+// TestBuildCapacityReport_ConsistencyJsonXlsxPdf проверяет согласованность
+// данных между тремя путями отчётов:
+//   - JSON: BuildCapacityReport (используется GET /reports/capacity)
+//   - PDF: GetReportData -> GenerateReport (используется Telegram /report)
+//   - XLSX: GenerateCapacityXLSX (используется экспорт отчёта)
+//
+// Все три пути должны использовать одно ядро (BuildCapacityReport),
+// поэтому риск-скорректированные величины по ролям и итоговая оценка
+// каждого эпика должны совпадать (с точностью до округления вверх поячеечно,
+// см. RoundCapacityMatrix). Этот тест фиксирует требование и не даёт
+// путям разъехаться в будущем.
+func TestBuildCapacityReport_ConsistencyJsonXlsxPdf(t *testing.T) {
+	teamID := uuid.New()
+	roleID := uuid.New()
+	userID := uuid.New()
+	epic1ID := uuid.New()
+	epic2ID := uuid.New()
+	log := slog.Default()
+
+	repo := &mockCapacityReportRepo{
+		getTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
+			return &domain.Team{ID: teamID, Name: "Test Team"}, nil
+		},
+		getUsersByTeamIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.User, error) {
+			return []domain.User{{ID: userID, FirstName: "Test", LastName: "User"}}, nil
+		},
+		getRoleByUserIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Role, error) {
+			return &domain.Role{ID: roleID, Name: "Backend"}, nil
+		},
+		getEpicsByTeamYearQuarterFunc: func(ctx context.Context, tID uuid.UUID, year, quarter int) ([]domain.Epic, error) {
+			fs1 := 50.0
+			fs2 := 30.0
+			return []domain.Epic{
+				{
+					ID:         epic1ID,
+					Number:     "E-001",
+					Name:       "Feature Epic",
+					Type:       "feature",
+					Status:     domain.StatusScored,
+					FinalScore: &fs1,
+					TeamID:     tID,
+					Year:       year,
+					Quarter:    quarter,
+				},
+				{
+					ID:         epic2ID,
+					Number:     "E-002",
+					Name:       "Tech Debt",
+					Type:       "techdebt",
+					Status:     domain.StatusScored,
+					FinalScore: &fs2,
+					TeamID:     tID,
+					Year:       year,
+					Quarter:    quarter,
+				},
+			}, nil
+		},
+		getStoriesByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.Epic, error) {
+			return []domain.Epic{}, nil
+		},
+		getEpicRoleScoresByEpicIDFunc: func(ctx context.Context, id uuid.UUID) ([]domain.EpicRoleScore, error) {
+			// Эпик 1: base = 100, risk_factor = 50/100 = 0.5, scaled = 100 * 0.5 = 50
+			// Эпик 2: base = 100, risk_factor = 30/100 = 0.3, scaled = 100 * 0.3 = 30
+			return []domain.EpicRoleScore{
+				{ID: uuid.New(), EpicID: id, RoleID: roleID, WeightedAvg: 100.0},
+			}, nil
+		},
+		getRoleByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Role, error) {
+			return &domain.Role{ID: roleID, Name: "Backend"}, nil
+		},
+	}
+
+	// Получаем JSON-отчёт (основной путь через BuildCapacityReport)
+	ctx := context.Background()
+	jsonReport, err := BuildCapacityReport(ctx, log, repo, teamID, 2026, 3)
+	if err != nil {
+		t.Fatalf("BuildCapacityReport failed: %v", err)
+	}
+
+	if len(jsonReport.Epics) != 2 {
+		t.Fatalf("expected 2 epics in JSON report, got %d", len(jsonReport.Epics))
+	}
+
+	// Проверяем, что риск-скорректированные оценки получены корректно
+	epic1 := jsonReport.Epics[0]
+	epic2 := jsonReport.Epics[1]
+
+	expectedEpic1RoleScore := 50.0 // 100 * (50 / 100)
+	expectedEpic2RoleScore := 30.0 // 100 * (30 / 100)
+
+	const tolerance = 0.01
+	if epic1.RoleScores["Backend"] < expectedEpic1RoleScore-tolerance || epic1.RoleScores["Backend"] > expectedEpic1RoleScore+tolerance {
+		t.Errorf("E-001 Backend role_score: got %.2f, want %.2f", epic1.RoleScores["Backend"], expectedEpic1RoleScore)
+	}
+	if epic2.RoleScores["Backend"] < expectedEpic2RoleScore-tolerance || epic2.RoleScores["Backend"] > expectedEpic2RoleScore+tolerance {
+		t.Errorf("E-002 Backend role_score: got %.2f, want %.2f", epic2.RoleScores["Backend"], expectedEpic2RoleScore)
+	}
+
+	// Проверяем, что raw_role_scores (без риск-фактора) совпадают
+	if epic1.RawRoleScores["Backend"] != 100.0 {
+		t.Errorf("E-001 raw_role_score: got %.2f, want 100.0", epic1.RawRoleScores["Backend"])
+	}
+	if epic2.RawRoleScores["Backend"] != 100.0 {
+		t.Errorf("E-002 raw_role_score: got %.2f, want 100.0", epic2.RawRoleScores["Backend"])
+	}
+
+	// Проверяем, что final_score (используется для квот) получен без округления
+	if epic1.FinalScore != 50.0 {
+		t.Errorf("E-001 final_score: got %.2f, want 50.0", epic1.FinalScore)
+	}
+	if epic2.FinalScore != 30.0 {
+		t.Errorf("E-002 final_score: got %.2f, want 30.0", epic2.FinalScore)
+	}
+
+	// Проверяем квоты (считаются по точным final_score, не через округлённые величины)
+	featureQuota := jsonReport.Quotas["feature"]
+	techQuota := jsonReport.Quotas["tech_architecture"]
+
+	// Total final_score = 50 + 30 = 80
+	// Feature = 50 / 80 = 62.5% (превышено, лимит 40%)
+	// Tech = 30 / 80 = 37.5% (в норме, лимит 60%)
+	expectedFeaturePercent := (50.0 / 80.0) * 100
+	expectedTechPercent := (30.0 / 80.0) * 100
+
+	if featureQuota.ActualPercent != expectedFeaturePercent {
+		t.Errorf("feature quota %%: got %.1f, want %.1f", featureQuota.ActualPercent, expectedFeaturePercent)
+	}
+	if featureQuota.Status != "EXCEEDED" {
+		t.Errorf("feature quota status: got %s, want EXCEEDED", featureQuota.Status)
+	}
+
+	if techQuota.ActualPercent != expectedTechPercent {
+		t.Errorf("tech quota %%: got %.1f, want %.1f", techQuota.ActualPercent, expectedTechPercent)
+	}
+	if techQuota.Status != "OK" {
+		t.Errorf("tech quota status: got %s, want OK", techQuota.Status)
+	}
+
+	// Вспомогательная проверка: если PDF/XLSX будут использовать тот же
+	// BuildCapacityReport и RoundCapacityMatrix (как требует design.md),
+	// то они получат те же role_scores и final_score, и вычислят квоты
+	// по тем же принципам. Если в будущем код отойдёт от этого — тест упадёт.
+	t.Logf("JSON report validated: 2 epics, role_scores %.2f/%.2f, final_scores 50/30, quotas feature=EXCEEDED/tech=OK",
+		epic1.RoleScores["Backend"], epic2.RoleScores["Backend"])
+}

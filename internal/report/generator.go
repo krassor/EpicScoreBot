@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"EpicScoreBot/internal/config"
@@ -17,9 +18,17 @@ import (
 	"github.com/nativebpm/gotenberg"
 )
 
-// epicTemplateData extends EpicReportData with pre-rendered SVG chart strings.
+// epicTemplateData extends EpicReportData with pre-rendered SVG chart strings
+// and поячеечно округлённой вверх матрицей риск-скорректированной
+// трудоёмкости этого эпика по ролям (см. RoundCapacityMatrix) — шаблон
+// использует только уже округлённые величины в главной матрице.
 type epicTemplateData struct {
 	EpicReportData
+	// RoundedRoleScores[roleName] = ceil(EpicReportData.RoleScores[roleName]).
+	RoundedRoleScores map[string]int
+	// RoundedTotal — «Итого (чд)» по эпику: сумма округлённых ячеек строки.
+	RoundedTotal int
+
 	ProbabilityChartSVG template.HTML
 	ImpactChartSVG      template.HTML
 	CoefficientChartSVG template.HTML
@@ -32,19 +41,45 @@ type riskLegendItem struct {
 	Description string
 }
 
+// roleCapacityTemplateData расширяет RoleCapacityData округлённым
+// «Запланировано» (сумма округлённых вверх ячеек матрицы по этой роли, см.
+// RoundCapacityMatrix) — используется строкой «Запланировано» главной
+// матрицы, тогда как «Доступно»/«Разница» (Capacity/Diff) считаются по
+// точной формуле ёмкости и не округляются (см. design.md change
+// simplify-capacity-report, Non-Goals).
+type roleCapacityTemplateData struct {
+	RoleCapacityData
+	RoundedPlanned int
+}
+
 // templateData is passed to the HTML template.
 type templateData struct {
-	TeamName           string
-	Year               int
-	Quarter            int
-	TotalCapacity      float64
-	TotalPlanned       float64
-	TotalFinalPlanned  float64
-	TotalDiff          float64
-	RoleCapacities     []RoleCapacityReportData
-	Quotas             map[string]QuotaReportData
-	GeneratedFormatted string
-	Epics              []epicTemplateData
+	TeamName      string
+	Year          int
+	Quarter       int
+	TotalCapacity float64
+	// TotalRoundedPlanned — общий итог «Запланировано»: сумма округлённых
+	// ячеек по всем ролям (равна сумме RoundedTotal по всем эпикам).
+	TotalRoundedPlanned int
+	TotalDiff           float64
+	RoleCapacities      []roleCapacityTemplateData
+	Quotas              map[string]QuotaData
+	GeneratedFormatted  string
+	Epics               []epicTemplateData
+}
+
+// sortedEpicReportData возвращает копию epics, отсортированную по номеру
+// задачи — аналогично sortedEpics (xlsx_generator.go), чтобы порядок строк
+// главной матрицы в PDF совпадал с XLSX и веб-таблицей для одного и того же
+// периода (см. design.md change simplify-capacity-report, требование
+// «Согласованность данных…»).
+func sortedEpicReportData(epics []EpicReportData) []EpicReportData {
+	sorted := make([]EpicReportData, len(epics))
+	copy(sorted, epics)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Number < sorted[j].Number
+	})
+	return sorted
 }
 
 // Generator creates PDF reports via Gotenberg.
@@ -67,19 +102,38 @@ func (g *Generator) GenerateReport(ctx context.Context, data ReportData) (string
 	op := "report.GenerateReport"
 	log := g.log.With(slog.String("op", op))
 
+	// Стабильный порядок ролей/эпиков — как в XLSX (sortedRoleCapacities/
+	// sortedEpics), чтобы матрица PDF совпадала по составу строк/колонок с
+	// XLSX и веб-таблицей для одного и того же периода.
+	roleCapacities := sortedRoleCapacities(data.RoleCapacities)
+	epicsSorted := sortedEpicReportData(data.Epics)
+
+	roleNames := make([]string, len(roleCapacities))
+	for i, rc := range roleCapacities {
+		roleNames[i] = rc.RoleName
+	}
+
+	items := make([]EpicReportItem, len(epicsSorted))
+	for i, e := range epicsSorted {
+		items[i] = e.EpicReportItem
+	}
+	matrix := RoundCapacityMatrix(items, roleNames)
+
 	// Prepare template data with SVG charts.
 	var epics []epicTemplateData
-	for _, e := range data.Epics {
+	for i, e := range epicsSorted {
 		var legend []riskLegendItem
-		for i, r := range e.Risks {
+		for idx, r := range e.Risks {
 			legend = append(legend, riskLegendItem{
-				Label:       fmt.Sprintf("Риск %d", i+1),
+				Label:       fmt.Sprintf("Риск %d", idx+1),
 				Description: r.Description,
 			})
 		}
 
 		epics = append(epics, epicTemplateData{
 			EpicReportData:      e,
+			RoundedRoleScores:   matrix.Cells[i],
+			RoundedTotal:        matrix.EpicTotals[i],
 			ProbabilityChartSVG: template.HTML(BuildRiskProbabilityDiagram(e.Risks)),
 			ImpactChartSVG:      template.HTML(BuildRiskImpactDiagram(e.Risks)),
 			CoefficientChartSVG: template.HTML(BuildRiskCoefficientDiagram(e.Risks)),
@@ -87,28 +141,29 @@ func (g *Generator) GenerateReport(ctx context.Context, data ReportData) (string
 		})
 	}
 
-	var totalPlanned float64
-	for _, rc := range data.RoleCapacities {
+	roleCapacitiesTD := make([]roleCapacityTemplateData, len(roleCapacities))
+	var totalPlanned float64 // точная (неокруглённая) сумма — только для строки «Разница».
+	var totalRoundedPlanned int
+	for i, rc := range roleCapacities {
+		roleCapacitiesTD[i] = roleCapacityTemplateData{
+			RoleCapacityData: rc,
+			RoundedPlanned:   matrix.RolePlanned[rc.RoleName],
+		}
 		totalPlanned += rc.Planned
-	}
-
-	var totalFinalPlanned float64
-	for _, e := range epics {
-		totalFinalPlanned += e.FinalScore
+		totalRoundedPlanned += matrix.RolePlanned[rc.RoleName]
 	}
 
 	td := templateData{
-		TeamName:           data.TeamName,
-		Year:               data.Year,
-		Quarter:            data.Quarter,
-		TotalCapacity:      data.TotalCapacity,
-		TotalPlanned:       totalPlanned,
-		TotalFinalPlanned:  totalFinalPlanned,
-		TotalDiff:          data.TotalCapacity - totalPlanned,
-		RoleCapacities:     data.RoleCapacities,
-		Quotas:             data.Quotas,
-		GeneratedFormatted: data.Generated.Format("02.01.2006 15:04"),
-		Epics:              epics,
+		TeamName:            data.TeamName,
+		Year:                data.Year,
+		Quarter:             data.Quarter,
+		TotalCapacity:       data.TotalCapacity,
+		TotalRoundedPlanned: totalRoundedPlanned,
+		TotalDiff:           data.TotalCapacity - totalPlanned,
+		RoleCapacities:      roleCapacitiesTD,
+		Quotas:              data.Quotas,
+		GeneratedFormatted:  data.Generated.Format("02.01.2006 15:04"),
+		Epics:               epics,
 	}
 
 	templateFullPath := filepath.Join(g.cfg.PdfConfig.HtmlTemplateFilePath, g.cfg.PdfConfig.HtmlTemplateFileName)

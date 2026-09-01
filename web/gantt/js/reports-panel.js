@@ -181,6 +181,41 @@ async function loadCapacityReport() {
     }
 }
 
+// Поячеечно округляет вверх до целого человеко-дня риск-скорректированную
+// трудоёмкость матрицы «эпик × роль» (epic.role_scores) и считает итоги по
+// уже округлённым значениям — зеркалирует internal/report/rounding.go
+// (RoundCapacityMatrix) на бэкенде, чтобы веб-таблица не расходилась с
+// PDF/XLSX-выгрузками того же отчёта.
+// Возвращает:
+//   cells[i][roleName]  — округлённая ячейка эпика epics[i] по роли roleName;
+//   epicTotals[i]        — «Итого (чд)» по эпику: сумма округлённых ячеек строки;
+//   rolePlanned[roleName] — «Запланировано» по роли: сумма округлённых ячеек колонки;
+//   grandTotal            — общий итог: сумма epicTotals (= сумма rolePlanned).
+function roundCapacityMatrix(epics, roleCapacities) {
+    const cells = [];
+    const epicTotals = [];
+    const rolePlanned = {};
+    roleCapacities.forEach(rc => { rolePlanned[rc.role_name] = 0; });
+
+    let grandTotal = 0;
+    epics.forEach((epic, i) => {
+        const row = {};
+        let rowTotal = 0;
+        roleCapacities.forEach(rc => {
+            const rawScore = epic.role_scores ? (epic.role_scores[rc.role_name] || 0) : 0;
+            const cell = Math.ceil(rawScore);
+            row[rc.role_name] = cell;
+            rowTotal += cell;
+            rolePlanned[rc.role_name] += cell;
+        });
+        cells[i] = row;
+        epicTotals[i] = rowTotal;
+        grandTotal += rowTotal;
+    });
+
+    return { cells, epicTotals, rolePlanned, grandTotal };
+}
+
 function renderCapacityTable(data) {
     const container = document.getElementById('reports-capacity-table-container');
     if (!container) return;
@@ -194,6 +229,10 @@ function renderCapacityTable(data) {
     }
 
     const sortedEpics = [...epics].sort((a, b) => a.number.localeCompare(b.number));
+
+    // Округлённая вверх поячеечно риск-скорректированная матрица «эпик × роль»
+    // и итоги по ней — единственный источник отображаемых значений трудоёмкости.
+    const matrix = roundCapacityMatrix(sortedEpics, roleCapacities);
 
     let html = `
         <table class="admin-table" style="width: 100%; border-collapse: collapse;">
@@ -210,14 +249,13 @@ function renderCapacityTable(data) {
 
     html += `
                     <th style="text-align: center; width: 110px;">Итого (чд)</th>
-                    <th style="text-align: center; width: 110px;">С рисками (чд)</th>
                 </tr>
             </thead>
             <tbody>
     `;
 
     // Заполняем строки (эпики)
-    sortedEpics.forEach(epic => {
+    sortedEpics.forEach((epic, i) => {
         html += `
             <tr>
                 <td style="font-weight: 500; text-align: left;">
@@ -229,25 +267,18 @@ function renderCapacityTable(data) {
                 </td>
         `;
 
-        // Оценки по ролям для данного эпика (сырые, без риск-фактора)
+        // Риск-скорректированные оценки по ролям, округлённые вверх до целого чд
         roleCapacities.forEach(rc => {
-            const score = epic.raw_role_scores ? (epic.raw_role_scores[rc.role_name] || 0) : 0;
+            const cell = matrix.cells[i][rc.role_name];
             html += `
-                <td style="text-align: center; color: ${score > 0 ? 'var(--color-text)' : 'var(--color-text-muted)'};">
-                    ${score > 0 ? score.toFixed(1) : '-'}
+                <td style="text-align: center; color: ${cell > 0 ? 'var(--color-text)' : 'var(--color-text-muted)'};">
+                    ${cell > 0 ? cell : '-'}
                 </td>
             `;
         });
 
-        // Посчитаем итоговые оценки по эпику (сырые, без риск-фактора)
-        let epicTotalRaw = 0;
-        roleCapacities.forEach(rc => {
-            epicTotalRaw += epic.raw_role_scores ? (epic.raw_role_scores[rc.role_name] || 0) : 0;
-        });
-
         html += `
-                <td style="text-align: center; font-weight: bold;">${epicTotalRaw.toFixed(1)}</td>
-                <td style="text-align: center; font-weight: bold; color: var(--color-primary);">${epic.final_score.toFixed(0)}</td>
+                <td style="text-align: center; font-weight: bold; color: var(--color-primary);">${matrix.epicTotals[i]}</td>
             </tr>
         `;
     });
@@ -257,30 +288,19 @@ function renderCapacityTable(data) {
         <tr style="border-top: 2px solid var(--color-border); background-color: rgba(255, 255, 255, 0.02); font-weight: bold;">
             <td colspan="2" style="text-align: left; padding-left: 12px;">Запланировано (трудоемкость), чд</td>
     `;
-    let totalPlannedSum = 0;
+    // «Запланировано» по роли — сумма уже округлённых ячеек колонки матрицы
+    // (не rc.planned/ceil(rc.planned)), чтобы сумма строки визуально сходилась
+    // с суммой отображаемых ячеек эпиков.
     roleCapacities.forEach(rc => {
-        totalPlannedSum += rc.planned;
-        html += `<td style="text-align: center;">${rc.planned.toFixed(1)}</td>`;
-    });
-    // Суммарные итоговые оценки по всем эпикам (сырые, без риск-фактора)
-    let totalRawScoreSum = 0;
-    let totalFinalScoreSum = 0;
-    sortedEpics.forEach(epic => {
-        let epicTotalRaw = 0;
-        roleCapacities.forEach(rc => {
-            epicTotalRaw += epic.raw_role_scores ? (epic.raw_role_scores[rc.role_name] || 0) : 0;
-        });
-        totalRawScoreSum += epicTotalRaw;
-        totalFinalScoreSum += epic.final_score;
+        html += `<td style="text-align: center;">${matrix.rolePlanned[rc.role_name]}</td>`;
     });
 
     html += `
-            <td style="text-align: center;">${totalRawScoreSum.toFixed(1)}</td>
-            <td style="text-align: center; color: var(--color-primary);">${totalFinalScoreSum.toFixed(0)}</td>
+            <td style="text-align: center; color: var(--color-primary);">${matrix.grandTotal}</td>
         </tr>
     `;
 
-    // Итоговая строка: Доступно (Capacity)
+    // Итоговая строка: Доступно (Capacity) — формула ёмкости, без округления
     let totalCapacity = data.total_capacity || 0;
     html += `
         <tr style="background-color: rgba(255, 255, 255, 0.02); font-weight: bold;">
@@ -291,11 +311,10 @@ function renderCapacityTable(data) {
     });
     html += `
             <td style="text-align: center;">${totalCapacity.toFixed(1)}</td>
-            <td></td>
         </tr>
     `;
 
-    // Итоговая строка: Разница (Diff)
+    // Итоговая строка: Разница (Diff) — формула ёмкости, без округления
     html += `
         <tr style="background-color: rgba(255, 255, 255, 0.02); font-weight: bold; border-bottom: 2px solid var(--color-border);">
             <td colspan="2" style="text-align: left; padding-left: 12px;">Разница (недо-/перепланирование), чд</td>
@@ -305,12 +324,13 @@ function renderCapacityTable(data) {
         const diffStyle = isOverplanned ? 'color: var(--color-danger); font-weight: bold;' : 'color: var(--color-success); font-weight: bold;';
         html += `<td style="text-align: center; ${diffStyle}">${rc.diff.toFixed(1)}</td>`;
     });
+    let totalPlannedSum = 0;
+    roleCapacities.forEach(rc => { totalPlannedSum += rc.planned; });
     const totalDiff = totalCapacity - totalPlannedSum;
     const isTotalOverplanned = totalDiff < 0;
     const totalDiffStyle = isTotalOverplanned ? 'color: var(--color-danger); font-weight: bold;' : 'color: var(--color-success); font-weight: bold;';
     html += `
             <td style="text-align: center; ${totalDiffStyle}">${totalDiff.toFixed(1)}</td>
-            <td></td>
         </tr>
         </tbody>
     </table>

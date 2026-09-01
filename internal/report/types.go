@@ -2,12 +2,6 @@ package report
 
 import "time"
 
-// RoleScoreData holds a single role's weighted average for an epic.
-type RoleScoreData struct {
-	RoleName    string
-	WeightedAvg float64
-}
-
 // RiskReportData holds aggregated data for one risk.
 type RiskReportData struct {
 	Description   string
@@ -17,41 +11,33 @@ type RiskReportData struct {
 	Coefficient   float64 // risk multiplier coefficient
 }
 
-// EpicReportData holds all report data for a single epic.
+// EpicReportData оборачивает EpicReportItem — общее для JSON `/reports/capacity`,
+// XLSX-выгрузки и PDF ядро агрегации отчёта о вместимости (см.
+// services.BuildCapacityReport) — добавляя единственное, чего в общем ядре
+// нет, но нужно PDF: риски эпика (для таблицы рисков и SVG-диаграмм, см.
+// report/svg.go). Номер/название/тип/статус/итоговая и ролевые оценки
+// (риск-скорректированные RoleScores и сырые RawRoleScores) наследуются от
+// EpicReportItem через embedding — раздельного пересчёта в TotalScore/
+// RoleScoresMap (как было раньше) больше нет, что исключает рассинхронизацию
+// с web/XLSX (см. design.md change simplify-capacity-report, решение 1).
 type EpicReportData struct {
-	Number        string
-	Name          string
-	Type          string
-	RoleScores    []RoleScoreData
-	RoleScoresMap map[string]float64 // Map for easy template lookups by role name
-	TotalScore    float64            // sum of role weighted averages
-	Risks         []RiskReportData
-	FinalScore    float64            // total score adjusted by risk coefficients
+	EpicReportItem
+	Risks []RiskReportData
 }
 
-type RoleCapacityReportData struct {
-	RoleName string
-	Capacity float64
-	Planned  float64
-	Diff     float64
-}
-
-type QuotaReportData struct {
-	LimitPercent  float64
-	ActualPercent float64
-	Status        string
-}
-
-// ReportData is the top-level data structure for a team report.
+// ReportData — данные для PDF-отчёта о вместимости команды за квартал.
+// Общие с JSON `/reports/capacity` и XLSX-выгрузкой поля (команда, период,
+// ёмкость, роль-капасити, квоты) продвигаются через embedding
+// CapacityReportResponse (см. services.BuildCapacityReport) — PDF поверх
+// добавляет только то, чего в общем ядре нет: риски по каждому эпику и
+// время генерации отчёта.
 type ReportData struct {
-	TeamName       string
-	Year           int
-	Quarter        int
-	TotalCapacity  float64
-	RoleCapacities []RoleCapacityReportData
-	Epics          []EpicReportData
-	Quotas         map[string]QuotaReportData
-	Generated      time.Time
+	CapacityReportResponse
+	// Epics переопределяет одноимённое поле, продвинутое embedding'ом
+	// CapacityReportResponse ([]EpicReportItem) — PDF-у дополнительно нужны
+	// риски каждого эпика, которых нет в общем ядре агрегации.
+	Epics     []EpicReportData
+	Generated time.Time
 }
 
 // ── Capacity report (JSON `/reports/capacity` + XLSX export) ───────────────

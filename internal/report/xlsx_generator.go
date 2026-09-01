@@ -79,9 +79,12 @@ func sortedEpics(epics []EpicReportItem) []EpicReportItem {
 }
 
 // writeCapacitySheet заполняет лист «Вместимость»: шапка команды/периода,
-// таблица эпиков × ролей (сырые оценки) с итоговыми строками
-// Запланировано/Доступно/Разница — зеркалирует renderCapacityTable
-// (web/gantt/js/reports-panel.js).
+// таблица эпиков × ролей (риск-скорректированные оценки, округлённые вверх
+// поячеечно до целого человеко-дня — см. RoundCapacityMatrix) с итоговыми
+// строками Запланировано/Доступно/Разница — зеркалирует renderCapacityTable
+// (web/gantt/js/reports-panel.js). Одна колонка «Итого (чд)» на эпик —
+// без отдельной «С рисками (чд)» (см. design.md change
+// simplify-capacity-report, решение 2).
 func writeCapacitySheet(f *excelize.File, data CapacityReportResponse, roleCapacities []RoleCapacityData) error {
 	const sheet = "Вместимость"
 	if err := f.SetSheetName("Sheet1", sheet); err != nil {
@@ -109,68 +112,73 @@ func writeCapacitySheet(f *excelize.File, data CapacityReportResponse, roleCapac
 	for _, rc := range roleCapacities {
 		header = append(header, rc.RoleName)
 	}
-	header = append(header, "Итого (чд)", "С рисками (чд)")
+	header = append(header, "Итого (чд)")
 	if err := setRow(f, sheet, row, header...); err != nil {
 		return err
 	}
 	row++
 
-	// Epic rows: сырые ролевые оценки (raw_role_scores) — без риск-буфера.
-	for _, e := range epics {
+	// Матрица риск-скорректированной трудоёмкости, округлённой вверх
+	// поячеечно до целого человеко-дня (см. RoundCapacityMatrix) — «Итого»
+	// по эпику и «Запланировано» по роли ниже вычисляются как суммы уже
+	// округлённых ячеек этой матрицы, а не отдельно округлённых точных сумм.
+	roleNames := make([]string, len(roleCapacities))
+	for i, rc := range roleCapacities {
+		roleNames[i] = rc.RoleName
+	}
+	matrix := RoundCapacityMatrix(epics, roleNames)
+
+	// Epic rows: риск-скорректированные ролевые оценки (role_scores),
+	// округлённые вверх поячеечно.
+	for i, e := range epics {
 		values := []interface{}{fmt.Sprintf("#%s %s", e.Number, e.Name), e.Type}
-		var epicTotalRaw float64
-		for _, rc := range roleCapacities {
-			score := e.RawRoleScores[rc.RoleName]
-			epicTotalRaw += score
-			values = append(values, score)
+		for _, roleName := range roleNames {
+			values = append(values, matrix.Cells[i][roleName])
 		}
-		values = append(values, epicTotalRaw, e.FinalScore)
+		values = append(values, matrix.EpicTotals[i])
 		if err := setRow(f, sheet, row, values...); err != nil {
 			return err
 		}
 		row++
 	}
 
-	// Итоговая строка: Запланировано (риск-скорректированный план по ролям).
+	// Итоговая строка: Запланировано — сумма округлённых ячеек по роли
+	// (matrix.RolePlanned), не пересчитывается отдельно другим путём.
 	plannedValues := []interface{}{"Запланировано (трудоемкость), чд", ""}
-	var totalPlanned float64
-	var totalRaw float64
-	var totalFinal float64
-	for _, rc := range roleCapacities {
-		plannedValues = append(plannedValues, rc.Planned)
-		totalPlanned += rc.Planned
+	var totalRoundedPlanned int
+	for _, roleName := range roleNames {
+		plannedValues = append(plannedValues, matrix.RolePlanned[roleName])
+		totalRoundedPlanned += matrix.RolePlanned[roleName]
 	}
-	for _, e := range epics {
-		var epicTotalRaw float64
-		for _, rc := range roleCapacities {
-			epicTotalRaw += e.RawRoleScores[rc.RoleName]
-		}
-		totalRaw += epicTotalRaw
-		totalFinal += e.FinalScore
-	}
-	plannedValues = append(plannedValues, totalRaw, totalFinal)
+	plannedValues = append(plannedValues, totalRoundedPlanned)
 	if err := setRow(f, sheet, row, plannedValues...); err != nil {
 		return err
 	}
 	row++
 
-	// Итоговая строка: Доступно (Capacity).
+	// Итоговая строка: Доступно (Capacity) — формула ёмкости, округление её
+	// не касается.
+	var totalPlanned float64
+	for _, rc := range roleCapacities {
+		totalPlanned += rc.Planned
+	}
 	capacityValues := []interface{}{"Доступно (емкость), чд", ""}
 	for _, rc := range roleCapacities {
 		capacityValues = append(capacityValues, rc.Capacity)
 	}
-	capacityValues = append(capacityValues, data.TotalCapacity, "")
+	capacityValues = append(capacityValues, data.TotalCapacity)
 	if err := setRow(f, sheet, row, capacityValues...); err != nil {
 		return err
 	}
 	row++
 
-	// Итоговая строка: Разница (недо-/перепланирование).
+	// Итоговая строка: Разница (недо-/перепланирование) — формула ёмкости,
+	// округление её не касается.
 	diffValues := []interface{}{"Разница (недо-/перепланирование), чд", ""}
 	for _, rc := range roleCapacities {
 		diffValues = append(diffValues, rc.Diff)
 	}
-	diffValues = append(diffValues, data.TotalCapacity-totalPlanned, "")
+	diffValues = append(diffValues, data.TotalCapacity-totalPlanned)
 	if err := setRow(f, sheet, row, diffValues...); err != nil {
 		return err
 	}

@@ -128,262 +128,119 @@ func (s *epicService) GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid
 	return s.repo.GetEpicRoleScoresByEpicID(ctx, epicID)
 }
 
+// GetReportData собирает данные для PDF-отчёта о вместимости команды за
+// квартал. Ядро (команда/период/ёмкость/квоты/эпики с риск-скорректированными
+// role_scores и сырыми raw_role_scores) строит общий агрегатор
+// BuildCapacityReport — тот же, что использует JSON-эндпоинт
+// GetCapacityReport и XLSX-выгрузка, — и встраивается в report.ReportData
+// через embedding (см. report.ReportData), а не пересчитывается вручную:
+// это исключает расхождение чисел между PDF и web/XLSX (см. design.md
+// change simplify-capacity-report, решение 1). Поверх ядра дозапрашиваются
+// только данные, которых в CapacityReportResponse нет, но нужны PDF: риски
+// по каждому эпику (для таблицы рисков и SVG-диаграмм) и время генерации.
+//
+// В отчёт попадают только эпики со статусом StatusScored — как и раньше,
+// до этого рефакторинга (в отличие от JSON/XLSX, показывающих все эпики
+// периода независимо от статуса).
 func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year, quarter int) (*report.ReportData, error) {
 	op := "epicService.GetReportData"
 	log := s.log.With(slog.String("op", op), slog.String("team_id", teamID.String()), slog.Int("year", year), slog.Int("quarter", quarter))
 
-	team, err := s.repo.GetTeamByID(ctx, teamID)
+	core, err := BuildCapacityReport(ctx, s.log, s.repo, teamID, year, quarter)
 	if err != nil {
-		log.Error("failed to get team", sl.Err(err))
-		return nil, fmt.Errorf("team not found: %w", err)
+		log.Error("failed to build capacity report core", sl.Err(err))
+		return nil, err
 	}
 
-	allEpics, err := s.repo.GetEpicsByTeamYearQuarter(ctx, teamID, year, quarter)
-	if err != nil {
-		log.Error("failed to get epics for team", sl.Err(err))
-		return nil, fmt.Errorf("failed to get epics: %w", err)
-	}
-
-	var epics []domain.Epic
-	for _, e := range allEpics {
-		if e.Status == domain.StatusScored {
-			epics = append(epics, e)
+	scoredEpics := make([]report.EpicReportItem, 0, len(core.Epics))
+	for _, e := range core.Epics {
+		if e.Status == string(domain.StatusScored) {
+			scoredEpics = append(scoredEpics, e)
 		}
 	}
+	core.Epics = scoredEpics
 
-	// 1. Get users in team and role capacities
-	users, err := s.repo.GetUsersByTeamID(ctx, teamID)
-	if err != nil {
-		log.Error("failed to get team members", sl.Err(err))
-		return nil, fmt.Errorf("failed to get team members: %w", err)
-	}
-
-	roleMembersCount := make(map[uuid.UUID]int)
-	roleNames := make(map[uuid.UUID]string)
-	for _, u := range users {
-		role, err := s.repo.GetRoleByUserID(ctx, u.ID)
-		if err == nil && role != nil {
-			roleMembersCount[role.ID]++
-			roleNames[role.ID] = role.Name
-		}
-	}
-
-	const capacityFactor = 8.0 * 6.0 * 0.838
-	totalCapacity := float64(len(users)) * capacityFactor
-
-	rolePlanned := make(map[string]float64)
-	epicReportItems := make([]report.EpicReportData, 0, len(epics))
-	var featureScoreSum float64
-	var techScoreSum float64
-	var totalFinalScore float64
-
-	for _, e := range epics {
-		epicData := report.EpicReportData{
-			Number:        e.Number,
-			Name:          e.Name,
-			Type:          e.Type,
-			RoleScores:    []report.RoleScoreData{},
-			RoleScoresMap: make(map[string]float64),
-			Risks:         []report.RiskReportData{},
-		}
-
-		if e.FinalScore != nil {
-			epicData.FinalScore = *e.FinalScore
-			totalFinalScore += *e.FinalScore
-			if e.Type == "feature" {
-				featureScoreSum += *e.FinalScore
-			} else if e.Type == "architecture" || e.Type == "techdebt" {
-				techScoreSum += *e.FinalScore
-			}
-		}
-
-		// Сначала запрашиваем истории эпика
-		stories, err := s.repo.GetStoriesByEpicID(ctx, e.ID)
-		if err == nil && len(stories) > 0 {
-			var totalScore float64
-			for _, story := range stories {
-				if story.Status != domain.StatusScored {
-					continue
-				}
-				storyRoleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, story.ID)
-				if err == nil {
-					var storyBaseScore float64
-					for _, rs := range storyRoleScores {
-						storyBaseScore += rs.WeightedAvg
-					}
-
-					storyRiskFactor := 1.0
-					if storyBaseScore > 0 && story.FinalScore != nil {
-						storyRiskFactor = *story.FinalScore / storyBaseScore
-					}
-
-					for _, rs := range storyRoleScores {
-						roleName := rs.RoleID.String()
-						if rName, exists := roleNames[rs.RoleID]; exists {
-							roleName = rName
-						} else {
-							if r, err := s.repo.GetRoleByID(ctx, rs.RoleID); err == nil {
-								roleName = r.Name
-								roleNames[rs.RoleID] = r.Name
-							}
-						}
-						scaledScore := rs.WeightedAvg * storyRiskFactor
-						epicData.RoleScoresMap[roleName] += scaledScore
-						totalScore += scaledScore
-						rolePlanned[roleName] += scaledScore
-					}
-				}
-			}
-			// Заполняем срез RoleScores из карты RoleScoresMap
-			for rName, score := range epicData.RoleScoresMap {
-				epicData.RoleScores = append(epicData.RoleScores, report.RoleScoreData{
-					RoleName:    rName,
-					WeightedAvg: score,
-				})
-			}
-			epicData.TotalScore = totalScore
+	epicReportItems := make([]report.EpicReportData, 0, len(scoredEpics))
+	for _, item := range scoredEpics {
+		var risks []report.RiskReportData
+		if epicID, parseErr := uuid.Parse(item.ID); parseErr == nil {
+			risks = s.collectEpicRisks(ctx, epicID, log)
 		} else {
-			// Fallback логика: если сторей нет, берем оценки ролей самого эпика
-			roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, e.ID)
-			if err == nil {
-				var baseScore float64
-				for _, rs := range roleScores {
-					baseScore += rs.WeightedAvg
-				}
-
-				riskFactor := 1.0
-				if baseScore > 0 && e.FinalScore != nil {
-					riskFactor = *e.FinalScore / baseScore
-				}
-
-				var totalScore float64
-				for _, rs := range roleScores {
-					roleName := rs.RoleID.String()
-					if rName, exists := roleNames[rs.RoleID]; exists {
-						roleName = rName
-					} else {
-						if r, err := s.repo.GetRoleByID(ctx, rs.RoleID); err == nil {
-							roleName = r.Name
-							roleNames[rs.RoleID] = r.Name
-						}
-					}
-					scaledScore := rs.WeightedAvg * riskFactor
-					epicData.RoleScores = append(epicData.RoleScores, report.RoleScoreData{
-						RoleName:    roleName,
-						WeightedAvg: scaledScore,
-					})
-					epicData.RoleScoresMap[roleName] = scaledScore
-					totalScore += scaledScore
-					rolePlanned[roleName] += scaledScore
-				}
-				epicData.TotalScore = totalScore
-			} else {
-				log.Error("failed to get role scores", sl.Err(err), slog.String("epic_id", e.ID.String()))
-			}
+			log.Error("failed to parse epic id", sl.Err(parseErr), slog.String("epic_id", item.ID))
 		}
 
-		// Risks
-		var risks []domain.Risk
-		stories, err = s.repo.GetStoriesByEpicID(ctx, e.ID)
-		if err == nil {
-			for _, story := range stories {
-				storyRisks, err := s.repo.GetRisksByEpicID(ctx, story.ID)
-				if err == nil {
-					risks = append(risks, storyRisks...)
-				}
-			}
-		}
-		epicRisks, err := s.repo.GetRisksByEpicID(ctx, e.ID)
-		if err == nil {
-			risks = append(risks, epicRisks...)
-		}
-
-		for _, r := range risks {
-				riskScores, err := s.repo.GetRiskScoresByRiskID(ctx, r.ID)
-
-				var probs []int
-				var impacts []int
-				if err == nil {
-					for _, rs := range riskScores {
-						probs = append(probs, rs.Probability)
-						impacts = append(impacts, rs.Impact)
-					}
-				}
-
-				var wScore float64
-				var coeff float64
-				if r.WeightedScore != nil {
-					wScore = *r.WeightedScore
-					coeff = scoring.RiskCoefficient(wScore)
-				} else {
-					coeff = 1.0
-				}
-
-				epicData.Risks = append(epicData.Risks, report.RiskReportData{
-					Description:   r.Description,
-					Probabilities: probs,
-					Impacts:       impacts,
-					WeightedScore: wScore,
-					Coefficient:   coeff,
-				})
-			}
-
-		epicReportItems = append(epicReportItems, epicData)
-	}
-
-	var roleCapacities []report.RoleCapacityReportData
-	for rID, count := range roleMembersCount {
-		rName := roleNames[rID]
-		capVal := float64(count) * capacityFactor
-		plannedVal := rolePlanned[rName]
-		roleCapacities = append(roleCapacities, report.RoleCapacityReportData{
-			RoleName: rName,
-			Capacity: capVal,
-			Planned:  plannedVal,
-			Diff:     capVal - plannedVal,
+		epicReportItems = append(epicReportItems, report.EpicReportData{
+			EpicReportItem: item,
+			Risks:          risks,
 		})
 	}
 
-	quotas := make(map[string]report.QuotaReportData)
-	var featurePercent float64
-	var techPercent float64
-	if totalFinalScore > 0 {
-		featurePercent = (featureScoreSum / totalFinalScore) * 100
-		techPercent = (techScoreSum / totalFinalScore) * 100
-	}
-
-	featureStatus := "OK"
-	if featurePercent > 40 {
-		featureStatus = "EXCEEDED"
-	}
-	quotas["feature"] = report.QuotaReportData{
-		LimitPercent:  40,
-		ActualPercent: featurePercent,
-		Status:        featureStatus,
-	}
-
-	techStatus := "OK"
-	if techPercent > 60 {
-		techStatus = "EXCEEDED"
-	}
-	quotas["tech_architecture"] = report.QuotaReportData{
-		LimitPercent:  60,
-		ActualPercent: techPercent,
-		Status:        techStatus,
-	}
-
 	reportData := &report.ReportData{
-		TeamName:       team.Name,
-		Year:           year,
-		Quarter:        quarter,
-		TotalCapacity:  totalCapacity,
-		RoleCapacities: roleCapacities,
-		Epics:          epicReportItems,
-		Quotas:         quotas,
-		Generated:      time.Now(),
+		CapacityReportResponse: *core,
+		Epics:                  epicReportItems,
+		Generated:              time.Now(),
 	}
 
 	return reportData, nil
+}
+
+// collectEpicRisks собирает риски эпика (включая риски его историй) и
+// строит по каждому риску отчётные данные (индивидуальные оценки
+// вероятности/влияния, средневзвешенную оценку и коэффициент риска) — то,
+// чего нет в CapacityReportResponse (см. BuildCapacityReport), но нужно
+// PDF-отчёту для карточки эпика и SVG-диаграмм (internal/report/svg.go).
+// Ошибки хранилища логируются, но не прерывают формирование отчёта — как и
+// в прежней реализации GetReportData.
+func (s *epicService) collectEpicRisks(ctx context.Context, epicID uuid.UUID, log *slog.Logger) []report.RiskReportData {
+	var risks []domain.Risk
+
+	if stories, err := s.repo.GetStoriesByEpicID(ctx, epicID); err == nil {
+		for _, story := range stories {
+			if storyRisks, err := s.repo.GetRisksByEpicID(ctx, story.ID); err == nil {
+				risks = append(risks, storyRisks...)
+			} else {
+				log.Error("failed to get story risks", sl.Err(err), slog.String("story_id", story.ID.String()))
+			}
+		}
+	}
+
+	epicRisks, err := s.repo.GetRisksByEpicID(ctx, epicID)
+	if err != nil {
+		log.Error("failed to get epic risks", sl.Err(err), slog.String("epic_id", epicID.String()))
+	} else {
+		risks = append(risks, epicRisks...)
+	}
+
+	reportRisks := make([]report.RiskReportData, 0, len(risks))
+	for _, r := range risks {
+		var probs []int
+		var impacts []int
+		if riskScores, err := s.repo.GetRiskScoresByRiskID(ctx, r.ID); err == nil {
+			for _, rs := range riskScores {
+				probs = append(probs, rs.Probability)
+				impacts = append(impacts, rs.Impact)
+			}
+		} else {
+			log.Error("failed to get risk scores", sl.Err(err), slog.String("risk_id", r.ID.String()))
+		}
+
+		var wScore float64
+		coeff := 1.0
+		if r.WeightedScore != nil {
+			wScore = *r.WeightedScore
+			coeff = scoring.RiskCoefficient(wScore)
+		}
+
+		reportRisks = append(reportRisks, report.RiskReportData{
+			Description:   r.Description,
+			Probabilities: probs,
+			Impacts:       impacts,
+			WeightedScore: wScore,
+			Coefficient:   coeff,
+		})
+	}
+
+	return reportRisks
 }
 
 // GetCapacityReport делегирует агрегацию отчёта о вместимости команды
