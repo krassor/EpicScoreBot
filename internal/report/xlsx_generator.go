@@ -82,9 +82,11 @@ func sortedEpics(epics []EpicReportItem) []EpicReportItem {
 // таблица эпиков × ролей (риск-скорректированные оценки, округлённые вверх
 // поячеечно до целого человеко-дня — см. RoundCapacityMatrix) с итоговыми
 // строками Запланировано/Доступно/Разница — зеркалирует renderCapacityTable
-// (web/gantt/js/reports-panel.js). Одна колонка «Итого (чд)» на эпик —
-// без отдельной «С рисками (чд)» (см. design.md change
-// simplify-capacity-report, решение 2).
+// (web/gantt/js/reports-panel.js). Одна колонка «Итого с рисками (чд)» на
+// эпик — без отдельной «С рисками (чд)» (см. design.md change
+// simplify-capacity-report, решение 2). Доступная ёмкость округляется вниз
+// поролево (см. RoundRoleCapacities, решение 5) — «Доступно»/«Разница»
+// отображаются целыми числами.
 func writeCapacitySheet(f *excelize.File, data CapacityReportResponse, roleCapacities []RoleCapacityData) error {
 	const sheet = "Вместимость"
 	if err := f.SetSheetName("Sheet1", sheet); err != nil {
@@ -92,6 +94,11 @@ func writeCapacitySheet(f *excelize.File, data CapacityReportResponse, roleCapac
 	}
 
 	epics := sortedEpics(data.Epics)
+
+	// Доступная ёмкость, округлённая вниз поролево — общий итог считается
+	// как сумма уже округлённых величин по ролям (см. RoundRoleCapacities),
+	// а не отдельно от общей численности команды.
+	capacities := RoundRoleCapacities(roleCapacities)
 
 	row := 1
 	if err := setRow(f, sheet, row, "Команда:", data.TeamName); err != nil {
@@ -102,7 +109,7 @@ func writeCapacitySheet(f *excelize.File, data CapacityReportResponse, roleCapac
 		return err
 	}
 	row++
-	if err := setRow(f, sheet, row, "Итоговая вместимость команды, чд:", data.TotalCapacity); err != nil {
+	if err := setRow(f, sheet, row, "Итоговая вместимость команды, чд:", capacities.Total); err != nil {
 		return err
 	}
 	row += 2
@@ -112,7 +119,7 @@ func writeCapacitySheet(f *excelize.File, data CapacityReportResponse, roleCapac
 	for _, rc := range roleCapacities {
 		header = append(header, rc.RoleName)
 	}
-	header = append(header, "Итого (чд)")
+	header = append(header, "Итого с рисками (чд)")
 	if err := setRow(f, sheet, row, header...); err != nil {
 		return err
 	}
@@ -156,29 +163,31 @@ func writeCapacitySheet(f *excelize.File, data CapacityReportResponse, roleCapac
 	}
 	row++
 
-	// Итоговая строка: Доступно (Capacity) — формула ёмкости, округление её
-	// не касается.
-	var totalPlanned float64
-	for _, rc := range roleCapacities {
-		totalPlanned += rc.Planned
-	}
+	// Итоговая строка: Доступно (Capacity) — округлённая вниз поролево
+	// доступная ёмкость (capacities, см. RoundRoleCapacities выше); общий
+	// итог — сумма этих округлённых величин.
 	capacityValues := []interface{}{"Доступно (емкость), чд", ""}
 	for _, rc := range roleCapacities {
-		capacityValues = append(capacityValues, rc.Capacity)
+		capacityValues = append(capacityValues, capacities.RoleCapacity[rc.RoleName])
 	}
-	capacityValues = append(capacityValues, data.TotalCapacity)
+	capacityValues = append(capacityValues, capacities.Total)
 	if err := setRow(f, sheet, row, capacityValues...); err != nil {
 		return err
 	}
 	row++
 
-	// Итоговая строка: Разница (недо-/перепланирование) — формула ёмкости,
-	// округление её не касается.
+	// Итоговая строка: Разница — Capacity(округлённая вниз) − Запланировано
+	// (округлённое вверх, matrix.RolePlanned); оба слагаемых уже целые,
+	// поэтому результат целый без отдельного правила округления (см.
+	// design.md change simplify-capacity-report, Decision 3/5).
 	diffValues := []interface{}{"Разница (недо-/перепланирование), чд", ""}
+	var totalDiff int
 	for _, rc := range roleCapacities {
-		diffValues = append(diffValues, rc.Diff)
+		diff := capacities.RoleCapacity[rc.RoleName] - matrix.RolePlanned[rc.RoleName]
+		diffValues = append(diffValues, diff)
+		totalDiff += diff
 	}
-	diffValues = append(diffValues, data.TotalCapacity-totalPlanned)
+	diffValues = append(diffValues, totalDiff)
 	if err := setRow(f, sheet, row, diffValues...); err != nil {
 		return err
 	}

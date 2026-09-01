@@ -190,3 +190,93 @@ func TestRoundCapacityMatrix_BoundaryZeroFraction(t *testing.T) {
 		t.Errorf("RolePlanned[Frontend]: got %d, want %d", got, want)
 	}
 }
+
+func TestRoundCapacityFloor(t *testing.T) {
+	cases := []struct {
+		name     string
+		capacity float64
+		want     int
+	}{
+		{"ровно ноль", 0.0, 0},
+		{"целое значение не меняется", 5.0, 5},
+		{"дробная часть .1 округляется вниз", 3.1, 3},
+		{"дробная часть .9 округляется вниз", 3.9, 3},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RoundCapacityFloor(tc.capacity); got != tc.want {
+				t.Errorf("RoundCapacityFloor(%v) = %d, want %d", tc.capacity, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRoundRoleCapacities(t *testing.T) {
+	// headcount(R) × 8 × 6 × 0.838 обычно даёт дробное число — берём
+	// заведомо дробные значения для проверки поролевого floor.
+	roleCapacities := []RoleCapacityData{
+		{RoleName: "Backend", Capacity: 40.224},  // 3 участника
+		{RoleName: "Frontend", Capacity: 13.408}, // 1 участник
+		{RoleName: "QA", Capacity: 0.0},          // нет участников с этой ролью
+	}
+
+	m := RoundRoleCapacities(roleCapacities)
+
+	t.Run("поролевое округление вниз", func(t *testing.T) {
+		cases := map[string]struct {
+			roleName string
+			want     int
+		}{
+			"Backend (40.224 -> 40)":  {"Backend", 40},
+			"Frontend (13.408 -> 13)": {"Frontend", 13},
+			"QA (0.0 -> 0)":           {"QA", 0},
+		}
+		for name, tc := range cases {
+			t.Run(name, func(t *testing.T) {
+				if got := m.RoleCapacity[tc.roleName]; got != tc.want {
+					t.Errorf("RoleCapacity[%s] = %d, want %d", tc.roleName, got, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("общий итог — сумма округлённых величин по ролям", func(t *testing.T) {
+		// 40 + 13 + 0 = 53, а НЕ floor(40.224+13.408+0.0) = floor(53.632) = 53
+		// (в данном примере совпадает случайно — проверяем явно ниже отдельным
+		// кейсом с расхождением).
+		if got, want := m.Total, 53; got != want {
+			t.Errorf("Total = %d, want %d", got, want)
+		}
+	})
+}
+
+// TestRoundRoleCapacities_SumDiffersFromFloorOfExactSum проверяет явный
+// случай расхождения между «суммой округлённых по ролям» (требуемое
+// поведение) и «floor от точной суммы» (отклонённая альтернатива) — чтобы
+// зафиксировать именно то правило агрегации, которое требует design.md
+// (Decision 5): Total = Σ floor(Capacity[R]), а не floor(Σ Capacity[R]).
+func TestRoundRoleCapacities_SumDiffersFromFloorOfExactSum(t *testing.T) {
+	roleCapacities := []RoleCapacityData{
+		{RoleName: "Backend", Capacity: 1.9},
+		{RoleName: "Frontend", Capacity: 1.9},
+		{RoleName: "QA", Capacity: 1.9},
+	}
+
+	m := RoundRoleCapacities(roleCapacities)
+
+	// Σ floor(1.9) = 1+1+1 = 3, тогда как floor(1.9*3) = floor(5.7) = 5.
+	if got, want := m.Total, 3; got != want {
+		t.Errorf("Total = %d, want %d (sum of per-role floor, not floor of exact sum)", got, want)
+	}
+}
+
+func TestRoundRoleCapacities_EmptyInput(t *testing.T) {
+	m := RoundRoleCapacities(nil)
+	if len(m.RoleCapacity) != 0 {
+		t.Errorf("ожидалась пустая карта для пустого списка ролей, получено: %+v", m.RoleCapacity)
+	}
+	if m.Total != 0 {
+		t.Errorf("Total = %d, want 0", m.Total)
+	}
+}

@@ -216,6 +216,28 @@ function roundCapacityMatrix(epics, roleCapacities) {
     return { cells, epicTotals, rolePlanned, grandTotal };
 }
 
+// Поролево округляет вниз до целого человеко-дня доступную ёмкость
+// (role_capacities[].capacity) и считает общий итог как сумму уже
+// округлённых величин — зеркалирует internal/report/rounding.go (helper
+// округления ёмкости, см. design.md Decision 5), чтобы веб-таблица не
+// расходилась с PDF/XLSX-выгрузками того же отчёта. В отличие от
+// трудоёмкости (округление вверх), ёмкость — доступный ресурс, поэтому
+// округляется вниз (консервативная оценка).
+// Возвращает:
+//   roleCapacity[roleName] — округлённая вниз ёмкость роли;
+//   totalCapacity           — сумма roleCapacity по всем ролям
+//                              (а не floor(data.total_capacity)).
+function roundCapacityFloor(roleCapacities) {
+    const roleCapacity = {};
+    let totalCapacity = 0;
+    roleCapacities.forEach(rc => {
+        const value = Math.floor(rc.capacity);
+        roleCapacity[rc.role_name] = value;
+        totalCapacity += value;
+    });
+    return { roleCapacity, totalCapacity };
+}
+
 function renderCapacityTable(data) {
     const container = document.getElementById('reports-capacity-table-container');
     if (!container) return;
@@ -233,6 +255,9 @@ function renderCapacityTable(data) {
     // Округлённая вверх поячеечно риск-скорректированная матрица «эпик × роль»
     // и итоги по ней — единственный источник отображаемых значений трудоёмкости.
     const matrix = roundCapacityMatrix(sortedEpics, roleCapacities);
+    // Округлённая вниз поролево доступная ёмкость и её общий итог —
+    // единственный источник отображаемых значений «Доступно (емкость)».
+    const capacity = roundCapacityFloor(roleCapacities);
 
     let html = `
         <table class="admin-table" style="width: 100%; border-collapse: collapse;">
@@ -248,7 +273,7 @@ function renderCapacityTable(data) {
     });
 
     html += `
-                    <th style="text-align: center; width: 110px;">Итого (чд)</th>
+                    <th style="text-align: center; width: 110px;">Итого с рисками (чд)</th>
                 </tr>
             </thead>
             <tbody>
@@ -300,37 +325,38 @@ function renderCapacityTable(data) {
         </tr>
     `;
 
-    // Итоговая строка: Доступно (Capacity) — формула ёмкости, без округления
-    let totalCapacity = data.total_capacity || 0;
+    // Итоговая строка: Доступно (Capacity) — округлена вниз поролево,
+    // общий итог — сумма уже округлённых ролевых величин (см. roundCapacityFloor).
     html += `
         <tr style="background-color: rgba(255, 255, 255, 0.02); font-weight: bold;">
             <td colspan="2" style="text-align: left; padding-left: 12px;">Доступно (емкость), чд</td>
     `;
     roleCapacities.forEach(rc => {
-        html += `<td style="text-align: center;">${rc.capacity.toFixed(1)}</td>`;
+        html += `<td style="text-align: center;">${capacity.roleCapacity[rc.role_name]}</td>`;
     });
     html += `
-            <td style="text-align: center;">${totalCapacity.toFixed(1)}</td>
+            <td style="text-align: center;">${capacity.totalCapacity}</td>
         </tr>
     `;
 
-    // Итоговая строка: Разница (Diff) — формула ёмкости, без округления
+    // Итоговая строка: Разница (Diff) = округлённая вниз ёмкость − округлённое
+    // вверх «Запланировано»; оба слагаемых уже целые, результат целый без
+    // дополнительного округления.
     html += `
         <tr style="background-color: rgba(255, 255, 255, 0.02); font-weight: bold; border-bottom: 2px solid var(--color-border);">
             <td colspan="2" style="text-align: left; padding-left: 12px;">Разница (недо-/перепланирование), чд</td>
     `;
     roleCapacities.forEach(rc => {
-        const isOverplanned = rc.diff < 0;
+        const diff = capacity.roleCapacity[rc.role_name] - matrix.rolePlanned[rc.role_name];
+        const isOverplanned = diff < 0;
         const diffStyle = isOverplanned ? 'color: var(--color-danger); font-weight: bold;' : 'color: var(--color-success); font-weight: bold;';
-        html += `<td style="text-align: center; ${diffStyle}">${rc.diff.toFixed(1)}</td>`;
+        html += `<td style="text-align: center; ${diffStyle}">${diff}</td>`;
     });
-    let totalPlannedSum = 0;
-    roleCapacities.forEach(rc => { totalPlannedSum += rc.planned; });
-    const totalDiff = totalCapacity - totalPlannedSum;
+    const totalDiff = capacity.totalCapacity - matrix.grandTotal;
     const isTotalOverplanned = totalDiff < 0;
     const totalDiffStyle = isTotalOverplanned ? 'color: var(--color-danger); font-weight: bold;' : 'color: var(--color-success); font-weight: bold;';
     html += `
-            <td style="text-align: center; ${totalDiffStyle}">${totalDiff.toFixed(1)}</td>
+            <td style="text-align: center; ${totalDiffStyle}">${totalDiff}</td>
         </tr>
         </tbody>
     </table>

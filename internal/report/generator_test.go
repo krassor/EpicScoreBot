@@ -38,17 +38,21 @@ func TestTemplateHTML_RendersWithoutError(t *testing.T) {
 		TeamName:            "Тестовая команда",
 		Year:                2026,
 		Quarter:             3,
-		TotalCapacity:       1000.5,
+		TotalCapacity:       1000,
 		TotalRoundedPlanned: 42,
-		TotalDiff:           -5.5,
+		TotalDiff:           958,
 		RoleCapacities: []roleCapacityTemplateData{
 			{
 				RoleCapacityData: RoleCapacityData{RoleName: "Backend", Capacity: 500.5, Planned: 300.2, Diff: 200.3},
 				RoundedPlanned:   21,
+				RoundedCapacity:  500,
+				RoundedDiff:      479,
 			},
 			{
 				RoleCapacityData: RoleCapacityData{RoleName: "Frontend", Capacity: 500.0, Planned: 505.7, Diff: -5.7},
 				RoundedPlanned:   21,
+				RoundedCapacity:  500,
+				RoundedDiff:      479,
 			},
 		},
 		Quotas: map[string]QuotaData{
@@ -87,9 +91,38 @@ func TestTemplateHTML_RendersWithoutError(t *testing.T) {
 				},
 				RoundedRoleScores: map[string]int{"Backend": 11, "Frontend": 6},
 				RoundedTotal:      17,
+				RawTotalScore:     14.0,
 				RiskLegend: []riskLegendItem{
 					{Label: "Риск 1", Description: "Высокая нагрузка"},
 				},
+			},
+			// epic-2 — риск-фактор заметно отличается от 1: сумма сырых
+			// оценок по ролям (100.00) намного больше риск-скорректированной
+			// FinalScore (60) — проверяем, что карточка показывает оба числа
+			// раздельно, а не одно и то же значение трижды (см. change
+			// fix-pdf-report).
+			{
+				EpicReportData: EpicReportData{
+					EpicReportItem: EpicReportItem{
+						ID:         "epic-2",
+						Number:     "EP-2",
+						Name:       "Эпик с риском",
+						Type:       "feature",
+						Status:     "scored",
+						FinalScore: 60,
+						RoleScores: map[string]float64{
+							"Backend":  40,
+							"Frontend": 20,
+						},
+						RawRoleScores: map[string]float64{
+							"Backend":  70,
+							"Frontend": 30,
+						},
+					},
+				},
+				RoundedRoleScores: map[string]int{"Backend": 40, "Frontend": 20},
+				RoundedTotal:      60,
+				RawTotalScore:     100.0,
 			},
 		},
 	}
@@ -104,13 +137,36 @@ func TestTemplateHTML_RendersWithoutError(t *testing.T) {
 	if strings.Contains(html, "С рисками (чд)") {
 		t.Error("шаблон всё ещё содержит устаревшую колонку «С рисками (чд)»")
 	}
-	if strings.Contains(html, "без рисков") {
-		t.Error("шаблон всё ещё содержит некорректную подпись «без рисков»")
+	// «без рисков» теперь ожидаемая подпись строки суммы сырых оценок по
+	// ролям в карточке эпика (см. change fix-pdf-report) — раньше эта
+	// проверка ожидала обратное (устаревшая версия правки).
+	if !strings.Contains(html, "без рисков") {
+		t.Error("шаблон не содержит ожидаемую подпись «без рисков» (сумма сырых оценок)")
 	}
-	if !strings.Contains(html, "с учётом риска") {
-		t.Error("шаблон не содержит ожидаемую подпись «с учётом риска»")
+	// Низ карточки эпика («Итоговая оценка с учётом рисков: …») не менялся
+	// этим change — проверяем реальный текст (множественное число «рисков»,
+	// не «риска»).
+	if !strings.Contains(html, "с учётом рисков") {
+		t.Error("шаблон не содержит ожидаемую подпись «с учётом рисков» (низ карточки эпика)")
 	}
-	if !strings.Contains(html, "Итого (чд)") {
-		t.Error("шаблон не содержит колонку «Итого (чд)»")
+	if !strings.Contains(html, "Итого с рисками (чд)") {
+		t.Error("шаблон не содержит колонку «Итого с рисками (чд)»")
+	}
+
+	// epic-2: сумма сырых оценок по ролям (100.00) должна присутствовать в
+	// HTML отдельно от риск-скорректированного итога (60) — это подтверждает,
+	// что карточка эпика реально показывает два разных числа, а не одно и то
+	// же значение трижды (баг из proposal.md).
+	if !strings.Contains(html, "100.00") {
+		t.Error("шаблон не содержит сумму сырых оценок по ролям (100.00) для epic-2")
+	}
+	if !strings.Contains(html, "70.00") || !strings.Contains(html, "30.00") {
+		t.Error("шаблон не содержит сырые оценки по ролям (70.00, 30.00) для epic-2 — вместо этого, похоже, используются риск-скорректированные RoleScores")
+	}
+	// Риск-скорректированные значения по ролям (40, 20) НЕ должны
+	// присутствовать в виде "%.2f" в разбивке карточки — это признак того,
+	// что таблица всё ещё читает RoleScores, а не RawRoleScores.
+	if strings.Contains(html, "40.00") || strings.Contains(html, "20.00") {
+		t.Error("шаблон содержит риск-скорректированные оценки по ролям (40.00/20.00) — карточка эпика должна показывать RawRoleScores, а не RoleScores")
 	}
 }

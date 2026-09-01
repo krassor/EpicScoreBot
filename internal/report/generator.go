@@ -28,6 +28,12 @@ type epicTemplateData struct {
 	RoundedRoleScores map[string]int
 	// RoundedTotal — «Итого (чд)» по эпику: сумма округлённых ячеек строки.
 	RoundedTotal int
+	// RawTotalScore — сумма сырых (без риск-фактора) оценок по ролям
+	// (EpicReportItem.RawRoleScores). Используется в карточке эпика для
+	// строки «Сумма оценок (без рисков)» — независимо от риск-скорректированной
+	// FinalScore, показанной в шапке и внизу той же карточки (см. change
+	// fix-pdf-report).
+	RawTotalScore float64
 
 	ProbabilityChartSVG template.HTML
 	ImpactChartSVG      template.HTML
@@ -41,31 +47,37 @@ type riskLegendItem struct {
 	Description string
 }
 
-// roleCapacityTemplateData расширяет RoleCapacityData округлённым
-// «Запланировано» (сумма округлённых вверх ячеек матрицы по этой роли, см.
-// RoundCapacityMatrix) — используется строкой «Запланировано» главной
-// матрицы, тогда как «Доступно»/«Разница» (Capacity/Diff) считаются по
-// точной формуле ёмкости и не округляются (см. design.md change
-// simplify-capacity-report, Non-Goals).
+// roleCapacityTemplateData расширяет RoleCapacityData округлёнными
+// величинами: «Запланировано» (сумма округлённых вверх ячеек матрицы по
+// этой роли, см. RoundCapacityMatrix), «Доступно» (округлённая вниз поролево
+// ёмкость, см. RoundRoleCapacities) и «Разница» — оба уже целые, поэтому
+// результат целый без отдельного правила округления (см. design.md change
+// simplify-capacity-report, Decision 3/5).
 type roleCapacityTemplateData struct {
 	RoleCapacityData
-	RoundedPlanned int
+	RoundedPlanned  int
+	RoundedCapacity int
+	RoundedDiff     int
 }
 
 // templateData is passed to the HTML template.
 type templateData struct {
-	TeamName      string
-	Year          int
-	Quarter       int
-	TotalCapacity float64
+	TeamName string
+	Year     int
+	Quarter  int
+	// TotalCapacity — общая доступная трудоёмкость команды: сумма
+	// округлённых вниз поролево величин ёмкости (см. RoundRoleCapacities),
+	// а не отдельно вычисленная величина от общей численности команды.
+	TotalCapacity int
 	// TotalRoundedPlanned — общий итог «Запланировано»: сумма округлённых
 	// ячеек по всем ролям (равна сумме RoundedTotal по всем эпикам).
 	TotalRoundedPlanned int
-	TotalDiff           float64
-	RoleCapacities      []roleCapacityTemplateData
-	Quotas              map[string]QuotaData
-	GeneratedFormatted  string
-	Epics               []epicTemplateData
+	// TotalDiff — TotalCapacity − TotalRoundedPlanned, оба уже целые.
+	TotalDiff          int
+	RoleCapacities     []roleCapacityTemplateData
+	Quotas             map[string]QuotaData
+	GeneratedFormatted string
+	Epics              []epicTemplateData
 }
 
 // sortedEpicReportData возвращает копию epics, отсортированную по номеру
@@ -96,12 +108,14 @@ func NewGenerator(logger *slog.Logger, cfg *config.Config) *Generator {
 	}
 }
 
-// GenerateReport renders the report HTML, converts it to PDF via Gotenberg,
-// and returns the absolute path to the generated PDF file.
-func (g *Generator) GenerateReport(ctx context.Context, data ReportData) (string, error) {
-	op := "report.GenerateReport"
-	log := g.log.With(slog.String("op", op))
-
+// buildReportTemplateData преобразует ReportData (общее ядро
+// CapacityReportResponse + риски эпиков) в templateData — форму,
+// потребляемую config/template.html. Вынесена из GenerateReport в отдельную
+// чистую функцию (без побочных эффектов и без зависимости от Gotenberg),
+// чтобы числовую согласованность построчного округления PDF-таблицы с XLSX
+// (см. RoundCapacityMatrix/RoundRoleCapacities) можно было проверить в
+// unit-тестах без живого Gotenberg (см. cross_format_test.go).
+func buildReportTemplateData(data ReportData) templateData {
 	// Стабильный порядок ролей/эпиков — как в XLSX (sortedRoleCapacities/
 	// sortedEpics), чтобы матрица PDF совпадала по составу строк/колонок с
 	// XLSX и веб-таблицей для одного и того же периода.
@@ -130,10 +144,19 @@ func (g *Generator) GenerateReport(ctx context.Context, data ReportData) (string
 			})
 		}
 
+		// RawTotalScore — сумма сырых (без риск-фактора) оценок по ролям,
+		// показываемая в карточке эпика отдельно от риск-скорректированной
+		// FinalScore (см. change fix-pdf-report).
+		var rawTotal float64
+		for _, v := range e.RawRoleScores {
+			rawTotal += v
+		}
+
 		epics = append(epics, epicTemplateData{
 			EpicReportData:      e,
 			RoundedRoleScores:   matrix.Cells[i],
 			RoundedTotal:        matrix.EpicTotals[i],
+			RawTotalScore:       rawTotal,
 			ProbabilityChartSVG: template.HTML(BuildRiskProbabilityDiagram(e.Risks)),
 			ImpactChartSVG:      template.HTML(BuildRiskImpactDiagram(e.Risks)),
 			CoefficientChartSVG: template.HTML(BuildRiskCoefficientDiagram(e.Risks)),
@@ -141,30 +164,46 @@ func (g *Generator) GenerateReport(ctx context.Context, data ReportData) (string
 		})
 	}
 
+	// Доступная ёмкость, округлённая вниз поролево — общий итог считается
+	// как сумма уже округлённых величин по ролям (см. RoundRoleCapacities,
+	// design.md Decision 5), а не отдельно от общей численности команды.
+	capacities := RoundRoleCapacities(roleCapacities)
+
 	roleCapacitiesTD := make([]roleCapacityTemplateData, len(roleCapacities))
-	var totalPlanned float64 // точная (неокруглённая) сумма — только для строки «Разница».
 	var totalRoundedPlanned int
 	for i, rc := range roleCapacities {
+		roundedCapacity := capacities.RoleCapacity[rc.RoleName]
+		roundedPlanned := matrix.RolePlanned[rc.RoleName]
 		roleCapacitiesTD[i] = roleCapacityTemplateData{
 			RoleCapacityData: rc,
-			RoundedPlanned:   matrix.RolePlanned[rc.RoleName],
+			RoundedPlanned:   roundedPlanned,
+			RoundedCapacity:  roundedCapacity,
+			RoundedDiff:      roundedCapacity - roundedPlanned,
 		}
-		totalPlanned += rc.Planned
-		totalRoundedPlanned += matrix.RolePlanned[rc.RoleName]
+		totalRoundedPlanned += roundedPlanned
 	}
 
-	td := templateData{
+	return templateData{
 		TeamName:            data.TeamName,
 		Year:                data.Year,
 		Quarter:             data.Quarter,
-		TotalCapacity:       data.TotalCapacity,
+		TotalCapacity:       capacities.Total,
 		TotalRoundedPlanned: totalRoundedPlanned,
-		TotalDiff:           data.TotalCapacity - totalPlanned,
+		TotalDiff:           capacities.Total - totalRoundedPlanned,
 		RoleCapacities:      roleCapacitiesTD,
 		Quotas:              data.Quotas,
 		GeneratedFormatted:  data.Generated.Format("02.01.2006 15:04"),
 		Epics:               epics,
 	}
+}
+
+// GenerateReport renders the report HTML, converts it to PDF via Gotenberg,
+// and returns the absolute path to the generated PDF file.
+func (g *Generator) GenerateReport(ctx context.Context, data ReportData) (string, error) {
+	op := "report.GenerateReport"
+	log := g.log.With(slog.String("op", op))
+
+	td := buildReportTemplateData(data)
 
 	templateFullPath := filepath.Join(g.cfg.PdfConfig.HtmlTemplateFilePath, g.cfg.PdfConfig.HtmlTemplateFileName)
 	// Parse and render template.

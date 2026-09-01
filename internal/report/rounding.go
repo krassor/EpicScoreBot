@@ -61,3 +61,53 @@ func RoundCapacityMatrix(epics []EpicReportItem, roleNames []string) RoundedCapa
 
 	return m
 }
+
+// RoundCapacityFloor округляет вниз до целого человеко-дня доступную
+// трудоёмкость (ёмкость) одной роли — в отличие от требуемой трудоёмкости
+// (RoundCapacityCell, округление вверх), ёмкость — это доступный ресурс, и
+// консервативная оценка не должна завышать то, что реально можно
+// распределить (см. design.md change simplify-capacity-report, Decision 5).
+func RoundCapacityFloor(capacity float64) int {
+	return int(math.Floor(capacity))
+}
+
+// RoundedRoleCapacity — поролево округлённая вниз доступная трудоёмкость
+// (ёмкость), общая для PDF- и XLSX-генераторов отчёта о вместимости команды
+// (см. RoundRoleCapacities).
+type RoundedRoleCapacity struct {
+	// RoleCapacity[roleName] = RoundCapacityFloor(roleCapacities[i].Capacity).
+	RoleCapacity map[string]int
+	// Total — общая доступная трудоёмкость команды: сумма уже округлённых
+	// величин по ролям, а НЕ отдельно вычисленная (и округлённая) величина от
+	// общей численности команды (см. design.md, Decision 5).
+	Total int
+}
+
+// RoundRoleCapacities строит поролево округлённую вниз доступную
+// трудоёмкость (ёмкость) по срезу roleCapacities (используется поле
+// RoleCapacityData.Capacity — headcount(R) × 8 × 6 × 0.838).
+//
+// Total вычисляется как сумма уже округлённых величин по ролям — благодаря
+// этому отображаемый общий итог всегда равен сумме отображаемых слагаемых
+// (см. design.md change simplify-capacity-report, Decision 5). Побочный
+// эффект: участники команды без назначенной оценивающей роли не входят ни в
+// одну RoleCapacityData и, соответственно, не увеличивают Total — это
+// осознанное следствие требования «общая ёмкость = сумма ёмкостей по
+// ролям», а не регрессия.
+//
+// Округление не изменяет исходную формулу расчёта ёмкости, используемую
+// где-либо ещё в системе (в частности, JSON `GET /reports/capacity` отдаёт
+// точные, неокруглённые значения).
+func RoundRoleCapacities(roleCapacities []RoleCapacityData) RoundedRoleCapacity {
+	m := RoundedRoleCapacity{
+		RoleCapacity: make(map[string]int, len(roleCapacities)),
+	}
+
+	for _, rc := range roleCapacities {
+		cell := RoundCapacityFloor(rc.Capacity)
+		m.RoleCapacity[rc.RoleName] = cell
+		m.Total += cell
+	}
+
+	return m
+}
