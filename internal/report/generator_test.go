@@ -169,4 +169,24 @@ func TestTemplateHTML_RendersWithoutError(t *testing.T) {
 	if strings.Contains(html, "40.00") || strings.Contains(html, "20.00") {
 		t.Error("шаблон содержит риск-скорректированные оценки по ролям (40.00/20.00) — карточка эпика должна показывать RawRoleScores, а не RoleScores")
 	}
+
+	// epic-1: FinalScore=15.5 при округлении "%.0f" (округление до чётного,
+	// см. strconv/fmt) даёт "16", а RoundedTotal=17 — числа заведомо
+	// расходятся. Это ловит регрессию change fix-pdf-epic-card-total: если
+	// шапка/низ карточки эпика снова переключатся на .FinalScore, тест
+	// увидит "16" вместо ожидаемого "17" (значение колонки «Итого с
+	// рисками (чд)» главной матрицы для того же эпика, см. RoundedTotal:
+	// 17 в fixture выше и $epic.RoundedTotal в шаблоне матрицы).
+	if !strings.Contains(html, "Итого: 17") {
+		t.Error("шапка карточки epic-1 не показывает RoundedTotal (17) — «Итого» должно совпадать с колонкой «Итого с рисками (чд)» главной матрицы")
+	}
+	if strings.Contains(html, "Итого: 16") {
+		t.Error("шапка карточки epic-1 показывает округлённый FinalScore (16) вместо RoundedTotal (17) — регрессия: шаблон снова использует .FinalScore")
+	}
+	if !strings.Contains(html, "с учётом рисков: <strong>17</strong>") {
+		t.Error("низ карточки epic-1 не показывает RoundedTotal (17) в «Итоговая оценка с учётом рисков»")
+	}
+	if strings.Contains(html, "с учётом рисков: <strong>16</strong>") {
+		t.Error("низ карточки epic-1 показывает округлённый FinalScore (16) вместо RoundedTotal (17) — регрессия: шаблон снова использует .FinalScore")
+	}
 }
