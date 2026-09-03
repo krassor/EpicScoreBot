@@ -8,9 +8,34 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 
 let ganttChart = null;
 
+// Отпечаток набора задач текущей отрисованной диаграммы (отсортированные id
+// через запятую) — используется, чтобы отличить «структурное» изменение
+// (добавили/удалили задачу, сменили команду) от «того же набора задач,
+// просто обновились даты/прогресс/sort_order» (типичный случай после
+// reorder). Во втором случае можно обойтись инкрементальным refresh().
+let lastTaskIds = null;
+
 // Конфигурация текущей открытой модалки переупорядочивания (роли / стори / эпики).
 // Заполняется при открытии модалки, используется единым обработчиком сохранения.
 let currentOrderConfig = null;
+
+// Последняя известная позиция драга родительского бара (эпик/стори),
+// накопленная через on_date_change (см. renderGantt). В Frappe Gantt 1.2.2
+// нет отдельного колбэка «на отпускание» — момент отпускания определяем
+// собственным document-level mouseup-слушателем (см. initGanttRenderer),
+// который читает это значение и запускает reorder-логику. null, когда
+// драг родительского бара не в процессе — по этому флагу mouseup-слушатель
+// отличает «наш» drag-reorder от посторонних кликов/mouseup в остальном
+// приложении.
+let pendingParentDrag = null;
+
+// In-flight guard от гонки при быстром повторном драге: пока выполняется
+// один reorder (apiPut/reloadCurrentTeamTasks ещё не завершились), второй
+// mouseup с уже накопленным pendingParentDrag не должен запускать
+// параллельный handleParentDragRelease (см. design.md Risks, «Гонка при
+// быстром повторном драге»). Выставляется в начале handleParentDragRelease,
+// сбрасывается в finally — независимо от исхода (успех/откат/ошибка).
+let isParentReorderInFlight = false;
 
 const roleColorMap = {
     'Аналитик': 'analyst',
@@ -34,6 +59,40 @@ export function initGanttRenderer() {
     });
 
     setupGanttEvents();
+    setupParentDragReorder();
+}
+
+// Собственный document-level mouseup-слушатель для завершения drag-reorder
+// родительских баров (эпик/стори) — регистрируется один раз при
+// инициализации модуля, а НЕ внутри renderGantt (вызывается на каждый
+// рендер диаграммы), иначе на каждое обновление плодился бы новый слушатель
+// (та же утечка, которую убирает переход на ganttChart.refresh() в разделе 3).
+//
+// Frappe Gantt 1.2.2 сам вешает свой mouseup-обработчик на внутренний $svg
+// (см. bind_bar_events в бандле библиотеки) — mouseup там всплывает до
+// document, поэтому наш слушатель гарантированно сработает после того, как
+// библиотека зафиксировала финальную визуальную позицию бара. Гейт по
+// pendingParentDrag !== null защищает от срабатывания на посторонних
+// mouseup в остальном приложении (клик по кнопке, закрытие модалки и т.д.).
+function setupParentDragReorder() {
+    document.addEventListener('mouseup', () => {
+        if (!pendingParentDrag) return;
+        const drag = pendingParentDrag;
+        pendingParentDrag = null;
+
+        if (isParentReorderInFlight) {
+            // Предыдущий reorder (apiPut/reloadCurrentTeamTasks) ещё не
+            // завершился — не запускаем параллельный handleParentDragRelease
+            // (см. design.md Risks, «Гонка при быстром повторном драге»).
+            // Второй драг просто визуально откатывается, как будто reorder
+            // не состоялся, без UI-индикации «занято» — приемлемо для
+            // первой итерации.
+            renderGantt(state.get('tasks'));
+            return;
+        }
+
+        handleParentDragRelease(drag);
+    });
 }
 
 function renderGantt(tasks) {
@@ -49,6 +108,7 @@ function renderGantt(tasks) {
         container.innerHTML = '';
         emptyState.classList.remove('hidden');
         ganttChart = null;
+        lastTaskIds = null;
         return;
     }
 
@@ -98,10 +158,45 @@ function renderGantt(tasks) {
         };
     });
 
-    container.innerHTML = '';
-
     const userProfile = state.get('userProfile');
     const isReadOnly = !userProfile || userProfile.role === 'member';
+
+    // Отпечаток нового набора задач — если совпадает с уже отрисованным,
+    // структура диаграммы (набор строк) не менялась, можно обойтись
+    // инкрементальным refresh() вместо полной пересборки DOM/SVG.
+    const newTaskIds = ganttTasks.map(t => t.id).slice().sort().join(',');
+
+    if (ganttChart && lastTaskIds === newTaskIds) {
+        // Инкрементальное обновление: Frappe Gantt пересобирает бары из
+        // ganttTasks на месте, не трогая обёртку .gantt-container и не
+        // переинициализируя обработчики событий на $svg — в отличие от
+        // container.innerHTML='' + new Gantt(...), который раньше плодил
+        // новый набор document-level слушателей на каждое обновление.
+        //
+        // Побочный эффект (проверено на бандле Frappe Gantt 1.2.2):
+        // change_view_mode(), вызываемый изнутри refresh(), сбрасывает
+        // прокрутку к началу диапазона дат (options.scroll_to не задан),
+        // если явно её не восстановить — поэтому сохраняем и возвращаем
+        // scrollLeft вручную.
+        const scrollContainer = ganttChart.$container;
+        const savedScrollLeft = scrollContainer ? scrollContainer.scrollLeft : undefined;
+
+        ganttChart.refresh(ganttTasks);
+
+        if (scrollContainer && savedScrollLeft !== undefined) {
+            requestAnimationFrame(() => {
+                scrollContainer.scrollLeft = savedScrollLeft;
+            });
+        }
+
+        applyPostRenderEnhancements(tasks);
+        return;
+    }
+
+    // Структурное изменение (первый рендер, смена команды/набора задач) —
+    // полная пересборка, как и раньше.
+    container.innerHTML = '';
+    lastTaskIds = newTaskIds;
 
     ganttChart = new Gantt(container, ganttTasks, {
         view_mode: state.get('viewMode'),
@@ -109,13 +204,16 @@ function renderGantt(tasks) {
         language: 'ru',
         infinite_padding: false,
         readonly: isReadOnly,
-        // Расписание теперь полностью считает бэкенд (конвейерный планировщик):
-        // ручной drag/resize дат отключаем на уровне библиотеки (скрывает
-        // ресайз-хендлы и не даёт визуально сдвинуть бар), это самый
-        // надёжный способ заблокировать перетаскивание, доступный в этой
-        // версии Frappe Gantt (readonly_progress оставляем выключенным —
-        // прогресс листовых задач по-прежнему редактируется).
-        readonly_dates: true,
+        // Расписание по-прежнему полностью считает бэкенд (конвейерный
+        // планировщик) — но теперь драг родительских баров (эпик/стори)
+        // разрешён на уровне библиотеки и переинтерпретируется нашим кодом
+        // как reorder, а не как прямое изменение дат (см. on_date_change
+        // ниже). Для листовых (ролевых) баров и для пользователей без права
+        // редактирования драг фактически заблокирован — библиотека Frappe
+        // Gantt 1.2.2 не даёт настроить readonly для отдельной задачи, только
+        // глобально, поэтому блокировка для листовых баров реализована через
+        // немедленный откат в колбэке on_date_change, а не через эту опцию.
+        readonly_dates: isReadOnly,
         // Пересобираем факт-маркеры/подсветку завершённых задач после
         // каждого рендера (в т.ч. при переключении Day/Week/Month —
         // Frappe Gantt полностью перерисовывает бары и теряет наш DOM).
@@ -128,12 +226,30 @@ function renderGantt(tasks) {
                 openTaskDetailsModal(task);
             }
         },
-        on_date_change: () => {
-            // Сервер всегда отклонит ручное изменение дат (даты — зона
-            // ответственности конвейерного планировщика), поэтому не шлём
-            // запрос вовсе — сразу откатываем визуально и поясняем причину.
-            showToast('Даты задач рассчитываются автоматически конвейерным планировщиком', 'info');
-            renderGantt(state.get('tasks'));
+        on_date_change: (task, newStart, newEnd) => {
+            if (isReadOnly) {
+                // Защита в глубину: обычно сюда не попадём, т.к. readonly_dates
+                // уже true для read-only пользователей и библиотека вообще не
+                // инициирует драг, но откатываем явно на случай расхождения.
+                renderGantt(state.get('tasks'));
+                return;
+            }
+            if (!task._is_parent) {
+                // Листовые (ролевые) задачи не драгаются в этой итерации —
+                // немедленно отменяем визуальное перемещение (тот же паттерн
+                // отката, что раньше применялся сегодня для ВСЕХ баров).
+                showToast('Даты ролевых задач рассчитываются автоматически конвейерным планировщиком', 'info');
+                renderGantt(state.get('tasks'));
+                return;
+            }
+            // Для родительских баров (эпик/стори) не мешаем нативному
+            // визуальному перемещению во время драга — но и не чистый no-op:
+            // в Frappe Gantt 1.2.2 нет отдельного колбэка «на отпускание»,
+            // этот колбэк стреляет многократно во время драга (на каждое
+            // пересечение границы даты), поэтому просто дёшево запоминаем
+            // последнюю позицию — вся тяжёлая логика reorder запускается
+            // отдельно, из mouseup-слушателя (см. setupParentDragReorder).
+            pendingParentDrag = { taskId: task.id, newStart, newEnd };
         },
         on_progress_change: async (task, progress) => {
             if (task._is_parent) {
@@ -395,6 +511,133 @@ async function reloadCurrentTeamTasks() {
         state.set('tasks', data.tasks || []);
     } catch (err) {
         console.error('Failed to reload tasks:', err);
+    }
+}
+
+// ── Drag-reorder на графике: эпики/стори ─────────────────────────────
+//
+// Запускается из mouseup-слушателя (setupParentDragReorder) с последней
+// накопленной в on_date_change позицией драга родительского бара.
+// Алгоритм — X-координатный аналог Y-координатного reorder в модалке
+// («Порядок…», см. setupDragAndDropForModal/saveOrder ниже): определяем,
+// куда «легла» перетащенная задача среди соседей того же уровня, и если
+// относительный порядок действительно изменился — рассылаем PUT-запросы на
+// уже существующие /epics/{id}/reorder и /stories/{id}/reorder ровно так
+// же, как это делает saveOrder() для модалки.
+
+// Возвращает список «соседей» того же уровня, что и task (включая сам
+// task): для эпика (нет parent) — все top-level эпики команды, для стори —
+// все стори того же родительского эпика. rawTasks уже отфильтрован по
+// выбранной команде (см. reloadCurrentTeamTasks), поэтому дополнительная
+// фильтрация по команде не нужна.
+function getParentLevelNeighbors(rawTasks, task) {
+    const parentId = task.parent_task_id || task.parent_id;
+    if (!parentId) {
+        return rawTasks.filter(t => t.is_parent && !(t.parent_task_id || t.parent_id));
+    }
+    return rawTasks.filter(t => t.is_parent && String(t.parent_task_id || t.parent_id) === String(parentId));
+}
+
+function taskIntervalMidMs(t) {
+    const startMs = new Date(t.start_date || t.start).getTime();
+    const endMs = new Date(t.end_date || t.end).getTime();
+    return (startMs + endMs) / 2;
+}
+
+function sameIdOrder(a, b) {
+    if (a.length !== b.length) return false;
+    return a.every((id, i) => String(id) === String(b[i]));
+}
+
+async function handleParentDragRelease(drag) {
+    // In-flight guard (см. модульную переменную isParentReorderInFlight) —
+    // выставляется на всё время выполнения функции независимо от того, по
+    // какой ветке (ранний return / успех / ошибка) она завершится.
+    isParentReorderInFlight = true;
+    try {
+        const rawTasks = state.get('tasks');
+        const task = rawTasks.find(t => String(t.id) === String(drag.taskId));
+        if (!task) {
+            // Задача исчезла из списка, пока шёл драг (например, список уже
+            // успел обновиться по другой причине) — просто синхронизируем
+            // диаграмму с актуальным состоянием.
+            renderGantt(rawTasks);
+            return;
+        }
+
+        const neighbors = getParentLevelNeighbors(rawTasks, task);
+        const originalOrderIds = neighbors
+            .slice()
+            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+            .map(t => t.id);
+
+        // Позиция, куда пользователь фактически перетащил бар (середина
+        // нового интервала дат) — сравнивается с серединами интервалов
+        // соседей, тем же принципом, что и поиск nextSibling по Y-координате
+        // в модалке.
+        const draggedMidMs = (new Date(drag.newStart).getTime() + new Date(drag.newEnd).getTime()) / 2;
+
+        const others = neighbors
+            .filter(t => String(t.id) !== String(task.id))
+            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+        const insertBeforeIndex = others.findIndex(o => draggedMidMs <= taskIntervalMidMs(o));
+        const newOrderIds = others.map(o => o.id);
+        if (insertBeforeIndex === -1) {
+            newOrderIds.push(task.id);
+        } else {
+            newOrderIds.splice(insertBeforeIndex, 0, task.id);
+        }
+
+        if (sameIdOrder(newOrderIds, originalOrderIds)) {
+            // Позиция не пересекла ни одного соседа (осталась в своём
+            // исходном промежутке) — reorder не состоялся: порядок не
+            // меняем, запрос не шлём, бар визуально возвращается на
+            // исходную (авторитетную, посчитанную бэкендом) позицию.
+            renderGantt(state.get('tasks'));
+            return;
+        }
+
+        // Порядок соседей изменился — переносим относительный порядок в
+        // новые sort_order (renumber по позиции, аналогично
+        // updateModalInputsOrder) и отправляем PUT только для тех
+        // элементов, чей номер реально изменился (тот же принцип, что и
+        // saveOrder() для модалки).
+        const endpointBase = (task.parent_task_id || task.parent_id) ? '/stories' : '/epics';
+
+        try {
+            let updatedAny = false;
+            for (let i = 0; i < newOrderIds.length; i++) {
+                const id = newOrderIds[i];
+                const newSortOrder = i + 1;
+                const item = neighbors.find(t => String(t.id) === String(id));
+                if (item && item.sort_order !== newSortOrder) {
+                    await apiPut(`${endpointBase}/${id}/reorder`, { new_sort_order: newSortOrder });
+                    updatedAny = true;
+                }
+            }
+
+            if (updatedAny) {
+                showToast('Порядок успешно обновлён', 'success');
+                // Реордер пересчитывает расписание всей команды (конвейер) —
+                // тянем полный список задач заново, как и после reorder
+                // через модалку.
+                await reloadCurrentTeamTasks();
+            } else {
+                renderGantt(state.get('tasks'));
+            }
+        } catch (err) {
+            // По аналогии с обработкой ошибок on_progress_change — сообщаем
+            // и откатываем визуально к последнему известному состоянию.
+            // Часть соседей могла уже обновиться на бэкенде (промежуточный
+            // запрос упал) — это то же ограничение, что и у существующего
+            // saveOrder() для модалки, отдельно не чиним в рамках этого
+            // изменения.
+            showToast('Не удалось изменить порядок: ' + err.message, 'error');
+            renderGantt(state.get('tasks'));
+        }
+    } finally {
+        isParentReorderInFlight = false;
     }
 }
 
