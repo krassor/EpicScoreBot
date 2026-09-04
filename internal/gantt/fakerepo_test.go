@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,19 @@ type fakeRepo struct {
 	roles      map[uuid.UUID]*domain.Role
 	roleScores map[uuid.UUID][]domain.EpicRoleScore // epicID/storyID -> role scores
 	risks      map[uuid.UUID][]domain.Risk          // epicID/storyID -> risks
+
+	// Инструментарий только для тестов блокировки (см. locking_test.go):
+	// GetTeamEpicsOrdered — первый repo-вызов внутри RecalculateTeamSchedule,
+	// GetGanttTasksByTeamID (через GetTeamTasks) — последний. Используются как
+	// граница "открыт/закрыт" для подсчёта, сколько пересчётов одной команды
+	// выполняются одновременно (activeRecalcs/maxActiveRecalcs), плюс
+	// искусственная задержка (recalcDelay) внутри первого вызова, чтобы
+	// гарантированно создать окно конкуренции для второй горутины.
+	concurrencyMu     sync.Mutex
+	activeRecalcs     int
+	maxActiveRecalcs  int
+	recalcDelay       time.Duration
+	recalcDelayTeamID uuid.UUID // если задан, задержка применяется только к этой команде
 }
 
 func newFakeRepo() *fakeRepo {
@@ -85,6 +99,22 @@ func (f *fakeRepo) GetEpicsByTeamIDAndStatus(ctx context.Context, teamID uuid.UU
 }
 
 func (f *fakeRepo) GetTeamEpicsOrdered(ctx context.Context, teamID uuid.UUID) ([]domain.Epic, error) {
+	// Начало "окна" пересчёта — см. комментарий про concurrencyMu в структуре fakeRepo.
+	f.concurrencyMu.Lock()
+	f.activeRecalcs++
+	if f.activeRecalcs > f.maxActiveRecalcs {
+		f.maxActiveRecalcs = f.activeRecalcs
+	}
+	var delay time.Duration
+	if f.recalcDelay > 0 && (f.recalcDelayTeamID == uuid.Nil || f.recalcDelayTeamID == teamID) {
+		delay = f.recalcDelay
+	}
+	f.concurrencyMu.Unlock()
+
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+
 	var res []*domain.Epic
 	for _, e := range f.epics {
 		if e.TeamID == teamID && e.ParentEpicID == nil {
@@ -172,6 +202,12 @@ func (f *fakeRepo) GetGanttTasksByTeamID(ctx context.Context, teamID uuid.UUID) 
 	for i, t := range res {
 		out[i] = *t
 	}
+
+	// Конец "окна" пересчёта — см. комментарий про concurrencyMu в структуре fakeRepo.
+	f.concurrencyMu.Lock()
+	f.activeRecalcs--
+	f.concurrencyMu.Unlock()
+
 	return out, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +36,25 @@ type roleTask struct {
 type Service struct {
 	repo Repository
 	log  *slog.Logger
+
+	// scheduleMu хранит per-team мьютексы (teamID -> *sync.Mutex), которыми
+	// сериализуются конкурентные вызовы RecalculateTeamSchedule для одной и
+	// той же команды — без общей транзакции/блокировки на уровне БД
+	// промежуточные чтения/записи (roleFreeAt, teamFloor) двух почти
+	// одновременных пересчётов (например, drag-reorder на графике и
+	// сохранение через модалку «Порядок…») могли бы переплестись и оставить
+	// несогласованные даты. См. openspec/changes/add-schedule-recalc-locking/
+	// design.md (Decision 1-2) — in-process блокировка достаточна, т.к.
+	// бэкенд деплоится одним контейнером, без реплик.
+	scheduleMu sync.Map
+}
+
+// teamScheduleLock returns the mutex guarding RecalculateTeamSchedule for a
+// given team, lazily creating it on first use. Never removed — the number of
+// teams is small enough that this is not a practical memory concern.
+func (s *Service) teamScheduleLock(teamID uuid.UUID) *sync.Mutex {
+	v, _ := s.scheduleMu.LoadOrStore(teamID, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 // TODO: rewrite this func. In scoring.go finalCoeff must be saved in db
@@ -292,6 +312,24 @@ func (s *Service) assignNextEpicSortOrder(ctx context.Context, epic *domain.Epic
 // reshuffles everything downstream.
 func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error) {
 	op := "gantt.RecalculateTeamSchedule"
+
+	// Сериализация: блокировка берётся вокруг ВСЕЙ функции (все её чтения и
+	// записи), а не отдельных операций внутри — так конкурентный вызов для
+	// той же команды либо целиком не начался, либо целиком завершился, и
+	// никогда не видит "перемешанное" промежуточное состояние. См. design.md
+	// Decision 2.
+	lock := s.teamScheduleLock(teamID)
+	if !lock.TryLock() {
+		s.log.Info("ожидание пересчёта расписания команды",
+			slog.String("teamID", teamID.String()))
+		lock.Lock()
+	}
+	defer lock.Unlock()
+
+	s.log.Debug("старт пересчёта расписания команды",
+		slog.String("teamID", teamID.String()))
+	defer s.log.Debug("завершён пересчёт расписания команды",
+		slog.String("teamID", teamID.String()))
 
 	epics, err := s.repo.GetTeamEpicsOrdered(ctx, teamID)
 	if err != nil {
