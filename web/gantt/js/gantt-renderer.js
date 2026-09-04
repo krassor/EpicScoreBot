@@ -766,8 +766,17 @@ async function openStoryReorderModal() {
 }
 
 // Точка входа из тулбара — переупорядочивание топ-эпиков текущей команды.
-function openEpicReorderModal() {
-    const epics = (state.get('epics') || []).filter(e => !e.parent_epic_id);
+async function openEpicReorderModal() {
+    const teamId = state.get('selectedTeamId');
+
+    let epics;
+    try {
+        const data = await apiGet(`/epics?team_id=${teamId}`);
+        epics = (data.epics || []).filter(e => !e.parent_epic_id);
+    } catch (err) {
+        showToast('Не удалось загрузить эпиков: ' + err.message, 'error');
+        return;
+    }
 
     if (epics.length === 0) {
         showToast('В этой команде нет эпиков для сортировки', 'info');
