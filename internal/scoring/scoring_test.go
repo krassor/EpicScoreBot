@@ -1067,6 +1067,184 @@ func TestSetManualFinalScore(t *testing.T) {
 	})
 }
 
+func TestSetManualRoleScore(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+
+	t.Run("not scored returns ErrScoringNotComplete", func(t *testing.T) {
+		epicID := uuid.New()
+		roleID := uuid.New()
+		mockRepo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, eID uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{ID: epicID, Status: domain.StatusScoring}, nil
+			},
+		}
+		s := New(logger, mockRepo)
+		_, err := s.SetManualRoleScore(ctx, epicID, roleID, 8.0)
+		if !errors.Is(err, ErrScoringNotComplete) {
+			t.Fatalf("expected ErrScoringNotComplete, got %v", err)
+		}
+	})
+
+	t.Run("successful override without cascade", func(t *testing.T) {
+		epicID := uuid.New()
+		roleID := uuid.New()
+
+		upsertCalled := false
+		var upsertedEpicID, upsertedRoleID uuid.UUID
+		var upsertedScore float64
+
+		mockRepo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, eID uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{ID: epicID, Status: domain.StatusScored}, nil
+			},
+			UpsertEpicRoleScoreFunc: func(ctx context.Context, eID, rID uuid.UUID, score float64) error {
+				upsertCalled = true
+				upsertedEpicID = eID
+				upsertedRoleID = rID
+				upsertedScore = score
+				return nil
+			},
+			SetEpicFinalScoreFunc: func(ctx context.Context, eID uuid.UUID, score float64) error {
+				t.Fatal("SetManualRoleScore must not touch epics.final_score")
+				return nil
+			},
+			GetStoriesByEpicIDFunc: func(ctx context.Context, pID uuid.UUID) ([]domain.Epic, error) {
+				t.Fatal("SetManualRoleScore must not cascade to parent epic")
+				return nil, nil
+			},
+		}
+
+		s := New(logger, mockRepo)
+		got, err := s.SetManualRoleScore(ctx, epicID, roleID, 8.0)
+		if err != nil {
+			t.Fatalf("SetManualRoleScore failed: %v", err)
+		}
+		if !upsertCalled {
+			t.Fatal("expected UpsertEpicRoleScore to be called")
+		}
+		if upsertedEpicID != epicID || upsertedRoleID != roleID {
+			t.Errorf("UpsertEpicRoleScore called with unexpected ids: %v/%v", upsertedEpicID, upsertedRoleID)
+		}
+		if math.Abs(upsertedScore-8.0) > 1e-9 {
+			t.Errorf("UpsertEpicRoleScore called with score %v, want 8.0", upsertedScore)
+		}
+		if got == nil || got.EpicID != epicID || got.RoleID != roleID {
+			t.Fatalf("unexpected result: %+v", got)
+		}
+		if math.Abs(got.WeightedAvg-8.0) > 1e-9 {
+			t.Errorf("expected WeightedAvg 8.0, got %v", got.WeightedAvg)
+		}
+	})
+}
+
+func TestPreviewFinalScore(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+
+	t.Run("not scored returns ErrScoringNotComplete", func(t *testing.T) {
+		epicID := uuid.New()
+		mockRepo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, eID uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{ID: epicID, Status: domain.StatusScoring}, nil
+			},
+		}
+		s := New(logger, mockRepo)
+		_, err := s.PreviewFinalScore(ctx, epicID)
+		if !errors.Is(err, ErrScoringNotComplete) {
+			t.Fatalf("expected ErrScoringNotComplete, got %v", err)
+		}
+	})
+
+	t.Run("uses saved epic_role_scores, including overridden role, not votes", func(t *testing.T) {
+		epicID := uuid.New()
+		roleID1 := uuid.New()
+		roleID2 := uuid.New()
+		riskID1 := uuid.New()
+		riskID2 := uuid.New()
+
+		riskScore1 := 13.0 // coefficient 1.20
+		riskScore2 := 4.0  // coefficient 1.03
+
+		mockRepo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, eID uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{ID: epicID, Status: domain.StatusScored}, nil
+			},
+			// roleID1 хранит значение (12.0), не совпадающее с тем, что дал бы
+			// CalculateEpicRoleAvg по голосам участников (см. ниже) — это
+			// имитирует уже применённое переопределение роли; PreviewFinalScore
+			// должен использовать именно это сохранённое значение.
+			GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
+				return []domain.EpicRoleScore{
+					{EpicID: eID, RoleID: roleID1, WeightedAvg: 12.0},
+					{EpicID: eID, RoleID: roleID2, WeightedAvg: 15.0},
+				}, nil
+			},
+			// Если бы PreviewFinalScore пересчитывал роль из голосов участников,
+			// а не брал сохранённое значение, эта функция дала бы 10.0 для
+			// roleID1, отличное от сохранённых 12.0 — тест проверяет, что она
+			// вообще не вызывается для расчёта предпросмотра.
+			GetEpicScoresByEpicIDAndRoleIDFunc: func(ctx context.Context, eID, rID uuid.UUID) ([]domain.EpicScore, error) {
+				t.Fatal("PreviewFinalScore must not recalculate role scores from member votes")
+				return nil, nil
+			},
+			GetRisksByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Risk, error) {
+				return []domain.Risk{
+					{ID: riskID1, Status: domain.StatusScored, WeightedScore: &riskScore1},
+					{ID: riskID2, Status: domain.StatusScored, WeightedScore: &riskScore2},
+				}, nil
+			},
+			SetEpicFinalScoreFunc: func(ctx context.Context, eID uuid.UUID, score float64) error {
+				t.Fatal("PreviewFinalScore must not persist the result")
+				return nil
+			},
+		}
+
+		s := New(logger, mockRepo)
+		got, err := s.PreviewFinalScore(ctx, epicID)
+		if err != nil {
+			t.Fatalf("PreviewFinalScore failed: %v", err)
+		}
+
+		// baseScore = 12.0 + 15.0 = 27.0
+		// finalScore = round(27.0 * 1.20 * 1.03) = round(32.4 * 1.03) = round(33.372) = 33.0
+		want := 33.0
+		if math.Abs(got-want) > 1e-9 {
+			t.Errorf("PreviewFinalScore() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("ignores unscored risks with nil weighted score", func(t *testing.T) {
+		epicID := uuid.New()
+		roleID := uuid.New()
+
+		mockRepo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, eID uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{ID: epicID, Status: domain.StatusScored}, nil
+			},
+			GetEpicRoleScoresByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.EpicRoleScore, error) {
+				return []domain.EpicRoleScore{
+					{EpicID: eID, RoleID: roleID, WeightedAvg: 10.0},
+				}, nil
+			},
+			GetRisksByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Risk, error) {
+				return []domain.Risk{
+					{ID: uuid.New(), Status: domain.StatusScoring, WeightedScore: nil},
+				}, nil
+			},
+		}
+
+		s := New(logger, mockRepo)
+		got, err := s.PreviewFinalScore(ctx, epicID)
+		if err != nil {
+			t.Fatalf("PreviewFinalScore failed: %v", err)
+		}
+		if math.Abs(got-10.0) > 1e-9 {
+			t.Errorf("PreviewFinalScore() = %v, want 10.0", got)
+		}
+	})
+}
+
 func TestTryCompleteEpicScoring_StoryCascade(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := context.Background()

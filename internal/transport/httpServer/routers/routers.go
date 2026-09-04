@@ -68,6 +68,8 @@ func (r *Router) Mount(mux *chi.Mux) {
 					mux.Post("/admin/scores/epic", r.ganttHandler.AdminSubmitEpicScore)
 					mux.Post("/admin/scores/risk", r.ganttHandler.AdminSubmitRiskScore)
 					mux.Post("/admin/scores/final", r.ganttHandler.AdminOverrideFinalScore)
+					mux.Post("/admin/scores/role", r.ganttHandler.AdminOverrideRoleScore)
+					mux.Get("/admin/scores/{epic_id}/recalc-preview", r.ganttHandler.GetFinalScorePreview)
 
 					// Рассылка напоминаний непроголосовавшим участникам эпика
 					// (веб-аналог команды /epicnotify Telegram-бота). В отличие

@@ -15,6 +15,7 @@ import (
 	"EpicScoreBot/internal/transport/httpServer/middleware"
 	"log/slog"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -105,6 +106,22 @@ type mockAdminScoresSvc struct {
 		epicID     uuid.UUID
 		finalScore float64
 	}
+
+	manualRoleScoreResult *domain.EpicRoleScore
+	manualRoleScoreErr    error
+	manualRoleScoreCall   struct {
+		called bool
+		epicID uuid.UUID
+		roleID uuid.UUID
+		score  float64
+	}
+
+	previewFinalScoreResult float64
+	previewFinalScoreErr    error
+	previewFinalScoreCall   struct {
+		called bool
+		epicID uuid.UUID
+	}
 }
 
 func (s *mockAdminScoresSvc) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) error {
@@ -126,6 +143,31 @@ func (s *mockAdminScoresSvc) SetManualFinalScore(ctx context.Context, epicID uui
 		return nil, s.manualFinalScoreErr
 	}
 	return s.manualFinalScoreEpic, nil
+}
+
+func (s *mockAdminScoresSvc) SetManualRoleScore(ctx context.Context, epicID, roleID uuid.UUID, score float64) (*domain.EpicRoleScore, error) {
+	s.manualRoleScoreCall.called = true
+	s.manualRoleScoreCall.epicID = epicID
+	s.manualRoleScoreCall.roleID = roleID
+	s.manualRoleScoreCall.score = score
+
+	if s.manualRoleScoreErr != nil {
+		return nil, s.manualRoleScoreErr
+	}
+	if s.manualRoleScoreResult != nil {
+		return s.manualRoleScoreResult, nil
+	}
+	return &domain.EpicRoleScore{EpicID: epicID, RoleID: roleID, WeightedAvg: score}, nil
+}
+
+func (s *mockAdminScoresSvc) PreviewFinalScore(ctx context.Context, epicID uuid.UUID) (float64, error) {
+	s.previewFinalScoreCall.called = true
+	s.previewFinalScoreCall.epicID = epicID
+
+	if s.previewFinalScoreErr != nil {
+		return 0, s.previewFinalScoreErr
+	}
+	return s.previewFinalScoreResult, nil
 }
 
 func TestAdminSubmitEpicScore(t *testing.T) {
@@ -526,6 +568,293 @@ func TestAdminOverrideFinalScore(t *testing.T) {
 		rr := httptest.NewRecorder()
 
 		handler.AdminOverrideFinalScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d", rr.Code)
+		}
+	})
+}
+
+func TestAdminOverrideRoleScore(t *testing.T) {
+	epicID := uuid.New()
+	roleID := uuid.New()
+
+	cfg := config.BotConfig{
+		Admins: []string{"admin_user"},
+	}
+
+	t.Run("success_updates_epic_role_scores", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, Status: domain.StatusScored, TeamID: uuid.New()}}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8.5}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideRoleScore(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+		if !svc.manualRoleScoreCall.called {
+			t.Fatal("expected SetManualRoleScore to be called")
+		}
+		if svc.manualRoleScoreCall.epicID != epicID || svc.manualRoleScoreCall.roleID != roleID {
+			t.Errorf("SetManualRoleScore called with unexpected ids: %v/%v", svc.manualRoleScoreCall.epicID, svc.manualRoleScoreCall.roleID)
+		}
+		if svc.manualRoleScoreCall.score != 8.5 {
+			t.Errorf("expected SetManualRoleScore called with score 8.5, got %v", svc.manualRoleScoreCall.score)
+		}
+
+		var resp struct {
+			Status      string  `json:"status"`
+			EpicID      string  `json:"epic_id"`
+			RoleID      string  `json:"role_id"`
+			WeightedAvg float64 `json:"weighted_avg"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Status != "ok" {
+			t.Errorf("expected status 'ok', got '%s'", resp.Status)
+		}
+		if resp.EpicID != epicID.String() || resp.RoleID != roleID.String() {
+			t.Errorf("unexpected epic_id/role_id in response: %+v", resp)
+		}
+		if resp.WeightedAvg != 8.5 {
+			t.Errorf("expected weighted_avg 8.5, got %v", resp.WeightedAvg)
+		}
+	})
+
+	t.Run("bad_request_when_scoring_not_complete", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, TeamID: uuid.New()}}
+		svc := &mockAdminScoresSvc{repo: repo, manualRoleScoreErr: scoring.ErrScoringNotComplete}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideRoleScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&errResp); err != nil {
+			t.Fatalf("failed to decode error response: %v", err)
+		}
+		if errResp.Error != "story scoring is not completed yet" {
+			t.Errorf("expected error message 'story scoring is not completed yet', got '%s'", errResp.Error)
+		}
+	})
+
+	t.Run("forbidden_for_team_admin_of_another_team", func(t *testing.T) {
+		teamA := uuid.New()
+		teamB := uuid.New()
+		repo := &mockAdminScoresRepo{
+			epic:          &domain.Epic{ID: epicID, Status: domain.StatusScored, TeamID: teamB},
+			allowedTeamID: &teamA,
+		}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideRoleScore(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for cross-team epic, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+		if svc.manualRoleScoreCall.called {
+			t.Error("expected SetManualRoleScore not to be called for cross-team epic")
+		}
+	})
+
+	t.Run("forbidden_for_member", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{denyTeamAdmin: true}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "111", Username: "regular_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideRoleScore(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden, got %d", rr.Code)
+		}
+		if svc.manualRoleScoreCall.called {
+			t.Error("expected SetManualRoleScore not to be called")
+		}
+	})
+
+	t.Run("bad_request_invalid_score", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":-1}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminOverrideRoleScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d", rr.Code)
+		}
+		if svc.manualRoleScoreCall.called {
+			t.Error("expected SetManualRoleScore not to be called for invalid score")
+		}
+	})
+}
+
+func TestGetFinalScorePreview(t *testing.T) {
+	epicID := uuid.New()
+
+	cfg := config.BotConfig{
+		Admins: []string{"admin_user"},
+	}
+
+	newRequestWithEpicID := func(epicIDStr string) *http.Request {
+		req := httptest.NewRequest("GET", "/api/gantt/admin/scores/"+epicIDStr+"/recalc-preview", nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("epic_id", epicIDStr)
+		return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	}
+
+	t.Run("success_without_persisting_final_score", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, Status: domain.StatusScored, TeamID: uuid.New()}}
+		svc := &mockAdminScoresSvc{repo: repo, previewFinalScoreResult: 33.0}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		req := newRequestWithEpicID(epicID.String())
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.GetFinalScorePreview(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+		if !svc.previewFinalScoreCall.called {
+			t.Fatal("expected PreviewFinalScore to be called")
+		}
+		if svc.previewFinalScoreCall.epicID != epicID {
+			t.Errorf("expected PreviewFinalScore called with epicID %v, got %v", epicID, svc.previewFinalScoreCall.epicID)
+		}
+
+		var resp struct {
+			EpicID     string  `json:"epic_id"`
+			FinalScore float64 `json:"final_score"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.EpicID != epicID.String() {
+			t.Errorf("expected epic_id %s, got %s", epicID.String(), resp.EpicID)
+		}
+		if resp.FinalScore != 33.0 {
+			t.Errorf("expected final_score 33.0, got %v", resp.FinalScore)
+		}
+
+		// PreviewFinalScore не должен изменять epics.final_score — единственный
+		// способ его записать (SetEpicFinalScore) в этом тесте не реализован
+		// вовсе (embedded ScoringService паникует при вызове), поэтому успешное
+		// прохождение теста уже подтверждает отсутствие записи.
+	})
+
+	t.Run("bad_request_when_scoring_not_complete", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, TeamID: uuid.New()}}
+		svc := &mockAdminScoresSvc{repo: repo, previewFinalScoreErr: scoring.ErrScoringNotComplete}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		req := newRequestWithEpicID(epicID.String())
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.GetFinalScorePreview(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&errResp); err != nil {
+			t.Fatalf("failed to decode error response: %v", err)
+		}
+		if errResp.Error != "story scoring is not completed yet" {
+			t.Errorf("expected error message 'story scoring is not completed yet', got '%s'", errResp.Error)
+		}
+	})
+
+	t.Run("forbidden_for_team_admin_of_another_team", func(t *testing.T) {
+		teamA := uuid.New()
+		teamB := uuid.New()
+		repo := &mockAdminScoresRepo{
+			epic:          &domain.Epic{ID: epicID, Status: domain.StatusScored, TeamID: teamB},
+			allowedTeamID: &teamA,
+		}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		req := newRequestWithEpicID(epicID.String())
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.GetFinalScorePreview(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for cross-team epic, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+		if svc.previewFinalScoreCall.called {
+			t.Error("expected PreviewFinalScore not to be called for cross-team epic")
+		}
+	})
+
+	t.Run("forbidden_for_member", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{denyTeamAdmin: true}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		req := newRequestWithEpicID(epicID.String())
+		session := &middleware.UserSession{TelegramID: "111", Username: "regular_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.GetFinalScorePreview(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden, got %d", rr.Code)
+		}
+		if svc.previewFinalScoreCall.called {
+			t.Error("expected PreviewFinalScore not to be called")
+		}
+	})
+
+	t.Run("bad_request_invalid_epic_id", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		req := newRequestWithEpicID("not-a-uuid")
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.GetFinalScorePreview(rr, req)
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("expected 400 Bad Request, got %d", rr.Code)
 		}

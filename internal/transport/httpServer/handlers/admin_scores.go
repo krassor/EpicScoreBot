@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -338,5 +339,166 @@ func (h *GanttHandler) AdminOverrideFinalScore(w http.ResponseWriter, r *http.Re
 		"final_score":    finalScore,
 		"epic_id":        epicUUID.String(),
 		"parent_epic_id": parentEpicID,
+	})
+}
+
+// AdminOverrideRoleScore позволяет администратору вручную переопределить агрегированную
+// оценку (weighted_avg) конкретной роли уже полностью оцененной (SCORED) стори — без
+// изменения оценок отдельных участников этой роли и без каскадного пересчёта финальной
+// оценки стори/родительского эпика (это отдельное, независимое действие администратора).
+func (h *GanttHandler) AdminOverrideRoleScore(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.AdminOverrideRoleScore"
+	h.log.Info("admin overriding role score", slog.String("op", op))
+
+	// 1. Проверка роли admin/superadmin инициатора запроса
+	sessionData := r.Context().Value(middleware.UserSessionKey)
+	if sessionData == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	session, ok := sessionData.(*middleware.UserSession)
+	if !ok || session.TelegramID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid session")
+		return
+	}
+
+	isSuper := isSuperAdminSession(session, &h.cfg)
+	if !isSuper {
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		if err != nil || !isAdminAny {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
+	// 2. Декодирование тела запроса
+	var req struct {
+		EpicID string  `json:"epic_id"`
+		RoleID string  `json:"role_id"`
+		Score  float64 `json:"score"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	epicUUID, err := uuid.Parse(req.EpicID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid epic_id")
+		return
+	}
+
+	roleUUID, err := uuid.Parse(req.RoleID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid role_id")
+		return
+	}
+
+	if req.Score < 0 {
+		writeError(w, http.StatusBadRequest, "score must be >= 0")
+		return
+	}
+
+	// Точечная проверка: team-admin может переопределять оценку роли только
+	// в эпиках своей команды (superadmin — без ограничения).
+	if !isSuper {
+		epicForScope, err := h.repo.GetEpicByID(r.Context(), epicUUID)
+		if err != nil || epicForScope == nil {
+			writeError(w, http.StatusNotFound, "epic not found")
+			return
+		}
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		if err != nil || !isAdminOf {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
+	// 3. Применение ручного переопределения оценки роли
+	roleScore, err := h.scoring.SetManualRoleScore(r.Context(), epicUUID, roleUUID, req.Score)
+	if err != nil {
+		if errors.Is(err, scoring.ErrScoringNotComplete) {
+			writeError(w, http.StatusBadRequest, "story scoring is not completed yet")
+			return
+		}
+		h.log.Error("failed to set manual role score", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("%s: %w", op, err).Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "ok",
+		"epic_id":      epicUUID.String(),
+		"role_id":      roleUUID.String(),
+		"weighted_avg": roleScore.WeightedAvg,
+	})
+}
+
+// GetFinalScorePreview возвращает предпросмотр финальной оценки стори, посчитанной
+// по стандартной формуле (Σ(oценка_роли) × Π(коэффициент_риска), округление до
+// целого) на основе текущих сохранённых оценок по ролям и рисков стори — без
+// сохранения результата. Вспомогательное действие рядом с переопределением
+// финальной оценки стори (AdminOverrideFinalScore).
+func (h *GanttHandler) GetFinalScorePreview(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.GetFinalScorePreview"
+	h.log.Info("admin requesting final score preview", slog.String("op", op))
+
+	// 1. Проверка роли admin/superadmin инициатора запроса
+	sessionData := r.Context().Value(middleware.UserSessionKey)
+	if sessionData == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	session, ok := sessionData.(*middleware.UserSession)
+	if !ok || session.TelegramID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid session")
+		return
+	}
+
+	isSuper := isSuperAdminSession(session, &h.cfg)
+	if !isSuper {
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		if err != nil || !isAdminAny {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
+	epicUUID, err := uuid.Parse(chi.URLParam(r, "epic_id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid epic_id")
+		return
+	}
+
+	// Точечная проверка: team-admin может смотреть предпросмотр только по
+	// эпикам своей команды (superadmin — без ограничения).
+	if !isSuper {
+		epicForScope, err := h.repo.GetEpicByID(r.Context(), epicUUID)
+		if err != nil || epicForScope == nil {
+			writeError(w, http.StatusNotFound, "epic not found")
+			return
+		}
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		if err != nil || !isAdminOf {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
+	finalScore, err := h.scoring.PreviewFinalScore(r.Context(), epicUUID)
+	if err != nil {
+		if errors.Is(err, scoring.ErrScoringNotComplete) {
+			writeError(w, http.StatusBadRequest, "story scoring is not completed yet")
+			return
+		}
+		h.log.Error("failed to preview final score", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("%s: %w", op, err).Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"epic_id":     epicUUID.String(),
+		"final_score": finalScore,
 	})
 }

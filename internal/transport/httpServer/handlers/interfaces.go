@@ -138,6 +138,15 @@ type ScoringService interface {
 	// (final_score) уже оцененного эпика/стори (статус SCORED), с каскадным
 	// пересчётом родительского эпика при необходимости.
 	SetManualFinalScore(ctx context.Context, epicID uuid.UUID, finalScore float64) (*domain.Epic, error)
+	// SetManualRoleScore позволяет вручную переопределить агрегированную оценку
+	// (weighted_avg) конкретной роли уже оцененного эпика/стори (статус SCORED),
+	// без изменения оценок отдельных участников и без каскадного пересчёта
+	// финальной оценки/родительского эпика.
+	SetManualRoleScore(ctx context.Context, epicID, roleID uuid.UUID, score float64) (*domain.EpicRoleScore, error)
+	// PreviewFinalScore считает финальную оценку стори по стандартной формуле
+	// на основе текущих сохранённых epic_role_scores и оценок рисков, без
+	// сохранения результата.
+	PreviewFinalScore(ctx context.Context, epicID uuid.UUID) (float64, error)
 }
 
 // TeamAdminScoper предоставляет точечные team-scoped проверки роли admin по

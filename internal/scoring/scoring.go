@@ -388,3 +388,91 @@ func (s *Service) SetManualFinalScore(ctx context.Context, epicID uuid.UUID, fin
 
 	return updatedEpic, nil
 }
+
+// SetManualRoleScore позволяет администратору вручную переопределить агрегированную
+// оценку (weighted_avg) конкретной роли для уже полностью оцененного эпика/стори
+// (статус SCORED), напрямую перезаписывая epic_role_scores, без изменения сохранённых
+// оценок отдельных участников этой роли. В отличие от SetManualFinalScore, намеренно
+// НЕ каскадируется на финальную оценку стори и не пересчитывает родительский эпик —
+// переопределение роли и переопределение финальной оценки остаются двумя независимыми
+// явными действиями администратора (см. design.md, раздел Decisions п.1).
+func (s *Service) SetManualRoleScore(ctx context.Context, epicID, roleID uuid.UUID, score float64) (*domain.EpicRoleScore, error) {
+	op := "scoring.SetManualRoleScore"
+
+	epic, err := s.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	if epic == nil {
+		return nil, fmt.Errorf("%s: epic not found", op)
+	}
+
+	if epic.Status != domain.StatusScored {
+		return nil, ErrScoringNotComplete
+	}
+
+	if err := s.repo.UpsertEpicRoleScore(ctx, epicID, roleID, score); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	s.log.Info("manual role score override applied",
+		slog.String("epicID", epicID.String()),
+		slog.String("roleID", roleID.String()),
+		slog.Float64("weightedAvg", score))
+
+	return &domain.EpicRoleScore{
+		EpicID:      epicID,
+		RoleID:      roleID,
+		WeightedAvg: score,
+	}, nil
+}
+
+// PreviewFinalScore считает финальную оценку стори по стандартной формуле
+// (Σ(oценка_роли) × Π(коэффициент_риска), округление до целого) на основе
+// текущих сохранённых оценок по ролям (epic_role_scores — включая уже
+// применённые переопределения ролей через SetManualRoleScore) и текущих
+// оценок рисков стори, без сохранения результата в БД. Требует, чтобы
+// стори уже была в статусе SCORED. Это та же формула, что использует
+// TryCompleteEpicScoring, но источник ролевых оценок — уже сохранённые
+// epic_role_scores, а не пересчёт заново из голосов участников.
+func (s *Service) PreviewFinalScore(ctx context.Context, epicID uuid.UUID) (float64, error) {
+	op := "scoring.PreviewFinalScore"
+
+	epic, err := s.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+	if epic == nil {
+		return 0, fmt.Errorf("%s: epic not found", op)
+	}
+
+	if epic.Status != domain.StatusScored {
+		return 0, ErrScoringNotComplete
+	}
+
+	roleScores, err := s.repo.GetEpicRoleScoresByEpicID(ctx, epicID)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+
+	var baseScore float64
+	for _, rs := range roleScores {
+		baseScore += rs.WeightedAvg
+	}
+
+	risks, err := s.repo.GetRisksByEpicID(ctx, epicID)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+
+	finalScore := baseScore
+	for _, risk := range risks {
+		if risk.WeightedScore != nil {
+			finalScore *= RiskCoefficient(*risk.WeightedScore)
+		}
+	}
+
+	finalScore = math.Round(finalScore)
+
+	return finalScore, nil
+}

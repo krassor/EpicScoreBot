@@ -412,16 +412,107 @@ function renderProgressHtml(scoresData) {
     `;
 }
 
-function renderRoleScoresTableRows(roleScores) {
+// Оверрайд оценки роли (третья колонка) доступен только администратору и только
+// после завершения скоринга стори (SCORED) — тот же признак admin-прав, что и у
+// остальных элементов переопределения на этой панели (кнопка «Изменить» у оценок
+// участников, кнопка «Переопределить» у финальной оценки).
+function isRoleScoreOverrideVisible(story, isAdmin) {
+    return !!(isAdmin && story && story.status === 'SCORED');
+}
+
+function renderRoleScoresTableRows(roleScores, story, isAdmin) {
+    const showOverride = isRoleScoreOverrideVisible(story, isAdmin);
+    const colspan = showOverride ? 3 : 2;
     if (!roleScores || roleScores.length === 0) {
-        return '<tr><td colspan="2" style="color: var(--text-muted); text-align: center; padding: 12px 0;">Нет оценок</td></tr>';
+        return `<tr><td colspan="${colspan}" style="color: var(--text-muted); text-align: center; padding: 12px 0;">Нет оценок</td></tr>`;
     }
     return roleScores.map(rs => `
         <tr>
             <td><strong>${rs.role_name || rs.role_id}</strong></td>
             <td>${rs.weighted_avg !== undefined ? rs.weighted_avg : rs.score} чд</td>
+            ${showOverride ? `
+            <td>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <input type="number" class="input role-score-override-input" data-role-id="${rs.role_id}" min="0" step="1" placeholder="чд" style="width: 70px; padding: 4px 6px; font-size: 12px;">
+                    <button class="btn btn-primary btn-override-role-score" data-role-id="${rs.role_id}" style="padding: 4px 8px; font-size: 11px;">Переопределить</button>
+                </div>
+            </td>` : ''}
         </tr>
     `).join('');
+}
+
+// Полное содержимое таблицы «Оценки по ролям» (thead + tbody), чтобы можно было
+// целиком заменить innerHTML таблицы при точечном рефреше после переопределения
+// оценки роли, без перерисовки всей панели скоринга.
+function renderRoleScoresTableHtml(roleScores, story, isAdmin) {
+    const showOverride = isRoleScoreOverrideVisible(story, isAdmin);
+    return `
+        <thead>
+            <tr>
+                <th>Роль</th>
+                <th>Оценка (чд)</th>
+                ${showOverride ? '<th>Действие</th>' : ''}
+            </tr>
+        </thead>
+        <tbody>
+            ${renderRoleScoresTableRows(roleScores, story, isAdmin)}
+        </tbody>
+    `;
+}
+
+// Обработчики кнопок «Переопределить» в строках таблицы «Оценки по ролям».
+// Вынесены отдельно, т.к. навешиваются и при первичном рендере панели, и при
+// точечном рефреше только этой таблицы после успешного переопределения.
+function bindRoleScoreOverrideEvents(scopeEl) {
+    if (!scopeEl) return;
+    scopeEl.querySelectorAll('.btn-override-role-score').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            if (!selectedStory) return;
+            const roleId = btn.dataset.roleId;
+            const row = btn.closest('tr');
+            const input = row?.querySelector(`.role-score-override-input[data-role-id="${roleId}"]`);
+            if (!input) return;
+            const valStr = input.value.trim();
+            if (valStr === '') {
+                showToast('Пожалуйста, введите оценку роли', 'error');
+                return;
+            }
+            const score = Number(valStr);
+            if (isNaN(score) || score < 0) {
+                showToast('Оценка роли должна быть числом не меньше 0', 'error');
+                return;
+            }
+
+            try {
+                await apiPost('/admin/scores/role', {
+                    epic_id: selectedStory.id,
+                    role_id: roleId,
+                    score: score
+                });
+                showToast('Оценка роли переопределена!', 'success');
+                await refreshRoleScoresTable();
+            } catch (err) {
+                showErrorModal(err.message);
+            }
+        });
+    });
+}
+
+// Точечный рефреш только таблицы «Оценки по ролям» после переопределения: заново
+// запрашивает GET /epics/{id}/role-scores и заменяет innerHTML таблицы, не трогая
+// остальную панель скоринга стори.
+async function refreshRoleScoresTable() {
+    if (!selectedStory) return;
+    selectedStoryRoleScores = (await apiGet(`/epics/${selectedStory.id}/role-scores`).catch(() => ([]))) || [];
+
+    const table = document.getElementById('role-scores-table');
+    if (!table) return;
+
+    const userProfile = state.get('userProfile');
+    const isAdmin = userProfile && (userProfile.role === 'admin' || userProfile.role === 'superadmin');
+
+    table.innerHTML = renderRoleScoresTableHtml(selectedStoryRoleScores, selectedStory, isAdmin);
+    bindRoleScoreOverrideEvents(table);
 }
 
 function renderAdminScoresTableRows(epicOrStory, scoresData) {
@@ -625,6 +716,7 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
         <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 2px;">
             <div style="display: flex; align-items: center; gap: 6px;">
                 <input type="number" id="input-override-final-score" class="input" min="0" step="1" value="${story.final_score}" style="width: 80px; padding: 4px 6px; font-size: 12px;">
+                <button id="btn-recalc-final-score" class="btn btn-secondary" title="Подставить в поле значение, рассчитанное по формуле (без сохранения)" style="padding: 4px 8px; font-size: 11px;">Пересчитать по формуле</button>
                 <button id="btn-override-final-score" class="btn btn-primary" style="padding: 4px 8px; font-size: 11px;">Переопределить</button>
             </div>
             <span style="font-size: 11px; color: var(--text-muted);">Переопределяет расчёт по формуле</span>
@@ -669,16 +761,8 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
 
             <div style="margin-top: 8px;">
                 <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Оценки по ролям</h4>
-                <table class="scores-table" style="font-size: 13px;">
-                    <thead>
-                        <tr>
-                            <th>Роль</th>
-                            <th>Оценка (чд)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${renderRoleScoresTableRows(roleScores)}
-                    </tbody>
+                <table class="scores-table" id="role-scores-table" style="font-size: 13px;">
+                    ${renderRoleScoresTableHtml(roleScores, story, isAdmin)}
                 </table>
             </div>
         </div>
@@ -934,8 +1018,26 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
             }
         });
     });
+    // 9b. Admin: Override role score directly in the role scores table row
+    bindRoleScoreOverrideEvents(container);
+
     // 10. Admin: Override story final_score directly (only when scoring already finished)
     if (isAdmin && selectedStory && selectedStory.status === 'SCORED') {
+        // 10a. Recalculate final score preview by formula: fills the input, does NOT save it —
+        // сохранение по-прежнему требует явного нажатия «Переопределить».
+        const btnRecalcFinalScore = document.getElementById('btn-recalc-final-score');
+        btnRecalcFinalScore?.addEventListener('click', async () => {
+            try {
+                const preview = await apiGet(`/admin/scores/${selectedStory.id}/recalc-preview`);
+                const input = document.getElementById('input-override-final-score');
+                if (input && preview && preview.final_score !== undefined) {
+                    input.value = preview.final_score;
+                }
+            } catch (err) {
+                showErrorModal(err.message);
+            }
+        });
+
         const btnOverrideFinalScore = document.getElementById('btn-override-final-score');
         btnOverrideFinalScore?.addEventListener('click', async () => {
             const input = document.getElementById('input-override-final-score');
