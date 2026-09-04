@@ -90,6 +90,9 @@ func (r *Router) Mount(mux *chi.Mux) {
 					mux.Get("/admin/team-admins", r.ganttHandler.GetTeamAdmins)
 					mux.Post("/admin/team-admins", r.ganttHandler.AssignTeamAdmin)
 					mux.Delete("/admin/team-admins", r.ganttHandler.RemoveTeamAdmin)
+
+					// Epic deletion (жёсткое каскадное удаление эпика).
+					mux.Delete("/epics/{epic_id}", r.ganttHandler.DeleteEpic)
 				})
 
 				// Scoring endpoints

@@ -288,6 +288,9 @@ function renderDetails() {
     const userProfile = state.get('userProfile');
     const isLeaderOrAdmin = userProfile && (userProfile.role === 'admin' || userProfile.role === 'superadmin' || userProfile.role === 'leader');
     const isAdmin = userProfile && (userProfile.role === 'admin' || userProfile.role === 'superadmin');
+    // Удаление эпика доступно только superadmin (в отличие от редактирования, доступного также admin) —
+    // соответствует ограничению доступа на бэкенде (DELETE /epics/{epic_id} защищён RoleAuth "superadmin")
+    const isSuperAdmin = userProfile && userProfile.role === 'superadmin';
 
     let actionButtonHtml = '';
     if (selectedEpic.status === 'NEW' && isLeaderOrAdmin) {
@@ -304,6 +307,7 @@ function renderDetails() {
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <h2>${selectedEpic.number}: ${selectedEpic.name}</h2>
                     ${isAdmin ? `<button id="btn-edit-epic" class="btn btn-secondary btn-sm" title="Редактировать эпик" style="padding: 3px 8px; font-size: 12px;">✏️ Редактировать</button>` : ''}
+                    ${isSuperAdmin ? `<button id="btn-delete-epic" class="btn btn-danger btn-sm" title="Удалить эпик" style="padding: 3px 8px; font-size: 12px;">🗑️ Удалить</button>` : ''}
                     ${isAdmin && selectedEpic.status === 'SCORING' ? `<button id="btn-notify-epic" class="btn btn-secondary btn-sm" title="Напомнить непроголосовавшим участникам" style="padding: 3px 8px; font-size: 12px;">🔔 Напомнить непроголосовавшим</button>` : ''}
                 </div>
                 <div class="scoring-epic-desc">${selectedEpic.description || 'Нет описания.'}</div>
@@ -1074,6 +1078,14 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 if (selectedEpic) openEditEpicModal(selectedEpic);
             };
         }
+        // Кнопка рендерится только для superadmin, но проверка isAdmin выше её тоже покрывает
+        // (superadmin проходит isAdmin), явная проверка существования узла — на случай admin без кнопки
+        const btnDeleteEpic = document.getElementById('btn-delete-epic');
+        if (btnDeleteEpic) {
+            btnDeleteEpic.onclick = () => {
+                if (selectedEpic) openDeleteEpicModal(selectedEpic);
+            };
+        }
         const btnNotifyEpic = document.getElementById('btn-notify-epic');
         if (btnNotifyEpic) {
             btnNotifyEpic.onclick = () => {
@@ -1431,6 +1443,65 @@ function openEditRiskModal(risk) {
             await loadEpicData();
         } catch (err) {
             showToast('Ошибка при обновлении риска: ' + err.message, 'error');
+        }
+    };
+}
+
+// Модальное окно подтверждения удаления эпика (только superadmin, см. openDeleteEpicModal caller).
+// Кастомная модалка вместо window.confirm — явное требование дизайна (design.md Decision 3),
+// т.к. удаление каскадно и безвозвратно затрагивает истории/риски/оценки.
+function openDeleteEpicModal(epic) {
+    let modal = document.getElementById('modal-delete-epic');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'modal-delete-epic';
+        modal.className = 'modal hidden';
+        document.body.appendChild(modal);
+    }
+
+    modal.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width: 480px; width: 90%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin: 0; font-size: 16px;">Удаление эпика</h3>
+                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+            </div>
+            <p style="margin: 0 0 8px 0; color: var(--text-primary);">
+                Вы уверены, что хотите безвозвратно удалить эпик <strong>${epic.number}: ${epic.name}</strong>?
+            </p>
+            <p style="margin: 0; color: var(--color-danger);">
+                Это действие также удалит все истории, риски и оценки этого эпика. Отменить удаление будет невозможно.
+            </p>
+            <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
+                <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
+                <button type="button" id="btn-confirm-delete-epic" class="btn btn-danger">Удалить</button>
+            </div>
+        </div>
+    `;
+
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+
+    const closeModal = () => {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+    };
+
+    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
+        btn.onclick = closeModal;
+    });
+
+    const btnConfirm = modal.querySelector('#btn-confirm-delete-epic');
+    btnConfirm.onclick = async () => {
+        try {
+            await apiDelete(`/epics/${epic.id}`);
+            showToast('Эпик успешно удалён!', 'success');
+            closeModal();
+            clearDetails();
+            await loadScoringEpics(state.get('selectedTeamId'));
+        } catch (err) {
+            // Список эпиков и панель деталей намеренно не трогаем — эпик остаётся как есть
+            showToast('Не удалось удалить эпик: ' + err.message, 'error');
         }
     };
 }

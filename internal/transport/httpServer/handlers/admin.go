@@ -782,7 +782,7 @@ func (h *GanttHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 // DeleteEpic deletes an epic. (SuperAdmin only)
 func (h *GanttHandler) DeleteEpic(w http.ResponseWriter, r *http.Request) {
 	op := "handlers.DeleteEpic"
-	epicIDStr := chi.URLParam(r, "id")
+	epicIDStr := chi.URLParam(r, "epic_id")
 	epicUUID, err := uuid.Parse(epicIDStr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid epic id")
