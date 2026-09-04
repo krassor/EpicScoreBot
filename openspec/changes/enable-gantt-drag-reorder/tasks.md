@@ -31,3 +31,12 @@
   Статически подтверждено двойной защитой: (1) `readonly_dates: isReadOnly` — библиотека для read-only пользователя не инициирует визуальный драг вообще (см. задачу 1.1); (2) `on_date_change` содержит `if (isReadOnly) { renderGantt(...); return; }` до какой-либо записи в `pendingParentDrag` — даже если бы драг всё-таки начался, `pendingParentDrag` не будет установлен и mouseup-слушатель не запустит reorder. Требуется ручная проверка в браузере под пользователем с ролью `member`.
 - [ ] 4.3 Регрессия: существующая модалка «Порядок…» (клик по бару → список → Y-драг → Save) продолжает работать без изменений для всех трёх уровней (роли/стори/эпики).
   Статически подтверждено: `git diff` показывает, что все правки этой задачи находятся строго до секции `// ── Reorder Modal logic ──` — `openReorderModal`, `openStoryReorderModal`, `openEpicReorderModal`, `setupDragAndDropForModal`, `updateModalInputsOrder`, `saveOrder` не изменены ни на строку. Требуется ручная регрессионная проверка в браузере (клики/Y-драг/Save для всех трёх уровней).
+
+## 5. Фикс дефекта, найденного на проде (v0.1.3): неверный ID в reorder-запросах
+
+См. design.md, Decision 5 — drag эпика/стори возвращал `500 RESCHEDULE_FAILED`, т.к. в URL `/epics/{id}/reorder`/`/stories/{id}/reorder` подставлялся `gantt_tasks.id` вместо `epics.id`.
+
+- [x] 5.1 Backend (`internal/transport/httpServer/handlers/gantt.go`): добавить поле `EpicID string \`json:"epic_id"\`` в структуру `ganttTaskResp`, заполнить его из `domain.GanttTask.EpicID` в обработчике `GetTasks` (аналогично уже существующему `RoleID`) — для всех строк, не только `is_parent`, без условной логики. Проверить `go build ./...`
+- [x] 5.2 Frontend (`web/gantt/js/gantt-renderer.js`, `handleParentDragRelease`): при построении URL reorder-запроса использовать `item.epic_id` вместо `id` (значение из `newOrderIds`, т.е. `gantt_tasks.id`) — `item` уже находится через `neighbors.find(...)` для сравнения `sort_order`, дополнительного поиска не требуется. Внутреннюю бухгалтерию (`getParentLevelNeighbors`, `sameIdOrder`, поиск позиции по датам) не менять — она остаётся на `gantt_tasks.id`
+- [x] 5.3 Проверено лично: `go build ./...`, `go vet ./...`, `go test ./...` — все пакеты зелёные; `node --input-type=module --check < web/gantt/js/gantt-renderer.js` — синтаксис ок
+- [ ] 5.4 Проверить вручную (браузер, после деплоя): drag эпика больше не возвращает 500, порядок и даты корректно обновляются; то же самое для стори (баг затрагивал оба уровня одинаково, хотя пользователь сообщил только про эпик)

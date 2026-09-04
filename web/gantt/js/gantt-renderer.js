@@ -612,7 +612,11 @@ async function handleParentDragRelease(drag) {
                 const newSortOrder = i + 1;
                 const item = neighbors.find(t => String(t.id) === String(id));
                 if (item && item.sort_order !== newSortOrder) {
-                    await apiPut(`${endpointBase}/${id}/reorder`, { new_sort_order: newSortOrder });
+                    // В URL уходит epics.id/stories.id (item.epic_id), а не
+                    // gantt_tasks.id (id/newOrderIds[i]) — см. design.md,
+                    // Decision 5: reorder-эндпоинты интерпретируют {id} как
+                    // Epic.ID, а не как id строки gantt_tasks.
+                    await apiPut(`${endpointBase}/${item.epic_id}/reorder`, { new_sort_order: newSortOrder });
                     updatedAny = true;
                 }
             }

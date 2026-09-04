@@ -257,6 +257,13 @@ type ganttTaskResp struct {
 	ParentID     string  `json:"parent_id,omitempty"`
 	SortOrder    int     `json:"sort_order"`
 	RoleID       string  `json:"role_id,omitempty"`
+	// EpicID — реальный Epic.ID, к которому относится gantt-задача (не путать
+	// с ID самой строки gantt_tasks). Нужен фронтенду, чтобы drag-reorder на
+	// диаграмме подставлял в PUT /epics/{id}/reorder и PUT /stories/{id}/reorder
+	// корректный идентификатор — см. design.md change enable-gantt-drag-reorder,
+	// Decision 5. Присутствует всегда (без omitempty), т.к. любая gantt-задача
+	// принадлежит какому-то эпику.
+	EpicID string `json:"epic_id"`
 	// ActualEndDate — фактическая дата завершения задачи (проставляется
 	// автоматически при 100% прогресса), отсутствует пока задача не завершена.
 	ActualEndDate *string `json:"actual_end_date,omitempty"`
@@ -364,6 +371,7 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 			IsParent:        t.IsParent,
 			SortOrder:       t.SortOrder,
 			StartOffsetDays: t.StartOffsetDays,
+			EpicID:          t.EpicID.String(),
 		}
 		if t.ParentTaskID != nil {
 			item.ParentID = t.ParentTaskID.String()
