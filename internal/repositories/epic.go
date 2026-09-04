@@ -403,7 +403,7 @@ func (r *Repository) GetEpicsByTeamYearQuarter(ctx context.Context, teamID uuid.
 // stories that have not been assigned a sort_order yet.
 func (r *Repository) GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error) {
 	op := "Repository.GetStoriesByEpicID"
-	var epics []domain.Epic
+	epics := []domain.Epic{}
 	query := `SELECT id, number, name, description, team_id, status,
 		final_score, year, quarter, type, parent_epic_id, sort_order, created_at, updated_at
 		FROM epics WHERE parent_epic_id = $1

@@ -230,28 +230,31 @@ async function loadEpicData() {
     
     try {
         // 1. Fetch stories
-        currentStories = await apiGet(`/epics/${selectedEpic.id}/stories`).catch(() => ([]));
-        
+        // Защита от null: apiGet может успешно вернуть 200 OK с телом null
+        // (например, если бэкенд не инициализировал пустой срез) — в этом
+        // случае .catch() не сработает, поэтому дополнительно подстраховываемся `|| []`.
+        currentStories = (await apiGet(`/epics/${selectedEpic.id}/stories`).catch(() => ([]))) || [];
+
         if (currentStories.length > 0) {
             // If there are stories and no story is selected, select the first one
             if (!selectedStory || !currentStories.some(s => s.id === selectedStory.id)) {
                 selectedStory = currentStories[0];
             }
-            
+
             // Fetch selected story details
-            selectedStoryScores = await apiGet(`/epics/${selectedStory.id}/scores`).catch(() => ({ scores: [], expected: 0, received: 0 }));
-            selectedStoryRoleScores = await apiGet(`/epics/${selectedStory.id}/role-scores`).catch(() => ([]));
-            const risksData = await apiGet(`/epics/${selectedStory.id}/risks`).catch(() => ({ risks: [] }));
+            selectedStoryScores = (await apiGet(`/epics/${selectedStory.id}/scores`).catch(() => ({ scores: [], expected: 0, received: 0 }))) || { scores: [], expected: 0, received: 0 };
+            selectedStoryRoleScores = (await apiGet(`/epics/${selectedStory.id}/role-scores`).catch(() => ([]))) || [];
+            const risksData = (await apiGet(`/epics/${selectedStory.id}/risks`).catch(() => ({ risks: [] }))) || { risks: [] };
             selectedStoryRisks = risksData.risks || [];
         } else {
             selectedStory = null;
             // Fetch epic details (fallback when no stories exist)
-            selectedEpicScores = await apiGet(`/epics/${selectedEpic.id}/scores`).catch(() => ({ scores: [], expected: 0, received: 0 }));
-            selectedEpicRoleScores = await apiGet(`/epics/${selectedEpic.id}/role-scores`).catch(() => ([]));
-            const risksData = await apiGet(`/epics/${selectedEpic.id}/risks`).catch(() => ({ risks: [] }));
+            selectedEpicScores = (await apiGet(`/epics/${selectedEpic.id}/scores`).catch(() => ({ scores: [], expected: 0, received: 0 }))) || { scores: [], expected: 0, received: 0 };
+            selectedEpicRoleScores = (await apiGet(`/epics/${selectedEpic.id}/role-scores`).catch(() => ([]))) || [];
+            const risksData = (await apiGet(`/epics/${selectedEpic.id}/risks`).catch(() => ({ risks: [] }))) || { risks: [] };
             selectedEpicRisks = risksData.risks || [];
         }
-        
+
         renderDetails();
     } catch (err) {
         showToast('Не удалось загрузить данные: ' + err.message, 'error');
@@ -375,11 +378,17 @@ function renderDetails() {
 
             <!-- Right Column: Selected Story Details -->
             <div class="scoring-section-card" id="story-details-card">
-                ${selectedStory ? renderStoryDetailsHtml(selectedStory, selectedStoryScores, selectedStoryRoleScores, selectedStoryRisks) : `
+                ${selectedStory ? renderStoryDetailsHtml(selectedStory, selectedStoryScores, selectedStoryRoleScores, selectedStoryRisks) : (
+                    currentStories.length === 0 ? `
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 200px; color: var(--text-muted); text-align: center;">
+                        <span>📭 У этого эпика пока нет ни одной истории (сторя).${isAdmin && selectedEpic.status === 'NEW' ? ' Добавьте её через форму слева.' : ''}</span>
+                    </div>
+                    ` : `
                     <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 200px; color: var(--text-muted); text-align: center;">
                         <span>👈 Выберите историю (сторю) слева для голосования и оценки рисков</span>
                     </div>
-                `}
+                    `
+                )}
             </div>
         </div>
     `;
