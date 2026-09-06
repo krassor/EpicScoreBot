@@ -20,6 +20,19 @@ let selectedStoryScores = null;
 let selectedStoryRoleScores = null;
 let selectedStoryRisks = null;
 
+// ── Фильтры списка «Эпики команды» ───────────────────────────────────
+// allTeamEpics — полный (нефильтрованный) список эпиков команды, как он пришёл с бэкенда;
+// именно к нему применяются клиентские фильтры перед каждым рендером списка.
+let allTeamEpics = [];
+// epicFilters — текущие значения трёх фильтров списка эпиков. Пустая строка означает «Все»
+// (без ограничения по этому параметру).
+let epicFilters = { year: '', quarter: '', type: '' };
+// loadedEpicsTeamId — team_id, для которого сейчас загружен allTeamEpics. Используется,
+// чтобы отличить смену команды (фильтры нужно сбросить на «Все») от повторной загрузки
+// списка для той же команды, например после старта скоринга или удаления эпика (фильтры
+// пользователя в этом случае сохраняются).
+let loadedEpicsTeamId = null;
+
 
 export function initScoringPanel() {
     // Inject custom styles for admin controls
@@ -30,6 +43,9 @@ export function initScoringPanel() {
         if (teamId) {
             loadScoringEpics(teamId);
         } else {
+            allTeamEpics = [];
+            loadedEpicsTeamId = null;
+            resetEpicsFilters();
             renderEpicsList([]);
             clearDetails();
         }
@@ -151,10 +167,140 @@ async function loadScoringEpics(teamId) {
     try {
         const data = await apiGet(`/epics?team_id=${teamId}&all=true`);
         const epics = data.epics || [];
-        renderEpicsList(epics);
+        allTeamEpics = epics;
+
+        // Фильтры сбрасываются на «Все» только при смене команды, а не при каждой
+        // перезагрузке списка для той же команды (например, после старта скоринга).
+        const teamChanged = teamId !== loadedEpicsTeamId;
+        loadedEpicsTeamId = teamId;
+
+        ensureEpicsFilterBar();
+        if (teamChanged) {
+            resetEpicsFilters();
+        }
+        updateYearFilterOptions(epics);
+
+        renderFilteredEpicsList();
     } catch (err) {
         showToast('Не удалось загрузить список эпиков: ' + err.message, 'error');
     }
+}
+
+// ensureEpicsFilterBar — создаёт (один раз) панель из трёх фильтров над списком
+// «Эпики команды»: Год, Квартал, Тип эпика. Использует уже существующие в проекте
+// CSS-классы .form-grid-3col/.form-group/.select (та же сетка, что и в форме
+// редактирования эпика для полей Год/Квартал/Тип), новых стилей не вводит.
+function ensureEpicsFilterBar() {
+    let bar = document.getElementById('scoring-epics-filters');
+    if (bar) return bar;
+
+    const listContainer = document.getElementById('scoring-epics-list');
+    if (!listContainer || !listContainer.parentElement) return null;
+
+    bar = document.createElement('div');
+    bar.id = 'scoring-epics-filters';
+    bar.className = 'form-grid-3col';
+    bar.setAttribute('style', 'padding: 12px 20px; border-bottom: 1px solid var(--border-color);');
+    bar.innerHTML = `
+        <div class="form-group">
+            <label for="scoring-filter-year">Год</label>
+            <select id="scoring-filter-year" class="select">
+                <option value="">Все</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="scoring-filter-quarter">Квартал</label>
+            <select id="scoring-filter-quarter" class="select">
+                <option value="">Все</option>
+                <option value="1">Q1</option>
+                <option value="2">Q2</option>
+                <option value="3">Q3</option>
+                <option value="4">Q4</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="scoring-filter-type">Тип эпика</label>
+            <select id="scoring-filter-type" class="select">
+                <option value="">Все</option>
+                <option value="feature">Feature</option>
+                <option value="architecture">Architecture</option>
+                <option value="techdebt">Techdebt</option>
+            </select>
+        </div>
+    `;
+    listContainer.parentElement.insertBefore(bar, listContainer);
+
+    bar.querySelectorAll('select').forEach(select => {
+        select.addEventListener('change', onEpicsFilterChange);
+    });
+
+    return bar;
+}
+
+// onEpicsFilterChange — обработчик изменения любого из трёх фильтров: пересчитывает
+// epicFilters из текущих значений <select> и перерисовывает список без обращения к серверу.
+function onEpicsFilterChange() {
+    const yearSelect = document.getElementById('scoring-filter-year');
+    const quarterSelect = document.getElementById('scoring-filter-quarter');
+    const typeSelect = document.getElementById('scoring-filter-type');
+    epicFilters = {
+        year: yearSelect ? yearSelect.value : '',
+        quarter: quarterSelect ? quarterSelect.value : '',
+        type: typeSelect ? typeSelect.value : ''
+    };
+    renderFilteredEpicsList();
+}
+
+// updateYearFilterOptions — перестраивает список опций фильтра «Год» как отсортированное
+// множество различных значений epic.year из фактически загруженного списка эпиков команды.
+function updateYearFilterOptions(epics) {
+    const yearSelect = document.getElementById('scoring-filter-year');
+    if (!yearSelect) return;
+
+    const years = Array.from(new Set(
+        epics.map(epic => epic.year).filter(year => year !== undefined && year !== null)
+    )).sort((a, b) => a - b);
+
+    const previousValue = yearSelect.value;
+    yearSelect.innerHTML = '<option value="">Все</option>' +
+        years.map(year => `<option value="${year}">${year}</option>`).join('');
+
+    // Сохраняем выбранное значение, если оно всё ещё присутствует среди актуальных лет
+    // (например, при повторной загрузке списка той же команды без смены фильтров).
+    if (years.some(year => String(year) === previousValue)) {
+        yearSelect.value = previousValue;
+    }
+}
+
+// resetEpicsFilters — сбрасывает все три фильтра списка эпиков на значение «Все».
+// Вызывается при смене команды, т.к. набор годов/кварталов/типов новой команды
+// может не иметь ничего общего со старыми значениями фильтров.
+function resetEpicsFilters() {
+    epicFilters = { year: '', quarter: '', type: '' };
+    const yearSelect = document.getElementById('scoring-filter-year');
+    const quarterSelect = document.getElementById('scoring-filter-quarter');
+    const typeSelect = document.getElementById('scoring-filter-type');
+    if (yearSelect) yearSelect.value = '';
+    if (quarterSelect) quarterSelect.value = '';
+    if (typeSelect) typeSelect.value = '';
+}
+
+// applyEpicsFilters — клиентская фильтрация: эпик проходит, если для каждого из трёх
+// параметров выбрано «Все» (пустая строка) либо значение совпадает с полем эпика.
+function applyEpicsFilters(epics) {
+    return epics.filter(epic => {
+        if (epicFilters.year && String(epic.year) !== epicFilters.year) return false;
+        if (epicFilters.quarter && String(epic.quarter) !== epicFilters.quarter) return false;
+        if (epicFilters.type && epic.type !== epicFilters.type) return false;
+        return true;
+    });
+}
+
+// renderFilteredEpicsList — применяет текущие фильтры к allTeamEpics и рендерит результат.
+// Используется вместо прямого вызова renderEpicsList(allTeamEpics) везде, где список
+// эпиков команды (пере)загружается или изменяются фильтры.
+function renderFilteredEpicsList() {
+    renderEpicsList(applyEpicsFilters(allTeamEpics));
 }
 
 function renderEpicsList(epics) {
@@ -273,7 +419,10 @@ async function refreshAfterAdminEdit() {
             const epics = data.epics || [];
             const fresh = epics.find(e => e.id === selectedEpic.id);
             if (fresh) selectedEpic = fresh;
-            renderEpicsList(epics);
+            allTeamEpics = epics;
+            // Фильтры намеренно не сбрасываются и не пересобираются — это точечный
+            // рефреш той же команды после админского редактирования оценки, а не смена команды.
+            renderFilteredEpicsList();
         } catch (e) {
             // не блокируем остальной рефреш, если список эпиков не удалось перезагрузить
         }
@@ -821,6 +970,8 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 return;
             }
 
+            // Блокируем кнопку сразу, чтобы повторный/двойной клик не запустил второй запрос
+            btnCreateStory.disabled = true;
             try {
                 await apiPost(`/epics/${selectedEpic.id}/stories`, {
                     name,
@@ -830,6 +981,8 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 await loadEpicData();
             } catch (err) {
                 showToast('Не удалось создать историю: ' + err.message, 'error');
+            } finally {
+                btnCreateStory.disabled = false;
             }
         });
     }
