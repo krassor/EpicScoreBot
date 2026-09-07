@@ -774,18 +774,20 @@ function openExpertRoleScoreModal(roleId, roleName, score) {
 
     modal.innerHTML = `
         <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-width: 480px; width: 90%;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <h3 style="margin: 0; font-size: 16px;">Экспертная оценка роли</h3>
-                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Экспертная оценка роли</h2>
+                <button class="btn-icon btn-close-modal">✕</button>
             </div>
-            <p style="margin: 0 0 8px 0; color: var(--text-primary);">
-                Проставить оценку <strong>${score} чд</strong> за роль <strong>${roleName}</strong> всем участникам команды с этой ролью?
-            </p>
-            <p style="margin: 0; color: var(--color-danger);">
-                Это перезапишет личные голоса участников этой роли, если они уже есть. Отменить действие будет невозможно.
-            </p>
-            <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
+            <div class="modal-body">
+                <p>
+                    Проставить оценку <strong>${score} чд</strong> за роль <strong>${roleName}</strong> всем участникам команды с этой ролью?
+                </p>
+                <p style="color: var(--color-danger);">
+                    Это перезапишет личные голоса участников этой роли, если они уже есть. Отменить действие будет невозможно.
+                </p>
+            </div>
+            <div class="modal-footer">
                 <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
                 <button type="button" id="btn-confirm-expert-role-score" class="btn btn-primary">Проставить оценку</button>
             </div>
@@ -882,9 +884,17 @@ function renderAdminScoresTableRows(epicOrStory, scoresData) {
             actionsHtml = `<button class="btn btn-secondary btn-edit-admin-vote" data-user-id="${m.id}" data-is-story="${isStory}" style="padding:4px 8px; font-size:11px;">Изменить</button>`;
         }
 
+        // telegram_id может храниться как с ведущим "@" (например, при CSV-импорте),
+        // так и без него (как сохраняет Telegram-бот) — нормализуем перед отображением,
+        // чтобы не получить "@@username".
+        const telegramUsername = m.telegram_id ? m.telegram_id.replace(/^@+/, '') : '';
+        const telegramLinkHtml = telegramUsername
+            ? ` <a href="https://t.me/${telegramUsername}" target="_blank" rel="noopener noreferrer" class="telegram-username-link">@${telegramUsername}</a>`
+            : '';
+
         return `
             <tr>
-                <td><strong>${m.first_name} ${m.last_name || ''}</strong>${m.telegram_id ? ` <span style="color:var(--text-muted); font-size:10px;">@${m.telegram_id}</span>` : ''}</td>
+                <td><strong>${m.first_name} ${m.last_name || ''}</strong>${telegramLinkHtml}</td>
                 <td><span class="badge" style="background:var(--bg-tertiary); font-size:10px; padding: 2px 6px;">${m.role_name || 'Без роли'}</span></td>
                 <td>${voteControlHtml}</td>
                 <td>${actionsHtml}</td>
@@ -1792,18 +1802,20 @@ function openDeleteEpicModal(epic) {
 
     modal.innerHTML = `
         <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-width: 480px; width: 90%;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <h3 style="margin: 0; font-size: 16px;">Удаление эпика</h3>
-                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Удаление эпика</h2>
+                <button class="btn-icon btn-close-modal">✕</button>
             </div>
-            <p style="margin: 0 0 8px 0; color: var(--text-primary);">
-                Вы уверены, что хотите безвозвратно удалить эпик <strong>${epic.number}: ${epic.name}</strong>?
-            </p>
-            <p style="margin: 0; color: var(--color-danger);">
-                Это действие также удалит все истории, риски и оценки этого эпика. Отменить удаление будет невозможно.
-            </p>
-            <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
+            <div class="modal-body">
+                <p>
+                    Вы уверены, что хотите безвозвратно удалить эпик <strong>${epic.number}: ${epic.name}</strong>?
+                </p>
+                <p style="color: var(--color-danger);">
+                    Это действие также удалит все истории, риски и оценки этого эпика. Отменить удаление будет невозможно.
+                </p>
+            </div>
+            <div class="modal-footer">
                 <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
                 <button type="button" id="btn-confirm-delete-epic" class="btn btn-danger">Удалить</button>
             </div>
