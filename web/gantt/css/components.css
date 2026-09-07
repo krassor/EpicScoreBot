@@ -1072,6 +1072,18 @@
     vertical-align: middle;
 }
 
+.telegram-username-link {
+    color: var(--text-muted);
+    font-size: 10px;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.telegram-username-link:hover {
+    text-decoration: underline;
+    color: var(--accent-hover);
+}
+
 .full-width-card {
     max-width: 1200px;
     margin: 0 auto;
