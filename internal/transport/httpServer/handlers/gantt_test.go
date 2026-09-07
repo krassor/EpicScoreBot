@@ -2,9 +2,10 @@ package handlers
 
 import (
 	"EpicScoreBot/internal/config"
+	"EpicScoreBot/internal/gantt"
 	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/report"
-	
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -54,6 +55,28 @@ type mockGanttSvc struct {
 	reorderStoryFunc       func(ctx context.Context, storyID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
 	setTaskProgressFunc    func(ctx context.Context, taskID uuid.UUID, progress float64) ([]domain.GanttTask, error)
 	setTaskStartOffsetFunc func(ctx context.Context, taskID uuid.UUID, offsetDays int) ([]domain.GanttTask, error)
+
+	generateTasksForQuarterFunc   func(ctx context.Context, teamID uuid.UUID, year, quarter int, startDate time.Time) (gantt.QuarterGenerationResult, error)
+	generateTasksForQuarterCalled bool
+	generateTasksForQuarterArgs   struct {
+		teamID    uuid.UUID
+		year      int
+		quarter   int
+		startDate time.Time
+	}
+}
+
+func (m *mockGanttSvc) GenerateTasksForQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int, startDate time.Time) (gantt.QuarterGenerationResult, error) {
+	m.generateTasksForQuarterCalled = true
+	m.generateTasksForQuarterArgs.teamID = teamID
+	m.generateTasksForQuarterArgs.year = year
+	m.generateTasksForQuarterArgs.quarter = quarter
+	m.generateTasksForQuarterArgs.startDate = startDate
+
+	if m.generateTasksForQuarterFunc != nil {
+		return m.generateTasksForQuarterFunc(ctx, teamID, year, quarter, startDate)
+	}
+	return gantt.QuarterGenerationResult{}, nil
 }
 
 func (m *mockGanttSvc) ReorderEpic(ctx context.Context, epicID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error) {

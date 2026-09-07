@@ -433,6 +433,76 @@ func (h *GanttHandler) GenerateTasks(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// minEpicYear/maxEpicYear ограничивают допустимый диапазон года эпика —
+// совпадает с диапазоном, принятым на фронтенде для полей года эпика
+// (см. web/gantt/index.html, min/max у #epic-year).
+const (
+	minEpicYear = 2000
+	maxEpicYear = 2100
+)
+
+// GenerateQuarterTasks (пере)генерирует задачи Ганта для всех заскоренных
+// топ-эпиков команды за указанные год и квартал одним запросом — вместо
+// повторных вызовов GenerateTasks по каждому эпику, каждый из которых сам
+// по себе запускает дорогой полный пересчёт расписания команды
+// (см. openspec/changes/add-gantt-quarter-regenerate).
+func (h *GanttHandler) GenerateQuarterTasks(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TeamID    string `json:"team_id"`
+		Year      int    `json:"year"`
+		Quarter   int    `json:"quarter"`
+		StartDate string `json:"start_date"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY", "invalid request body")
+		return
+	}
+
+	teamID, err := uuid.Parse(req.TeamID)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_TEAM_ID", "invalid team_id")
+		return
+	}
+
+	if req.Quarter < 1 || req.Quarter > 4 {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_QUARTER", "quarter must be between 1 and 4")
+		return
+	}
+
+	if req.Year < minEpicYear || req.Year > maxEpicYear {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_YEAR",
+			fmt.Sprintf("year must be between %d and %d", minEpicYear, maxEpicYear))
+		return
+	}
+
+	startDate, err := time.Parse("2006-01-02", req.StartDate)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_START_DATE",
+			"invalid start_date, expected YYYY-MM-DD")
+		return
+	}
+
+	result, err := h.svc.GenerateTasksForQuarter(r.Context(), teamID, req.Year, req.Quarter, startDate)
+	if err != nil {
+		h.log.Error("failed to generate quarter tasks",
+			slog.String("teamID", teamID.String()),
+			slog.Int("year", req.Year),
+			slog.Int("quarter", req.Quarter),
+			slog.String("error", err.Error()))
+		writeErrorCode(w, http.StatusInternalServerError, "GENERATE_QUARTER_FAILED",
+			fmt.Sprintf("failed to generate: %s", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":           "quarter tasks generated",
+		"epics_total":       result.EpicsTotal,
+		"epics_regenerated": result.EpicsRegenerated,
+		"epics_failed":      result.EpicsFailed,
+		"tasks_count":       result.TasksCount,
+	})
+}
+
 // UpdateTask updates a task's progress. Dates are no longer settable
 // manually — the pipeline scheduler (epic/story/role order + progress)
 // is the only way to move a task on the Gantt chart.

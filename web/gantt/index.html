@@ -100,21 +100,40 @@
             <section id="tab-content-gantt" class="tab-content">
                 <div class="toolbar">
                     <div class="toolbar-left">
-                        <select id="epic-select" class="select" disabled>
-                            <option value="">Выберите эпик для генерации...</option>
-                        </select>
-                        <input type="date" id="start-date" class="input-date" title="Дата начала">
-                        <button id="btn-generate" class="btn btn-primary" disabled>
-                            ⚡ Сгенерировать задачи
-                        </button>
-                        <button id="btn-reorder-epics" class="btn btn-secondary btn-sm" type="button"
-                                title="Изменить порядок эпиков в очереди команды">
-                            🔀 Порядок эпиков
-                        </button>
-                        <button id="btn-reorder-stories" class="btn btn-secondary btn-sm" type="button"
-                                title="Изменить порядок историй внутри эпика, выбранного слева">
-                            🔀 Порядок историй
-                        </button>
+                        <!-- 1-й ряд: период планирования (год, квартал, дата начала) -->
+                        <div class="toolbar-row toolbar-row-period">
+                            <select id="gantt-year" class="select" title="Год" aria-label="Год планирования">
+                                <!-- Заполняется динамически: годы эпиков команды + текущий год -->
+                            </select>
+                            <select id="gantt-quarter" class="select" title="Квартал" aria-label="Квартал планирования">
+                                <option value="1">Q1</option>
+                                <option value="2">Q2</option>
+                                <option value="3">Q3</option>
+                                <option value="4">Q4</option>
+                            </select>
+                            <input type="date" id="start-date" class="input-date" title="Дата начала">
+                        </div>
+                        <!-- 2-й ряд: выбор эпика и действия по генерации задач -->
+                        <div class="toolbar-row toolbar-row-actions">
+                            <select id="epic-select" class="select" disabled>
+                                <option value="">Выберите эпик для генерации...</option>
+                            </select>
+                            <button id="btn-generate" class="btn btn-primary" disabled>
+                                ⚡ Сгенерировать задачи
+                            </button>
+                            <button id="btn-regenerate-quarter" class="btn btn-secondary" type="button" disabled
+                                    title="Перегенерировать задачи всех заскоренных эпиков выбранного квартала">
+                                🔁 Перегенерировать квартал
+                            </button>
+                            <button id="btn-reorder-epics" class="btn btn-secondary btn-sm" type="button"
+                                    title="Изменить порядок эпиков в очереди команды">
+                                🔀 Порядок эпиков
+                            </button>
+                            <button id="btn-reorder-stories" class="btn btn-secondary btn-sm" type="button"
+                                    title="Изменить порядок историй внутри эпика, выбранного слева">
+                                🔀 Порядок историй
+                            </button>
+                        </div>
                     </div>
                     <div class="toolbar-right">
                         <div class="view-modes">

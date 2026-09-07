@@ -137,20 +137,24 @@ func (s *Service) buildRoleTasks(ctx context.Context, storyOrEpicID uuid.UUID) (
 	return roleTasks, nil
 }
 
-// GenerateTasksForEpic creates Gantt task rows for a scored epic: a parent
+// generateTaskRowsForEpic creates Gantt task rows for a scored epic: a parent
 // task (the epic itself), a wrapper task per story (or, for legacy epics
 // without stories, role tasks directly under the epic), and a role task per
 // scored role. It does NOT lay out dates itself — that's the job of the
-// global pipeline scheduler (RecalculateTeamSchedule), which this method
-// invokes once all rows exist. startDate only seeds the epic's initial
-// "floor" (its parent task's StartDate), used by the scheduler as the
-// earliest possible start for this epic's own tasks.
-func (s *Service) GenerateTasksForEpic(
+// global pipeline scheduler (RecalculateTeamSchedule) — and, unlike the
+// public GenerateTasksForEpic, it does NOT invoke it either: callers that
+// need to (re)generate rows for several epics in one operation (see
+// GenerateTasksForQuarter) call RecalculateTeamSchedule themselves, once,
+// after all rows across all epics have been created. startDate only seeds
+// the epic's initial "floor" (its parent task's StartDate), used by the
+// scheduler as the earliest possible start for this epic's own tasks.
+// Returns the epic (needed by callers for TeamID/logging).
+func (s *Service) generateTaskRowsForEpic(
 	ctx context.Context,
 	epicID uuid.UUID,
 	startDate time.Time,
-) ([]domain.GanttTask, error) {
-	op := "gantt.GenerateTasksForEpic"
+) (*domain.Epic, error) {
+	op := "gantt.generateTaskRowsForEpic"
 
 	epic, err := s.repo.GetEpicByID(ctx, epicID)
 	if err != nil {
@@ -260,6 +264,25 @@ func (s *Service) GenerateTasksForEpic(
 		}
 	}
 
+	return epic, nil
+}
+
+// GenerateTasksForEpic creates Gantt task rows for a scored epic (see
+// generateTaskRowsForEpic) and then rebuilds the team-wide pipeline schedule.
+// startDate only seeds the epic's initial "floor" — the scheduler is what
+// actually lays out dates.
+func (s *Service) GenerateTasksForEpic(
+	ctx context.Context,
+	epicID uuid.UUID,
+	startDate time.Time,
+) ([]domain.GanttTask, error) {
+	op := "gantt.GenerateTasksForEpic"
+
+	epic, err := s.generateTaskRowsForEpic(ctx, epicID, startDate)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
 	result, err := s.RecalculateTeamSchedule(ctx, epic.TeamID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: recalc schedule: %w", op, err)
@@ -268,6 +291,94 @@ func (s *Service) GenerateTasksForEpic(
 	s.log.Info("generated gantt tasks",
 		slog.String("epicID", epicID.String()),
 		slog.Int("taskCount", len(result)))
+
+	return result, nil
+}
+
+// QuarterGenerationResult holds counters describing the outcome of a bulk
+// GenerateTasksForQuarter call.
+type QuarterGenerationResult struct {
+	// EpicsTotal — количество отобранных заскоренных эпиков квартала.
+	EpicsTotal int
+	// EpicsRegenerated — количество эпиков, для которых задачи были
+	// успешно пересозданы.
+	EpicsRegenerated int
+	// EpicsFailed — количество отобранных эпиков, генерация задач для
+	// которых завершилась ошибкой (например, отсутствуют оценки ролей).
+	EpicsFailed int
+	// TasksCount — итоговое число задач Ганта команды после пересчёта
+	// расписания (0, если пересчёт не выполнялся).
+	TasksCount int
+}
+
+// GenerateTasksForQuarter (пере)генерирует задачи Ганта для всех топ-эпиков
+// команды за указанные год и квартал, находящихся в статусе SCORED, и
+// пересчитывает расписание команды ровно один раз в конце — в отличие от
+// вызова GenerateTasksForEpic по каждому эпику отдельно, что дало бы N
+// пересчётов подряд (design.md Decision 2, change add-gantt-quarter-regenerate).
+//
+// Эпики отбираются из GetTeamEpicsOrdered с фильтрацией в памяти, что
+// сохраняет порядок очереди планировщика (sort_order) без добавления нового
+// метода в Repository. Эпики других периодов или в статусах NEW/SCORING не
+// затрагиваются. Ошибка генерации отдельного эпика логируется и увеличивает
+// EpicsFailed, не прерывая обработку остальных эпиков квартала (частичный
+// успех, design.md Decision 3).
+func (s *Service) GenerateTasksForQuarter(
+	ctx context.Context,
+	teamID uuid.UUID,
+	year, quarter int,
+	startDate time.Time,
+) (QuarterGenerationResult, error) {
+	op := "gantt.GenerateTasksForQuarter"
+
+	epics, err := s.repo.GetTeamEpicsOrdered(ctx, teamID)
+	if err != nil {
+		return QuarterGenerationResult{}, fmt.Errorf("%s: get team epics: %w", op, err)
+	}
+
+	var selected []domain.Epic
+	for _, e := range epics {
+		if e.Year == year && e.Quarter == quarter && e.Status == domain.StatusScored {
+			selected = append(selected, e)
+		}
+	}
+
+	result := QuarterGenerationResult{EpicsTotal: len(selected)}
+	if len(selected) == 0 {
+		return result, nil
+	}
+
+	for _, e := range selected {
+		if _, err := s.generateTaskRowsForEpic(ctx, e.ID, startDate); err != nil {
+			s.log.Error("failed to generate gantt tasks for epic in quarter regeneration",
+				slog.String("epicID", e.ID.String()),
+				slog.Int("year", year),
+				slog.Int("quarter", quarter),
+				slog.Any("error", err))
+			result.EpicsFailed++
+			continue
+		}
+		result.EpicsRegenerated++
+	}
+
+	if result.EpicsRegenerated == 0 {
+		return result, nil
+	}
+
+	tasks, err := s.RecalculateTeamSchedule(ctx, teamID)
+	if err != nil {
+		return result, fmt.Errorf("%s: recalc schedule: %w", op, err)
+	}
+	result.TasksCount = len(tasks)
+
+	s.log.Info("regenerated gantt tasks for quarter",
+		slog.String("teamID", teamID.String()),
+		slog.Int("year", year),
+		slog.Int("quarter", quarter),
+		slog.Int("epicsTotal", result.EpicsTotal),
+		slog.Int("epicsRegenerated", result.EpicsRegenerated),
+		slog.Int("epicsFailed", result.EpicsFailed),
+		slog.Int("tasksCount", result.TasksCount))
 
 	return result, nil
 }

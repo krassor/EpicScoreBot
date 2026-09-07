@@ -585,34 +585,107 @@ function isExpertRoleVoteVisible(story, isAdmin) {
     return !!(isAdmin && story && story.status === 'SCORING');
 }
 
+// calculateRoleScoreAggregate — средневзвешенная оценка и покрытие голосами одной роли,
+// посчитанные на клиенте из уже загруженного ответа GET /epics/{id}/scores (scoresData).
+//
+// Формула зеркалит scoring.CalculateEpicRoleAvg (internal/scoring/scoring.go:46) —
+// Σ(score × weight) / Σ(weight) по голосам с этим role_id, при нулевом суммарном весе
+// возвращается 0, как и на бэкенде. Источник истины для формулы — именно эта функция
+// бэкенда, менять формулу здесь без сверки с ней нельзя.
+//
+// Расчёт живёт на клиенте, а не берётся из GET /epics/{id}/role-scores, по двум причинам:
+// 1) пока стори в статусе SCORING, этот эндпоинт всегда возвращает пустой список — бэкенд
+//    заполняет epic_role_scores только внутри TryCompleteEpicScoring, когда проголосовала
+//    уже вся команда (см. комментарий у buildEvaluatingRolesForScoring);
+// 2) ответ GET /epics/{id}/scores уже содержит всё необходимое — user.weight по каждому
+//    голосу и members[] с weight/role_id по каждому участнику команды, — то есть считать
+//    агрегат не из чего дополнительно запрашивать, всё уже загружено в selectedStoryScores.
+//
+// Покрытие роли (voted_count/expected_count) считается по текущему составу команды
+// (scoresData.members), а не по числу голосов: expected_count — сколько участников
+// команды сейчас закреплено за этой ролью, voted_count — сколько из них уже проголосовало
+// ИМЕННО за эту роль. Участник без role_id (пустая строка — например, если бэкенд не
+// смог определить его роль) не совпадёт ни с одним roleId и поэтому не учитывается ни в
+// числителе, ни в знаменателе ни одной роли.
+//
+// Голос засчитывается в voted_count только при совпадении и user_id, и role_id: голос
+// хранит ту роль, которая была у участника на момент голосования, и если участник сменил
+// роль уже после этого, его старый голос не попадёт в weightedSum новой роли (там фильтр
+// по role_id). Считать его проголосовавшим за новую роль было бы неверно — роль показала
+// бы окончательное значение, посчитанное без него. При таком расхождении роль остаётся
+// непокрытой и показывает прочерк — сознательно консервативный исход.
+function calculateRoleScoreAggregate(roleId, scoresData) {
+    const scores = (scoresData && scoresData.scores) || [];
+    const members = (scoresData && scoresData.members) || [];
+
+    const roleMembers = members.filter(m => m.role_id === roleId);
+    const expected_count = roleMembers.length;
+    const voted_count = roleMembers.filter(
+        m => scores.some(s => s.user_id === m.id && s.role_id === roleId)
+    ).length;
+
+    const roleScores = scores.filter(s => s.role_id === roleId);
+    let weightedSum = 0;
+    let totalWeight = 0;
+    roleScores.forEach(s => {
+        const weight = (s.user && typeof s.user.weight === 'number') ? s.user.weight : 0;
+        weightedSum += s.score * weight;
+        totalWeight += weight;
+    });
+    const weighted_avg = totalWeight === 0 ? 0 : weightedSum / totalWeight;
+
+    return { weighted_avg, voted_count, expected_count };
+}
+
 // buildEvaluatingRolesForScoring — источник данных для таблицы «Оценки по ролям» пока
 // скоринг ещё идёт (SCORING). GET /epics/{id}/role-scores в этом статусе всегда возвращает
 // пустой список (заполняется только внутри TryCompleteEpicScoring при переходе в SCORED),
 // поэтому список ролей строится из evaluating_role_ids уже загруженного объекта стори/эпика,
 // а имена ролей сопоставляются через общий rolesList (тот же справочник, что и в форме
 // редактирования эпика для чекбоксов ролей) — нового запроса за списком ролей не требуется.
-function buildEvaluatingRolesForScoring(story) {
+// Дополнительно по каждой роли считается weighted_avg/voted_count/expected_count из
+// scoresData (ответ GET /epics/{id}/scores) — см. calculateRoleScoreAggregate — чтобы
+// рендер оставался чистым отображением, а расчёт был сосредоточен здесь.
+function buildEvaluatingRolesForScoring(story, scoresData) {
     const roleIds = (story && story.evaluating_role_ids) || [];
     return roleIds.map(roleId => {
         const role = rolesList.find(r => r.id === roleId);
-        return { role_id: roleId, role_name: role ? role.name : roleId };
+        const aggregate = calculateRoleScoreAggregate(roleId, scoresData);
+        return {
+            role_id: roleId,
+            role_name: role ? role.name : roleId,
+            weighted_avg: aggregate.weighted_avg,
+            voted_count: aggregate.voted_count,
+            expected_count: aggregate.expected_count,
+        };
     });
 }
 
-// Строки таблицы «Оценки по ролям» пока скоринг ещё идёт (SCORING): реальной посчитанной
-// оценки по роли ещё нет (заполнится только при переходе в SCORED), поэтому вместо значения
-// показывается прочерк, а вместо колонки «Переопределить» — новое поле ввода и кнопка
-// массового экспертного голосования за всю роль.
+// Строки таблицы «Оценки по ролям» пока скоринг ещё идёт (SCORING). Колонка «Оценка (чд)»:
+// если по роли проголосовали все ожидаемые участники команды (voted_count === expected_count
+// и expected_count > 0) — показывается посчитанная средневзвешенная, в ТОМ ЖЕ формате, что
+// и в renderRoleScoresTableRows() для статуса SCORED (`<значение> чд`), чтобы ячейка визуально
+// не менялась при переходе стори в SCORED. Иначе — прочерк и индикатор покрытия вида
+// «(voted_count/expected_count)» приглушённым цветом. Колонка «Действие» (поле ввода +
+// кнопка «Оценить всей ролью») показывается независимо от покрытия — админ может исправить
+// ошибочную экспертную оценку и у уже покрытой роли.
 function renderRoleScoresTableRowsScoring(evaluatingRoles, story, isAdmin) {
     const showExpertVote = isExpertRoleVoteVisible(story, isAdmin);
     const colspan = showExpertVote ? 3 : 2;
     if (!evaluatingRoles || evaluatingRoles.length === 0) {
         return `<tr><td colspan="${colspan}" style="color: var(--text-muted); text-align: center; padding: 12px 0;">Нет оцениваемых ролей</td></tr>`;
     }
-    return evaluatingRoles.map(r => `
+    return evaluatingRoles.map(r => {
+        const isFullyCovered = r.expected_count > 0 && r.voted_count === r.expected_count;
+        // Формат ячейки при полном покрытии — точно как в renderRoleScoresTableRows()
+        // для статуса SCORED, чтобы значение не «дёргалось» при переходе стори в SCORED.
+        const scoreCellHtml = isFullyCovered
+            ? `<td>${r.weighted_avg} чд</td>`
+            : `<td style="color: var(--text-muted);">— (${r.voted_count}/${r.expected_count})</td>`;
+        return `
         <tr>
             <td><strong>${r.role_name}</strong></td>
-            <td style="color: var(--text-muted);">—</td>
+            ${scoreCellHtml}
             ${showExpertVote ? `
             <td>
                 <div style="display: flex; align-items: center; gap: 6px;">
@@ -621,14 +694,16 @@ function renderRoleScoresTableRowsScoring(evaluatingRoles, story, isAdmin) {
                 </div>
             </td>` : ''}
         </tr>
-    `).join('');
+    `;
+    }).join('');
 }
 
 // Полное содержимое таблицы «Оценки по ролям» пока скоринг ещё идёт (SCORING) —
-// см. buildEvaluatingRolesForScoring для объяснения источника данных.
-function renderRoleScoresTableHtmlScoring(story, isAdmin) {
+// см. buildEvaluatingRolesForScoring для объяснения источника данных. scoresData
+// (ответ GET /epics/{id}/scores) нужен для расчёта весов/покрытия по ролям.
+function renderRoleScoresTableHtmlScoring(story, isAdmin, scoresData) {
     const showExpertVote = isExpertRoleVoteVisible(story, isAdmin);
-    const evaluatingRoles = buildEvaluatingRolesForScoring(story);
+    const evaluatingRoles = buildEvaluatingRolesForScoring(story, scoresData);
     return `
         <thead>
             <tr>
@@ -670,11 +745,13 @@ function renderRoleScoresTableRows(roleScores, story, isAdmin) {
 //
 // Пока стори/эпик в статусе SCORING, источник данных — не roleScores (ответ
 // GET /epics/{id}/role-scores, в этом статусе всегда пустой), а evaluating_role_ids
-// самой стори/эпика — см. renderRoleScoresTableHtmlScoring. При SCORED и других
-// статусах поведение не меняется.
-function renderRoleScoresTableHtml(roleScores, story, isAdmin) {
+// самой стори/эпика плюс scoresData (ответ GET /epics/{id}/scores, нужен для расчёта
+// средневзвешенной и покрытия по ролям) — см. renderRoleScoresTableHtmlScoring. При
+// SCORED и других статусах поведение не меняется: scoresData туда не пробрасывается,
+// используется только roleScores.
+function renderRoleScoresTableHtml(roleScores, story, isAdmin, scoresData) {
     if (story && story.status === 'SCORING') {
-        return renderRoleScoresTableHtmlScoring(story, isAdmin);
+        return renderRoleScoresTableHtmlScoring(story, isAdmin, scoresData);
     }
     const showOverride = isRoleScoreOverrideVisible(story, isAdmin);
     return `
@@ -830,10 +907,14 @@ function openExpertRoleScoreModal(roleId, roleName, score) {
 
 // Точечный рефреш только таблицы «Оценки по ролям» после переопределения: заново
 // запрашивает GET /epics/{id}/role-scores и заменяет innerHTML таблицы, не трогая
-// остальную панель скоринга стори.
+// остальную панель скоринга стори. Пока стори в статусе SCORING, содержимое строк
+// зависит ещё и от selectedStoryScores (голоса участников, из которых считается
+// средневзвешенная и покрытие по ролям — см. calculateRoleScoreAggregate), поэтому
+// он тоже перезапрашивается здесь тем же способом с .catch()-фолбэком, что в loadEpicData().
 async function refreshRoleScoresTable() {
     if (!selectedStory) return;
     selectedStoryRoleScores = (await apiGet(`/epics/${selectedStory.id}/role-scores`).catch(() => ([]))) || [];
+    selectedStoryScores = (await apiGet(`/epics/${selectedStory.id}/scores`).catch(() => ({ scores: [], expected: 0, received: 0 }))) || { scores: [], expected: 0, received: 0 };
 
     const table = document.getElementById('role-scores-table');
     if (!table) return;
@@ -841,8 +922,11 @@ async function refreshRoleScoresTable() {
     const userProfile = state.get('userProfile');
     const isAdmin = userProfile && (userProfile.role === 'admin' || userProfile.role === 'superadmin');
 
-    table.innerHTML = renderRoleScoresTableHtml(selectedStoryRoleScores, selectedStory, isAdmin);
+    table.innerHTML = renderRoleScoresTableHtml(selectedStoryRoleScores, selectedStory, isAdmin, selectedStoryScores);
     bindRoleScoreOverrideEvents(table);
+    // Кнопки «Оценить всей ролью» видны только в статусе SCORING (renderRoleScoresTableHtmlScoring);
+    // без повторной привязки они остались бы без обработчиков после перерисовки таблицы.
+    bindExpertRoleScoreEvents(table);
 }
 
 function renderAdminScoresTableRows(epicOrStory, scoresData) {
@@ -1100,7 +1184,7 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
             <div style="margin-top: 8px;">
                 <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Оценки по ролям</h4>
                 <table class="scores-table" id="role-scores-table" style="font-size: 13px;">
-                    ${renderRoleScoresTableHtml(roleScores, story, isAdmin)}
+                    ${renderRoleScoresTableHtml(roleScores, story, isAdmin, scoresData)}
                 </table>
             </div>
         </div>

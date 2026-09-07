@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"EpicScoreBot/internal/gantt"
 	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/report"
 	"context"
@@ -12,6 +13,10 @@ import (
 // GanttService defines the business-logic contract used by handlers.
 type GanttService interface {
 	GenerateTasksForEpic(ctx context.Context, epicID uuid.UUID, startDate time.Time) ([]domain.GanttTask, error)
+	// GenerateTasksForQuarter (пере)генерирует задачи Ганта для всех
+	// заскоренных топ-эпиков команды за указанные год и квартал одним
+	// пересчётом расписания вместо N пересчётов по одному на эпик.
+	GenerateTasksForQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int, startDate time.Time) (gantt.QuarterGenerationResult, error)
 	ReorderTask(ctx context.Context, taskID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)
 	// ReorderEpic меняет позицию топ-эпика в очереди конвейерного планировщика команды.
 	ReorderEpic(ctx context.Context, epicID uuid.UUID, newSortOrder int) ([]domain.GanttTask, error)

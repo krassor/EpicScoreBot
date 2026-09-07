@@ -167,6 +167,20 @@
         white-space: normal;
     }
 
+    /* Двухрядная панель Ганта (add-gantt-quarter-regenerate): на узком экране каждый
+       .toolbar-row тоже раскладывается в колонку, иначе селекты года/квартала/даты
+       и кнопки действий сжимаются в одну узкую полосу и вызывают горизонтальный скролл. */
+    .toolbar-row {
+        flex-direction: column;
+        align-items: stretch;
+        width: 100%;
+    }
+
+    .toolbar-row > * {
+        width: 100%;
+        white-space: normal;
+    }
+
     .toolbar-right {
         width: 100%;
         justify-content: space-between;

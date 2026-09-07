@@ -1197,3 +1197,22 @@
     padding: 1px 4px;
     border-radius: 3px;
 }
+
+/* ── Двухрядная панель инструментов вкладки «Гант» (add-gantt-quarter-regenerate) ─────
+   .toolbar-left вкладки Ганта теперь состоит из двух рядов (.toolbar-row): 1-й —
+   период планирования (год/квартал/дата), 2-й — выбор эпика и действия генерации.
+   Селектор с #tab-content-gantt нужен, чтобы гарантированно перекрыть более общее
+   правило `.toolbar-left { align-items: center }` из gantt.css той же специфичности,
+   не редактируя сам файл gantt.css (design.md Decision 6). */
+#tab-content-gantt .toolbar-left {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+}
+
+.toolbar-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+}

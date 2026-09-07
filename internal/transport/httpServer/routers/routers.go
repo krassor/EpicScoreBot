@@ -124,6 +124,11 @@ func (r *Router) Mount(mux *chi.Mux) {
 				mux.Get("/epics", r.ganttHandler.GetEpics)
 				mux.Get("/tasks", r.ganttHandler.GetTasks)
 				mux.Post("/tasks/generate", r.ganttHandler.GenerateTasks)
+				// Массовая перегенерация задач всех заскоренных эпиков квартала
+				// одним пересчётом расписания команды — та же аутентифицированная
+				// группа и права, что и у одиночной генерации (без RoleAuth),
+				// см. openspec/changes/add-gantt-quarter-regenerate/design.md.
+				mux.Post("/tasks/generate-quarter", r.ganttHandler.GenerateQuarterTasks)
 
 				mux.Route("/tasks/{id}", func(mux chi.Router) {
 					mux.Put("/", r.ganttHandler.UpdateTask)

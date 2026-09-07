@@ -35,6 +35,14 @@ type fakeRepo struct {
 	maxActiveRecalcs  int
 	recalcDelay       time.Duration
 	recalcDelayTeamID uuid.UUID // если задан, задержка применяется только к этой команде
+
+	// getGanttTasksByTeamIDCalls считает вызовы GetGanttTasksByTeamID —
+	// единственный repo-вызов внутри GetTeamTasks, которым завершается
+	// RecalculateTeamSchedule (его последняя строка — return
+	// s.GetTeamTasks(...)). Используется тестами GenerateTasksForQuarter
+	// (см. quarter_test.go) как надёжный счётчик числа вызовов
+	// RecalculateTeamSchedule за операцию.
+	getGanttTasksByTeamIDCalls int
 }
 
 func newFakeRepo() *fakeRepo {
@@ -180,6 +188,10 @@ func (f *fakeRepo) CreateGanttTask(ctx context.Context, task *domain.GanttTask) 
 }
 
 func (f *fakeRepo) GetGanttTasksByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error) {
+	f.concurrencyMu.Lock()
+	f.getGanttTasksByTeamIDCalls++
+	f.concurrencyMu.Unlock()
+
 	var res []*domain.GanttTask
 	for _, t := range f.tasks {
 		epic, ok := f.epics[t.EpicID]
