@@ -147,6 +147,11 @@ type ScoringService interface {
 	// на основе текущих сохранённых epic_role_scores и оценок рисков, без
 	// сохранения результата.
 	PreviewFinalScore(ctx context.Context, epicID uuid.UUID) (float64, error)
+	// SubmitExpertRoleScore проставляет одну и ту же экспертную оценку сразу
+	// за всех участников команды с указанной ролью, пока скоринг эпика/стори
+	// ещё идёт (статус SCORING), и запускает попытку завершения скоринга.
+	// Возвращает количество затронутых участников.
+	SubmitExpertRoleScore(ctx context.Context, epicID, roleID uuid.UUID, score int) (int, error)
 }
 
 // TeamAdminScoper предоставляет точечные team-scoped проверки роли admin по

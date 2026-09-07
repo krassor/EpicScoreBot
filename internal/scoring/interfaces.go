@@ -28,4 +28,12 @@ type Repository interface {
 	SetEpicFinalScore(ctx context.Context, epicID uuid.UUID, score float64) error
 	GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 	GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
+	// GetUsersByTeamIDAndRoleID возвращает участников команды с указанной ролью —
+	// используется для массового проставления экспертной оценки роли
+	// (SubmitExpertRoleScore).
+	GetUsersByTeamIDAndRoleID(ctx context.Context, teamID, roleID uuid.UUID) ([]domain.User, error)
+	// CreateEpicScore — upsert голоса участника за эпик по ключу (epic_id, user_id),
+	// используется для массового проставления экспертной оценки роли
+	// (SubmitExpertRoleScore), как и обычным голосованием участника/за участника.
+	CreateEpicScore(ctx context.Context, epicID, userID, roleID uuid.UUID, score int) error
 }

@@ -34,6 +34,8 @@ type MockRepository struct {
 	SetEpicFinalScoreFunc               func(ctx context.Context, epicID uuid.UUID, score float64) error
 	GetStoriesByEpicIDFunc              func(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
 	GetEpicRoleScoresByEpicIDFunc       func(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
+	GetUsersByTeamIDAndRoleIDFunc       func(ctx context.Context, teamID, roleID uuid.UUID) ([]domain.User, error)
+	CreateEpicScoreFunc                 func(ctx context.Context, epicID, userID, roleID uuid.UUID, score int) error
 }
 
 func (m *MockRepository) GetEpicScoresByEpicIDAndRoleID(ctx context.Context, epicID, roleID uuid.UUID) ([]domain.EpicScore, error) {
@@ -160,6 +162,20 @@ func (m *MockRepository) GetEpicRoleScoresByEpicID(ctx context.Context, epicID u
 		return m.GetEpicRoleScoresByEpicIDFunc(ctx, epicID)
 	}
 	return nil, nil
+}
+
+func (m *MockRepository) GetUsersByTeamIDAndRoleID(ctx context.Context, teamID, roleID uuid.UUID) ([]domain.User, error) {
+	if m.GetUsersByTeamIDAndRoleIDFunc != nil {
+		return m.GetUsersByTeamIDAndRoleIDFunc(ctx, teamID, roleID)
+	}
+	return nil, nil
+}
+
+func (m *MockRepository) CreateEpicScore(ctx context.Context, epicID, userID, roleID uuid.UUID, score int) error {
+	if m.CreateEpicScoreFunc != nil {
+		return m.CreateEpicScoreFunc(ctx, epicID, userID, roleID, score)
+	}
+	return nil
 }
 
 
@@ -1355,5 +1371,180 @@ func TestTryCompleteEpicScoring_StoryCascade(t *testing.T) {
 	if !upsertRoleScoreCalled {
 		t.Error("expected parent UpsertEpicRoleScore to be called")
 	}
+}
+
+func TestSubmitExpertRoleScore(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+
+	t.Run("epic not in SCORING returns ErrScoringAlreadyComplete", func(t *testing.T) {
+		epicID := uuid.New()
+		roleID := uuid.New()
+		mockRepo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, eID uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{ID: epicID, Status: domain.StatusScored}, nil
+			},
+			GetUsersByTeamIDAndRoleIDFunc: func(ctx context.Context, tID, rID uuid.UUID) ([]domain.User, error) {
+				t.Fatal("GetUsersByTeamIDAndRoleID must not be called when scoring already complete")
+				return nil, nil
+			},
+		}
+		s := New(logger, mockRepo)
+		scoredCount, err := s.SubmitExpertRoleScore(ctx, epicID, roleID, 8)
+		if !errors.Is(err, ErrScoringAlreadyComplete) {
+			t.Fatalf("expected ErrScoringAlreadyComplete, got %v", err)
+		}
+		if scoredCount != 0 {
+			t.Errorf("expected scoredCount 0, got %d", scoredCount)
+		}
+	})
+
+	t.Run("no team members with the role returns ErrNoRoleMembers", func(t *testing.T) {
+		epicID := uuid.New()
+		roleID := uuid.New()
+		teamID := uuid.New()
+		mockRepo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, eID uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{ID: epicID, TeamID: teamID, Status: domain.StatusScoring}, nil
+			},
+			GetUsersByTeamIDAndRoleIDFunc: func(ctx context.Context, tID, rID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{}, nil
+			},
+			CreateEpicScoreFunc: func(ctx context.Context, eID, uID, rID uuid.UUID, score int) error {
+				t.Fatal("CreateEpicScore must not be called when there are no role members")
+				return nil
+			},
+		}
+		s := New(logger, mockRepo)
+		scoredCount, err := s.SubmitExpertRoleScore(ctx, epicID, roleID, 8)
+		if !errors.Is(err, ErrNoRoleMembers) {
+			t.Fatalf("expected ErrNoRoleMembers, got %v", err)
+		}
+		if scoredCount != 0 {
+			t.Errorf("expected scoredCount 0, got %d", scoredCount)
+		}
+	})
+
+	t.Run("happy path scores all role members and does not complete scoring", func(t *testing.T) {
+		epicID := uuid.New()
+		roleID := uuid.New()
+		teamID := uuid.New()
+		user1 := uuid.New()
+		user2 := uuid.New()
+
+		var createdFor []uuid.UUID
+		var createdScores []int
+
+		mockRepo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, eID uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{ID: epicID, TeamID: teamID, Status: domain.StatusScoring}, nil
+			},
+			GetUsersByTeamIDAndRoleIDFunc: func(ctx context.Context, tID, rID uuid.UUID) ([]domain.User, error) {
+				if tID != teamID || rID != roleID {
+					t.Errorf("GetUsersByTeamIDAndRoleID called with unexpected ids: %v/%v", tID, rID)
+				}
+				return []domain.User{{ID: user1}, {ID: user2}}, nil
+			},
+			CreateEpicScoreFunc: func(ctx context.Context, eID, uID, rID uuid.UUID, score int) error {
+				if eID != epicID || rID != roleID {
+					t.Errorf("CreateEpicScore called with unexpected ids: %v/%v", eID, rID)
+				}
+				createdFor = append(createdFor, uID)
+				createdScores = append(createdScores, score)
+				return nil
+			},
+			// Скоринг ещё не завершён (не все ожидаемые голоса собраны) —
+			// TryCompleteEpicScoring должен вернуться без ошибок, ничего
+			// сверх этого не должен пытаться пересчитать.
+			GetExpectedScorersCountFunc: func(ctx context.Context, eID, tID uuid.UUID) (int, error) {
+				return 5, nil
+			},
+			GetSubmittedEpicScorersCountFunc: func(ctx context.Context, eID, tID uuid.UUID) (int, error) {
+				return 2, nil
+			},
+		}
+
+		s := New(logger, mockRepo)
+		scoredCount, err := s.SubmitExpertRoleScore(ctx, epicID, roleID, 8)
+		if err != nil {
+			t.Fatalf("SubmitExpertRoleScore failed: %v", err)
+		}
+		if scoredCount != 2 {
+			t.Errorf("expected scoredCount 2, got %d", scoredCount)
+		}
+		if len(createdFor) != 2 || createdFor[0] != user1 || createdFor[1] != user2 {
+			t.Errorf("expected CreateEpicScore called for both role members in order, got %v", createdFor)
+		}
+		for _, sc := range createdScores {
+			if sc != 8 {
+				t.Errorf("expected all created scores to be 8, got %v", createdScores)
+			}
+		}
+	})
+
+	t.Run("last missing role completes epic scoring (transitions to SCORED)", func(t *testing.T) {
+		epicID := uuid.New()
+		roleID := uuid.New()
+		teamID := uuid.New()
+		user1 := uuid.New()
+
+		finalScoreSet := false
+		var finalScoreValue float64
+
+		mockRepo := &MockRepository{
+			GetEpicByIDFunc: func(ctx context.Context, eID uuid.UUID) (*domain.Epic, error) {
+				return &domain.Epic{ID: epicID, TeamID: teamID, Status: domain.StatusScoring}, nil
+			},
+			GetUsersByTeamIDAndRoleIDFunc: func(ctx context.Context, tID, rID uuid.UUID) ([]domain.User, error) {
+				return []domain.User{{ID: user1}}, nil
+			},
+			CreateEpicScoreFunc: func(ctx context.Context, eID, uID, rID uuid.UUID, score int) error {
+				return nil
+			},
+			// После проставления оценки роли все ожидаемые голоса собраны —
+			// TryCompleteEpicScoring должен посчитать и сохранить итоговую оценку.
+			GetExpectedScorersCountFunc: func(ctx context.Context, eID, tID uuid.UUID) (int, error) {
+				return 1, nil
+			},
+			GetSubmittedEpicScorersCountFunc: func(ctx context.Context, eID, tID uuid.UUID) (int, error) {
+				return 1, nil
+			},
+			GetDistinctRoleIDsForEpicScoresFunc: func(ctx context.Context, eID uuid.UUID) ([]uuid.UUID, error) {
+				return []uuid.UUID{roleID}, nil
+			},
+			GetEpicScoresByEpicIDAndRoleIDFunc: func(ctx context.Context, eID, rID uuid.UUID) ([]domain.EpicScore, error) {
+				return []domain.EpicScore{{UserID: user1, Score: 8}}, nil
+			},
+			GetUserByIDFunc: func(ctx context.Context, uID uuid.UUID) (*domain.User, error) {
+				return &domain.User{ID: user1, Weight: 100}, nil
+			},
+			UpsertEpicRoleScoreFunc: func(ctx context.Context, eID, rID uuid.UUID, score float64) error {
+				return nil
+			},
+			GetRisksByEpicIDFunc: func(ctx context.Context, eID uuid.UUID) ([]domain.Risk, error) {
+				return []domain.Risk{}, nil
+			},
+			SetEpicFinalScoreFunc: func(ctx context.Context, eID uuid.UUID, score float64) error {
+				finalScoreSet = true
+				finalScoreValue = score
+				return nil
+			},
+		}
+
+		s := New(logger, mockRepo)
+		scoredCount, err := s.SubmitExpertRoleScore(ctx, epicID, roleID, 8)
+		if err != nil {
+			t.Fatalf("SubmitExpertRoleScore failed: %v", err)
+		}
+		if scoredCount != 1 {
+			t.Errorf("expected scoredCount 1, got %d", scoredCount)
+		}
+		if !finalScoreSet {
+			t.Fatal("expected SetEpicFinalScore to be called (epic должен перейти в SCORED)")
+		}
+		if math.Abs(finalScoreValue-8.0) > 1e-9 {
+			t.Errorf("expected final score 8.0, got %v", finalScoreValue)
+		}
+	})
 }
 

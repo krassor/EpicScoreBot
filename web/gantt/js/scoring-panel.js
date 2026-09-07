@@ -573,6 +573,71 @@ function isRoleScoreOverrideVisible(story, isAdmin) {
     return !!(isAdmin && story && story.status === 'SCORED');
 }
 
+// Массовое проставление экспертной оценки роли (btn-expert-role-score) доступно только
+// администратору и только пока скоринг ещё идёт (SCORING) — отдельный, новый механизм
+// для активной фазы скоринга, не путать с переопределением выше (доступно только после SCORED).
+function isExpertRoleVoteVisible(story, isAdmin) {
+    return !!(isAdmin && story && story.status === 'SCORING');
+}
+
+// buildEvaluatingRolesForScoring — источник данных для таблицы «Оценки по ролям» пока
+// скоринг ещё идёт (SCORING). GET /epics/{id}/role-scores в этом статусе всегда возвращает
+// пустой список (заполняется только внутри TryCompleteEpicScoring при переходе в SCORED),
+// поэтому список ролей строится из evaluating_role_ids уже загруженного объекта стори/эпика,
+// а имена ролей сопоставляются через общий rolesList (тот же справочник, что и в форме
+// редактирования эпика для чекбоксов ролей) — нового запроса за списком ролей не требуется.
+function buildEvaluatingRolesForScoring(story) {
+    const roleIds = (story && story.evaluating_role_ids) || [];
+    return roleIds.map(roleId => {
+        const role = rolesList.find(r => r.id === roleId);
+        return { role_id: roleId, role_name: role ? role.name : roleId };
+    });
+}
+
+// Строки таблицы «Оценки по ролям» пока скоринг ещё идёт (SCORING): реальной посчитанной
+// оценки по роли ещё нет (заполнится только при переходе в SCORED), поэтому вместо значения
+// показывается прочерк, а вместо колонки «Переопределить» — новое поле ввода и кнопка
+// массового экспертного голосования за всю роль.
+function renderRoleScoresTableRowsScoring(evaluatingRoles, story, isAdmin) {
+    const showExpertVote = isExpertRoleVoteVisible(story, isAdmin);
+    const colspan = showExpertVote ? 3 : 2;
+    if (!evaluatingRoles || evaluatingRoles.length === 0) {
+        return `<tr><td colspan="${colspan}" style="color: var(--text-muted); text-align: center; padding: 12px 0;">Нет оцениваемых ролей</td></tr>`;
+    }
+    return evaluatingRoles.map(r => `
+        <tr>
+            <td><strong>${r.role_name}</strong></td>
+            <td style="color: var(--text-muted);">—</td>
+            ${showExpertVote ? `
+            <td>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <input type="number" class="input expert-role-score-input" data-role-id="${r.role_id}" min="0" step="1" placeholder="чд" style="width: 70px; padding: 4px 6px; font-size: 12px;">
+                    <button class="btn btn-secondary btn-expert-role-score" data-role-id="${r.role_id}" data-role-name="${r.role_name}" style="padding: 4px 8px; font-size: 11px;">Оценить всей ролью</button>
+                </div>
+            </td>` : ''}
+        </tr>
+    `).join('');
+}
+
+// Полное содержимое таблицы «Оценки по ролям» пока скоринг ещё идёт (SCORING) —
+// см. buildEvaluatingRolesForScoring для объяснения источника данных.
+function renderRoleScoresTableHtmlScoring(story, isAdmin) {
+    const showExpertVote = isExpertRoleVoteVisible(story, isAdmin);
+    const evaluatingRoles = buildEvaluatingRolesForScoring(story);
+    return `
+        <thead>
+            <tr>
+                <th>Роль</th>
+                <th>Оценка (чд)</th>
+                ${showExpertVote ? '<th>Действие</th>' : ''}
+            </tr>
+        </thead>
+        <tbody>
+            ${renderRoleScoresTableRowsScoring(evaluatingRoles, story, isAdmin)}
+        </tbody>
+    `;
+}
+
 function renderRoleScoresTableRows(roleScores, story, isAdmin) {
     const showOverride = isRoleScoreOverrideVisible(story, isAdmin);
     const colspan = showOverride ? 3 : 2;
@@ -597,7 +662,15 @@ function renderRoleScoresTableRows(roleScores, story, isAdmin) {
 // Полное содержимое таблицы «Оценки по ролям» (thead + tbody), чтобы можно было
 // целиком заменить innerHTML таблицы при точечном рефреше после переопределения
 // оценки роли, без перерисовки всей панели скоринга.
+//
+// Пока стори/эпик в статусе SCORING, источник данных — не roleScores (ответ
+// GET /epics/{id}/role-scores, в этом статусе всегда пустой), а evaluating_role_ids
+// самой стори/эпика — см. renderRoleScoresTableHtmlScoring. При SCORED и других
+// статусах поведение не меняется.
 function renderRoleScoresTableHtml(roleScores, story, isAdmin) {
+    if (story && story.status === 'SCORING') {
+        return renderRoleScoresTableHtmlScoring(story, isAdmin);
+    }
     const showOverride = isRoleScoreOverrideVisible(story, isAdmin);
     return `
         <thead>
@@ -649,6 +722,103 @@ function bindRoleScoreOverrideEvents(scopeEl) {
             }
         });
     });
+}
+
+// Обработчики кнопок «Оценить всей ролью» в строках таблицы «Оценки по ролям» (видны
+// только пока стори/эпик в статусе SCORING, см. isExpertRoleVoteVisible). Перед отправкой
+// запроса открывается модалка подтверждения (openExpertRoleScoreModal) — сам запрос
+// уходит на сервер только после явного подтверждения администратором.
+function bindExpertRoleScoreEvents(scopeEl) {
+    if (!scopeEl) return;
+    scopeEl.querySelectorAll('.btn-expert-role-score').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (!selectedStory) return;
+            const roleId = btn.dataset.roleId;
+            const roleName = btn.dataset.roleName;
+            const row = btn.closest('tr');
+            const input = row?.querySelector(`.expert-role-score-input[data-role-id="${roleId}"]`);
+            if (!input) return;
+            const valStr = input.value.trim();
+            if (valStr === '') {
+                showToast('Пожалуйста, введите оценку роли', 'error');
+                return;
+            }
+            const score = Number(valStr);
+            if (isNaN(score) || score < 0) {
+                showToast('Оценка роли должна быть числом не меньше 0', 'error');
+                return;
+            }
+
+            openExpertRoleScoreModal(roleId, roleName, score);
+        });
+    });
+}
+
+// Модальное окно подтверждения массового экспертного проставления оценки роли —
+// предупреждает, что действие перезапишет личные голоса участников этой роли, если
+// они уже есть (design.md, Decision 3). Паттерн подтверждения скопирован с уже
+// существующей модалки удаления эпика (openDeleteEpicModal).
+function openExpertRoleScoreModal(roleId, roleName, score) {
+    let modal = document.getElementById('modal-expert-role-score');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'modal-expert-role-score';
+        modal.className = 'modal hidden';
+        document.body.appendChild(modal);
+    }
+
+    modal.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width: 480px; width: 90%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin: 0; font-size: 16px;">Экспертная оценка роли</h3>
+                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+            </div>
+            <p style="margin: 0 0 8px 0; color: var(--text-primary);">
+                Проставить оценку <strong>${score} чд</strong> за роль <strong>${roleName}</strong> всем участникам команды с этой ролью?
+            </p>
+            <p style="margin: 0; color: var(--color-danger);">
+                Это перезапишет личные голоса участников этой роли, если они уже есть. Отменить действие будет невозможно.
+            </p>
+            <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
+                <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
+                <button type="button" id="btn-confirm-expert-role-score" class="btn btn-primary">Проставить оценку</button>
+            </div>
+        </div>
+    `;
+
+    modal.classList.remove('hidden');
+    modal.style.display = 'flex';
+
+    const closeModal = () => {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+    };
+
+    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
+        btn.onclick = closeModal;
+    });
+
+    const btnConfirm = modal.querySelector('#btn-confirm-expert-role-score');
+    btnConfirm.onclick = async () => {
+        if (!selectedStory) {
+            closeModal();
+            return;
+        }
+
+        try {
+            await apiPost('/admin/scores/role/expert', {
+                epic_id: selectedStory.id,
+                role_id: roleId,
+                score: score
+            });
+            showToast('Экспертная оценка роли проставлена!', 'success');
+            closeModal();
+            await loadEpicData();
+        } catch (err) {
+            showErrorModal(err.message);
+        }
+    };
 }
 
 // Точечный рефреш только таблицы «Оценки по ролям» после переопределения: заново
@@ -1177,6 +1347,9 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
     });
     // 9b. Admin: Override role score directly in the role scores table row
     bindRoleScoreOverrideEvents(container);
+
+    // 9c. Admin: Mass expert vote for a whole role while scoring is still active (SCORING)
+    bindExpertRoleScoreEvents(container);
 
     // 10. Admin: Override story final_score directly (only when scoring already finished)
     if (isAdmin && selectedStory && selectedStory.status === 'SCORED') {

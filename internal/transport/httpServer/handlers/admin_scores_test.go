@@ -122,6 +122,15 @@ type mockAdminScoresSvc struct {
 		called bool
 		epicID uuid.UUID
 	}
+
+	submitExpertRoleScoreResult int
+	submitExpertRoleScoreErr    error
+	submitExpertRoleScoreCall   struct {
+		called bool
+		epicID uuid.UUID
+		roleID uuid.UUID
+		score  int
+	}
 }
 
 func (s *mockAdminScoresSvc) TryCompleteEpicScoring(ctx context.Context, epicID uuid.UUID) error {
@@ -168,6 +177,18 @@ func (s *mockAdminScoresSvc) PreviewFinalScore(ctx context.Context, epicID uuid.
 		return 0, s.previewFinalScoreErr
 	}
 	return s.previewFinalScoreResult, nil
+}
+
+func (s *mockAdminScoresSvc) SubmitExpertRoleScore(ctx context.Context, epicID, roleID uuid.UUID, score int) (int, error) {
+	s.submitExpertRoleScoreCall.called = true
+	s.submitExpertRoleScoreCall.epicID = epicID
+	s.submitExpertRoleScoreCall.roleID = roleID
+	s.submitExpertRoleScoreCall.score = score
+
+	if s.submitExpertRoleScoreErr != nil {
+		return 0, s.submitExpertRoleScoreErr
+	}
+	return s.submitExpertRoleScoreResult, nil
 }
 
 func TestAdminSubmitEpicScore(t *testing.T) {
@@ -716,6 +737,224 @@ func TestAdminOverrideRoleScore(t *testing.T) {
 		}
 		if svc.manualRoleScoreCall.called {
 			t.Error("expected SetManualRoleScore not to be called for invalid score")
+		}
+	})
+}
+
+func TestAdminSubmitExpertRoleScore(t *testing.T) {
+	epicID := uuid.New()
+	roleID := uuid.New()
+
+	cfg := config.BotConfig{
+		Admins: []string{"admin_user"},
+	}
+
+	t.Run("success_scoring_not_yet_complete", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()}}
+		svc := &mockAdminScoresSvc{repo: repo, submitExpertRoleScoreResult: 3}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role/expert", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminSubmitExpertRoleScore(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+		if !svc.submitExpertRoleScoreCall.called {
+			t.Fatal("expected SubmitExpertRoleScore to be called")
+		}
+		if svc.submitExpertRoleScoreCall.epicID != epicID || svc.submitExpertRoleScoreCall.roleID != roleID {
+			t.Errorf("SubmitExpertRoleScore called with unexpected ids: %v/%v", svc.submitExpertRoleScoreCall.epicID, svc.submitExpertRoleScoreCall.roleID)
+		}
+		if svc.submitExpertRoleScoreCall.score != 8 {
+			t.Errorf("expected SubmitExpertRoleScore called with score 8, got %v", svc.submitExpertRoleScoreCall.score)
+		}
+
+		var resp struct {
+			Status      string `json:"status"`
+			EpicID      string `json:"epic_id"`
+			RoleID      string `json:"role_id"`
+			ScoredCount int    `json:"scored_count"`
+			EpicStatus  string `json:"epic_status"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Status != "ok" {
+			t.Errorf("expected status 'ok', got '%s'", resp.Status)
+		}
+		if resp.EpicID != epicID.String() || resp.RoleID != roleID.String() {
+			t.Errorf("unexpected epic_id/role_id in response: %+v", resp)
+		}
+		if resp.ScoredCount != 3 {
+			t.Errorf("expected scored_count 3, got %d", resp.ScoredCount)
+		}
+		if resp.EpicStatus != string(domain.StatusScoring) {
+			t.Errorf("expected epic_status SCORING, got %s", resp.EpicStatus)
+		}
+	})
+
+	t.Run("success_scoring_completed_reports_scored_status", func(t *testing.T) {
+		// Мок репозитория статичен: после вызова сервиса перечитанный эпик
+		// уже в статусе SCORED — имитирует автозавершение скоринга
+		// (TryCompleteEpicScoring внутри SubmitExpertRoleScore).
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, Status: domain.StatusScored, TeamID: uuid.New()}}
+		svc := &mockAdminScoresSvc{repo: repo, submitExpertRoleScoreResult: 1}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role/expert", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminSubmitExpertRoleScore(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var resp struct {
+			ScoredCount int    `json:"scored_count"`
+			EpicStatus  string `json:"epic_status"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.ScoredCount != 1 {
+			t.Errorf("expected scored_count 1, got %d", resp.ScoredCount)
+		}
+		if resp.EpicStatus != string(domain.StatusScored) {
+			t.Errorf("expected epic_status SCORED, got %s", resp.EpicStatus)
+		}
+	})
+
+	t.Run("bad_request_when_scoring_already_complete", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, Status: domain.StatusScored, TeamID: uuid.New()}}
+		svc := &mockAdminScoresSvc{repo: repo, submitExpertRoleScoreErr: scoring.ErrScoringAlreadyComplete}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role/expert", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminSubmitExpertRoleScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("bad_request_when_no_role_members", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()}}
+		svc := &mockAdminScoresSvc{repo: repo, submitExpertRoleScoreErr: scoring.ErrNoRoleMembers}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role/expert", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminSubmitExpertRoleScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&errResp); err != nil {
+			t.Fatalf("failed to decode error response: %v", err)
+		}
+		if errResp.Error != "no team members with this role" {
+			t.Errorf("expected error message 'no team members with this role', got '%s'", errResp.Error)
+		}
+	})
+
+	t.Run("forbidden_for_team_admin_of_another_team", func(t *testing.T) {
+		teamA := uuid.New()
+		teamB := uuid.New()
+		repo := &mockAdminScoresRepo{
+			epic:          &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: teamB},
+			allowedTeamID: &teamA,
+		}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role/expert", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminSubmitExpertRoleScore(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for cross-team epic, got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+		if svc.submitExpertRoleScoreCall.called {
+			t.Error("expected SubmitExpertRoleScore not to be called for cross-team epic")
+		}
+	})
+
+	t.Run("forbidden_for_member", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{denyTeamAdmin: true}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":8}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role/expert", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "111", Username: "regular_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminSubmitExpertRoleScore(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden, got %d", rr.Code)
+		}
+		if svc.submitExpertRoleScoreCall.called {
+			t.Error("expected SubmitExpertRoleScore not to be called")
+		}
+	})
+
+	t.Run("bad_request_invalid_score", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{epic: &domain.Epic{ID: epicID, Status: domain.StatusScoring, TeamID: uuid.New()}}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"%s","role_id":"%s","score":-1}`, epicID.String(), roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role/expert", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminSubmitExpertRoleScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d", rr.Code)
+		}
+		if svc.submitExpertRoleScoreCall.called {
+			t.Error("expected SubmitExpertRoleScore not to be called for invalid score")
+		}
+	})
+
+	t.Run("bad_request_invalid_epic_id", func(t *testing.T) {
+		repo := &mockAdminScoresRepo{}
+		svc := &mockAdminScoresSvc{repo: repo}
+		handler := NewGanttHandler(slog.Default(), &mockGanttService{}, repo, svc, &mockAIClient{}, cfg, &mockNotifier{})
+
+		body := fmt.Sprintf(`{"epic_id":"not-a-uuid","role_id":"%s","score":8}`, roleID.String())
+		req := httptest.NewRequest("POST", "/api/gantt/admin/scores/role/expert", strings.NewReader(body))
+		session := &middleware.UserSession{TelegramID: "999", Username: "admin_user"}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserSessionKey, session))
+		rr := httptest.NewRecorder()
+
+		handler.AdminSubmitExpertRoleScore(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d", rr.Code)
 		}
 	})
 }

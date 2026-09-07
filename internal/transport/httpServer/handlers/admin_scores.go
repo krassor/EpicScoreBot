@@ -435,6 +435,118 @@ func (h *GanttHandler) AdminOverrideRoleScore(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// AdminSubmitExpertRoleScore позволяет администратору проставить одну и ту же
+// экспертную оценку сразу за всех участников команды с указанной ролью, пока
+// скоринг эпика/стори ещё идёт (статус SCORING) — переиспользует существующий
+// механизм голосования "админ голосует за участника" в цикле по всем
+// участникам роли (Service.SubmitExpertRoleScore), с уже поданными личными
+// голосами участников этой роли, которые перезаписываются. Это отдельный,
+// самостоятельный механизм от AdminOverrideRoleScore (переопределение уже
+// вычисленной агрегированной оценки роли, доступное только после SCORED) —
+// смешивать их нельзя, у них разные предусловия.
+func (h *GanttHandler) AdminSubmitExpertRoleScore(w http.ResponseWriter, r *http.Request) {
+	op := "handlers.AdminSubmitExpertRoleScore"
+	h.log.Info("admin submitting expert role score", slog.String("op", op))
+
+	// 1. Проверка роли admin/superadmin инициатора запроса
+	sessionData := r.Context().Value(middleware.UserSessionKey)
+	if sessionData == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	session, ok := sessionData.(*middleware.UserSession)
+	if !ok || session.TelegramID == "" {
+		writeError(w, http.StatusUnauthorized, "invalid session")
+		return
+	}
+
+	isSuper := isSuperAdminSession(session, &h.cfg)
+	if !isSuper {
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		if err != nil || !isAdminAny {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
+	// 2. Декодирование тела запроса
+	var req struct {
+		EpicID string `json:"epic_id"`
+		RoleID string `json:"role_id"`
+		Score  int    `json:"score"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	epicUUID, err := uuid.Parse(req.EpicID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid epic_id")
+		return
+	}
+
+	roleUUID, err := uuid.Parse(req.RoleID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid role_id")
+		return
+	}
+
+	if req.Score < 0 || req.Score > 500 {
+		writeError(w, http.StatusBadRequest, "score must be between 0 and 500")
+		return
+	}
+
+	// Точечная проверка: team-admin может проставлять экспертную оценку роли
+	// только в эпиках своей команды (superadmin — без ограничения).
+	epicForScope, err := h.repo.GetEpicByID(r.Context(), epicUUID)
+	if err != nil || epicForScope == nil {
+		writeError(w, http.StatusNotFound, "epic not found")
+		return
+	}
+	if !isSuper {
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		if err != nil || !isAdminOf {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
+	// 3. Массовое проставление оценки роли за всех участников + попытка
+	// завершения скоринга (выполняется внутри Service.SubmitExpertRoleScore).
+	scoredCount, err := h.scoring.SubmitExpertRoleScore(r.Context(), epicUUID, roleUUID, req.Score)
+	if err != nil {
+		if errors.Is(err, scoring.ErrScoringAlreadyComplete) {
+			writeError(w, http.StatusBadRequest, "epic scoring is already completed, use role score override instead")
+			return
+		}
+		if errors.Is(err, scoring.ErrNoRoleMembers) {
+			writeError(w, http.StatusBadRequest, "no team members with this role")
+			return
+		}
+		h.log.Error("failed to submit expert role score", slog.String("op", op), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("%s: %w", op, err).Error())
+		return
+	}
+
+	// 4. Актуальный статус эпика после возможного авто-завершения скоринга —
+	// перечитываем эпик, чтобы фронтенду не пришлось гадать по отдельному
+	// запросу, произошёл ли переход в SCORED.
+	epicStatus := domain.StatusScoring
+	if epicAfter, err := h.repo.GetEpicByID(r.Context(), epicUUID); err == nil && epicAfter != nil {
+		epicStatus = epicAfter.Status
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "ok",
+		"epic_id":      epicUUID.String(),
+		"role_id":      roleUUID.String(),
+		"scored_count": scoredCount,
+		"epic_status":  epicStatus,
+	})
+}
+
 // GetFinalScorePreview возвращает предпросмотр финальной оценки стори, посчитанной
 // по стандартной формуле (Σ(oценка_роли) × Π(коэффициент_риска), округление до
 // целого) на основе текущих сохранённых оценок по ролям и рисков стори — без

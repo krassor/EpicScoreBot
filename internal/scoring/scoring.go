@@ -16,6 +16,16 @@ import (
 // но фактический статус эпика этому не соответствует.
 var ErrScoringNotComplete = errors.New("epic scoring is not completed yet")
 
+// ErrScoringAlreadyComplete возвращается, когда запрошена операция,
+// требующая ещё активного скоринга эпика/стори (статус SCORING), но скоринг
+// уже завершён (статус SCORED) — для завершённого скоринга используется
+// отдельный механизм переопределения оценки роли (SetManualRoleScore).
+var ErrScoringAlreadyComplete = errors.New("epic scoring is already completed")
+
+// ErrNoRoleMembers возвращается, когда в команде эпика нет ни одного
+// участника с указанной ролью — экспертную оценку роли проставить некому.
+var ErrNoRoleMembers = errors.New("no team members with this role")
+
 // Service provides scoring business logic.
 type Service struct {
 	repo Repository
@@ -425,6 +435,60 @@ func (s *Service) SetManualRoleScore(ctx context.Context, epicID, roleID uuid.UU
 		RoleID:      roleID,
 		WeightedAvg: score,
 	}, nil
+}
+
+// SubmitExpertRoleScore позволяет администратору проставить одну и ту же
+// экспертную оценку сразу за всех участников команды с указанной ролью, пока
+// скоринг эпика/стори ещё идёт (статус SCORING) — вместо того чтобы вводить
+// оценку за каждого участника этой роли по отдельности. Переиспользует уже
+// существующий механизм голосования "админ голосует за участника"
+// (repo.CreateEpicScore — upsert по (epic_id, user_id)) в цикле по всем
+// участникам роли; уже поданные личные голоса участников этой роли
+// перезаписываются новым значением. После цикла один раз запускает уже
+// существующую проверку завершения скоринга (TryCompleteEpicScoring) — если
+// это было последним недостающим условием, эпик/стори переходит в SCORED
+// автоматически, как и после любого обычного голоса. Возвращает количество
+// затронутых участников.
+func (s *Service) SubmitExpertRoleScore(ctx context.Context, epicID, roleID uuid.UUID, score int) (int, error) {
+	op := "scoring.SubmitExpertRoleScore"
+
+	epic, err := s.repo.GetEpicByID(ctx, epicID)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+	if epic == nil {
+		return 0, fmt.Errorf("%s: epic not found", op)
+	}
+
+	if epic.Status != domain.StatusScoring {
+		return 0, ErrScoringAlreadyComplete
+	}
+
+	members, err := s.repo.GetUsersByTeamIDAndRoleID(ctx, epic.TeamID, roleID)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+	if len(members) == 0 {
+		return 0, ErrNoRoleMembers
+	}
+
+	for _, member := range members {
+		if err := s.repo.CreateEpicScore(ctx, epicID, member.ID, roleID, score); err != nil {
+			return 0, fmt.Errorf("%s: create epic score for user %s: %w", op, member.ID, err)
+		}
+	}
+
+	if err := s.TryCompleteEpicScoring(ctx, epicID); err != nil {
+		return 0, fmt.Errorf("%s: %w", op, err)
+	}
+
+	s.log.Info("expert role score applied",
+		slog.String("epicID", epicID.String()),
+		slog.String("roleID", roleID.String()),
+		slog.Int("score", score),
+		slog.Int("scoredCount", len(members)))
+
+	return len(members), nil
 }
 
 // PreviewFinalScore считает финальную оценку стори по стандартной формуле

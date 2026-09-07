@@ -71,6 +71,12 @@ func (r *Router) Mount(mux *chi.Mux) {
 					mux.Post("/admin/scores/role", r.ganttHandler.AdminOverrideRoleScore)
 					mux.Get("/admin/scores/{epic_id}/recalc-preview", r.ganttHandler.GetFinalScorePreview)
 
+					// Массовое проставление экспертной оценки роли для всех
+					// участников команды с этой ролью, пока скоринг ещё идёт
+					// (статус SCORING) — отдельный механизм от /admin/scores/role
+					// (переопределение уже вычисленной оценки после SCORED).
+					mux.Post("/admin/scores/role/expert", r.ganttHandler.AdminSubmitExpertRoleScore)
+
 					// Рассылка напоминаний непроголосовавшим участникам эпика
 					// (веб-аналог команды /epicnotify Telegram-бота). В отличие
 					// от соседнего /epics/start (см. design.md) — умышленно
