@@ -382,10 +382,15 @@ async function loadEpicData() {
         currentStories = (await apiGet(`/epics/${selectedEpic.id}/stories`).catch(() => ([]))) || [];
 
         if (currentStories.length > 0) {
-            // If there are stories and no story is selected, select the first one
-            if (!selectedStory || !currentStories.some(s => s.id === selectedStory.id)) {
-                selectedStory = currentStories[0];
-            }
+            // Переприсваиваем на свежий объект из currentStories по id: `some()` только
+            // проверяет наличие id, но не подменяет ссылку, из-за чего selectedStory мог
+            // оставаться устаревшим (старый status/final_score) даже когда сторя с тем же
+            // id уже перезагружена с сервера. Если сторя пропала из списка — как и раньше,
+            // берём первую.
+            const freshSelectedStory = selectedStory
+                ? currentStories.find(s => s.id === selectedStory.id)
+                : null;
+            selectedStory = freshSelectedStory || currentStories[0];
 
             // Fetch selected story details
             selectedStoryScores = (await apiGet(`/epics/${selectedStory.id}/scores`).catch(() => ({ scores: [], expected: 0, received: 0 }))) || { scores: [], expected: 0, received: 0 };
