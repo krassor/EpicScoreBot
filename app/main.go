@@ -43,10 +43,16 @@ func main() {
 	repositoryService := repositories.New(log, cfg)
 	scoringService := scoring.New(log, repositoryService)
 
+	// ganttService создаётся раньше epicService, т.к. последнему он нужен
+	// как источник задач диаграммы Ганта для листа PDF-отчёта (см.
+	// services.EpicService.WithGanttTaskSource,
+	// openspec/changes/add-gantt-page-to-pdf-report).
+	ganttService := gantt.New(log, repositoryService)
+
 	// Initialize business services
 	userService := services.NewUserService(log, repositoryService)
 	teamService := services.NewTeamService(log, repositoryService)
-	epicService := services.NewEpicService(log, repositoryService)
+	epicService := services.NewEpicService(log, repositoryService).WithGanttTaskSource(ganttService)
 	riskService := services.NewRiskService(log, repositoryService)
 	roleService := services.NewRoleService(log, repositoryService)
 	teamAdminService := services.NewTeamAdminService(log, repositoryService)
@@ -77,14 +83,13 @@ func main() {
 		log.Error("failed to initialize telegram bot. the app will continue running without telegram features.")
 	}
 
-	// Gantt chart service and HTTP server.
+	// HTTP-сервер использует уже созданный выше ganttService.
 	// teamAdminAuth оборачивает repositoryService, добавляя telegram_id-
 	// ориентированные проверки team-admin (см. repositories.TeamAdminAuth) —
 	// используется вместо repositoryService везде, где HTTP-слою нужен
 	// Repository, т.к. промоутит все его методы и одновременно
 	// удовлетворяет middleware.TeamAdminChecker/handlers.TeamAdminScoper.
 	teamAdminAuth := repositories.NewTeamAdminAuth(repositoryService)
-	ganttService := gantt.New(log, repositoryService)
 	// tgBot может быть typed-nil (см. проверку выше), поэтому передаём его в
 	// GanttHandler как handlers.TelegramNotifier только если бот успешно
 	// инициализирован — иначе рассылка напоминаний из веб-панели будет

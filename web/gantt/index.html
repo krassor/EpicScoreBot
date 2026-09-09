@@ -37,7 +37,7 @@
     <div id="auth-overlay" class="auth-overlay hidden">
         <div class="auth-card">
             <div class="auth-logo">📊</div>
-            <h1>EpicScoreBot</h1>
+            <h2>EpicScoreBot</h2>
             <p>Система совместного планирования и скоринга эпиков</p>
             <div id="telegram-login"></div>
             <script async src="https://telegram.org/js/telegram-widget.js?22" data-telegram-login="EpicScoreBot"
@@ -51,8 +51,27 @@
     <div id="denied-overlay" class="auth-overlay hidden">
         <div class="auth-card" style="border-color: #ef4444;">
             <div class="auth-logo" style="color: #ef4444;">🚫</div>
-            <h1>Доступ ограничен</h1>
+            <h2>Доступ ограничен</h2>
             <p>Вы не являетесь участником ни одной из зарегистрированных команд и не зарегистрированы как администратор.</p>
+            <p>Если доступ вам уже выдали, обновите проверку.</p>
+            <div class="auth-overlay-actions">
+                <button type="button" id="denied-btn-refresh" class="btn btn-primary">Обновить</button>
+                <button type="button" id="denied-btn-logout" class="btn btn-secondary">Выйти</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Connection error overlay — сетевой сбой при проверке профиля (web-async-feedback,
+         «Сетевой сбой не трактуется как отсутствие авторизации»): показывается вместо
+         экрана входа, когда сервер недоступен, а не отверг авторизацию. -->
+    <div id="connection-error-overlay" class="auth-overlay hidden">
+        <div class="auth-card">
+            <div class="auth-logo">📡</div>
+            <h2>Нет связи с сервером</h2>
+            <p>Не удалось проверить ваш профиль — сервер не отвечает. Это не ошибка доступа: попробуйте повторить попытку.</p>
+            <div class="auth-overlay-actions">
+                <button type="button" id="connection-error-btn-retry" class="btn btn-primary">Повторить</button>
+            </div>
         </div>
     </div>
 
@@ -560,8 +579,7 @@
         </main>
 
         <!-- Reorder modal for role priorities in Gantt -->
-        <div id="reorder-modal" class="modal hidden">
-            <div class="modal-overlay"></div>
+        <dialog id="reorder-modal" class="modal" aria-labelledby="modal-title">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 id="modal-title">Порядок ролей</h2>
@@ -575,11 +593,10 @@
                     <button id="modal-cancel" class="btn btn-secondary">Отмена</button>
                 </div>
             </div>
-        </div>
+        </dialog>
 
         <!-- Task details modal: set completion % for a leaf (role) task -->
-        <div id="task-details-modal" class="modal hidden">
-            <div class="modal-overlay"></div>
+        <dialog id="task-details-modal" class="modal" aria-labelledby="task-details-title">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 id="task-details-title">Задача</h2>
@@ -620,14 +637,13 @@
                     <button id="task-details-cancel" class="btn btn-secondary">Отмена</button>
                 </div>
             </div>
-        </div>
+        </dialog>
 
         <!-- Edit User Modal -->
-        <div id="modal-edit-user" class="modal hidden">
-            <div class="modal-overlay"></div>
+        <dialog id="modal-edit-user" class="modal" aria-labelledby="edit-user-title">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h2>Редактирование пользователя</h2>
+                    <h2 id="edit-user-title">Редактирование пользователя</h2>
                     <button id="edit-user-close" class="btn-icon">✕</button>
                 </div>
                 <form id="form-edit-user">
@@ -668,10 +684,10 @@
                     </div>
                 </form>
             </div>
-        </div>
+        </dialog>
 
         <!-- Toast notifications -->
-        <div id="toast-container" class="toast-container"></div>
+        <div id="toast-container" class="toast-container" role="status" aria-live="polite"></div>
     </div>
 
     <!-- Frappe Gantt UMD build -->

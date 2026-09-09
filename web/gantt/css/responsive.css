@@ -192,7 +192,11 @@
         flex: 1;
     }
 
-    .modal {
+    /* Специфичность селектора совпадает с базовым .modal[open] в
+       components.css (design.md, Decision 3) — так медиа-запрос
+       переопределяет align-items/padding по обычному правилу каскада
+       (порядок в исходном коде), а не «выигрывает» за счёт специфичности. */
+    .modal[open] {
         align-items: flex-end;
         padding: 0;
     }
@@ -270,15 +274,18 @@
         padding: 16px;
     }
 
-    /* Достаточная зона нажатия на тач-устройствах */
+    /* Достаточная зона нажатия на тач-устройствах.
+       .btn-icon сюда не входит: у него собственная квадратная тач-цель
+       var(--tap-target-icon) в components.css, применение здесь только
+       min-height (без min-width) искажало круглую кнопку в овал
+       (web-ui-foundations). */
     .btn,
     .nav-tab,
     .select,
     .input,
     .input-date,
     .admin-form input,
-    .admin-form textarea,
-    .btn-icon {
+    .admin-form textarea {
         min-height: var(--tap-target-min);
     }
 
@@ -316,16 +323,6 @@
         gap: 12px;
     }
 
-    .vote-options-grid {
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 6px;
-    }
-
-    .btn-vote {
-        padding: 8px 4px;
-        font-size: var(--font-size-xs);
-    }
-
     .risk-vote-selectors {
         flex-direction: column;
         gap: 10px;
@@ -358,6 +355,18 @@
 
     .modal-footer {
         flex-direction: column-reverse;
+    }
+
+    /* Модификатор класса (не :has(), design.md Decision 4 — :has() не
+       гарантированно поддержан системными WebView Telegram) для футеров
+       с деструктивным действием: отменяет column-reverse, чтобы кнопка
+       «Отмена» читалась раньше деструктивной кнопки на любой ширине
+       экрана (web-modal-accessibility, «Расположение кнопок в модалке
+       подтверждения деструктивного действия»). Порядок кнопок в DOM у
+       таких модалок — «Отмена», затем деструктивная кнопка, поэтому
+       обычный (не реверсный) column-flow даёт нужное чтение сверху вниз. */
+    .modal-footer--destructive {
+        flex-direction: column;
     }
 
     .modal-footer .btn {

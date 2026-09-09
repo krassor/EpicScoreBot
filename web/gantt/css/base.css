@@ -114,7 +114,9 @@ a {
     filter: drop-shadow(0 0 10px var(--accent-glow));
 }
 
-.auth-card h1 {
+/* Заголовки внутри оверлеев (auth/denied/connection-error) — все понижены до h2,
+   т.к. в документе допускается только один <h1> (web-ui-foundations). */
+.auth-card h2 {
     font-size: var(--font-size-2xl);
     font-weight: 700;
     margin-bottom: 10px;
@@ -129,6 +131,16 @@ a {
     margin-bottom: 30px;
     font-size: var(--font-size-sm);
     line-height: 1.5;
+}
+
+/* Действия на оверлеях авторизации/отказа/недоступности сервера — «Обновить»,
+   «Выйти», «Повторить» (web-async-feedback: экран отказа предлагает действие). */
+.auth-overlay-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: -10px;
 }
 
 .loader {

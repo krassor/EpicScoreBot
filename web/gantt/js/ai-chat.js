@@ -1,7 +1,7 @@
 // ── AI Chat Module ───────────────────────────────────────────────────
 
 import { apiPost } from './api.js';
-import { showToast } from './utils.js';
+import { showToast, escapeHtml } from './utils.js';
 
 export function initAIChat() {
     const form = document.getElementById('ai-chat-form');
@@ -47,8 +47,12 @@ function appendMessage(text, senderClass) {
     msgDiv.className = `ai-message ${senderClass}`;
     msgDiv.id = msgId;
     
+    // Экранируем пользовательский/модельный текст ДО применения собственной
+    // markdown-разметки чата — иначе символы `<`, `>`, `&` в тексте сломают
+    // вёрстку, а разметка `<br>`/`<strong>`, добавляемая ниже, экранируется
+    // вместе с ним (design.md, Decision 5).
     // Simplistic formatting for markdown paragraphs & lists
-    const formattedText = text
+    const formattedText = escapeHtml(text)
         .replace(/\n/g, '<br>')
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
         

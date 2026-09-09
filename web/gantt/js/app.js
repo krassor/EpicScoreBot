@@ -3,7 +3,7 @@
 import { state } from './state.js';
 import { checkAuth, logout } from './auth.js';
 import { apiGet, apiPost } from './api.js';
-import { showToast } from './utils.js';
+import { showToast, handleApiError, withSubmitLock, openModal, closeModal } from './utils.js';
 
 // Import panel initializers
 import { initGanttRenderer } from './gantt-renderer.js';
@@ -157,7 +157,7 @@ async function loadTeams() {
         }
     } catch (err) {
         if (err.message !== 'FORBIDDEN' && err.message !== 'UNAUTHORIZED') {
-            showToast('Ошибка загрузки команд: ' + err.message, 'error');
+            handleApiError(err, { title: 'Ошибка загрузки команд' });
         }
     }
 }
@@ -183,7 +183,7 @@ async function loadEpics(teamId) {
         populateYearSelect(epics);
         renderEpicSelectForPeriod();
     } catch (err) {
-        showToast('Ошибка загрузки эпиков: ' + err.message, 'error');
+        handleApiError(err, { title: 'Ошибка загрузки эпиков' });
     }
 }
 
@@ -252,7 +252,7 @@ function renderEpicSelectForPeriod() {
         opt.value = epic.id;
         opt.textContent = `${epic.number}: ${epic.name}`;
         if (epic.final_score) {
-            opt.textContent += ` (${epic.final_score} SP)`;
+            opt.textContent += ` (${epic.final_score} чд)`;
         }
         epicSelect.appendChild(opt);
     });
@@ -283,7 +283,7 @@ async function loadTasks(teamId) {
         const data = await apiGet(`/tasks?team_id=${teamId}`);
         state.set('tasks', data.tasks || []);
     } catch (err) {
-        showToast('Ошибка загрузки задач: ' + err.message, 'error');
+        handleApiError(err, { title: 'Ошибка загрузки задач' });
     }
 }
 
@@ -311,7 +311,7 @@ async function generateTasks() {
         const teamId = state.get('selectedTeamId');
         await loadTasks(teamId);
     } catch (err) {
-        showToast('Ошибка генерации задач: ' + err.message, 'error');
+        handleApiError(err, { title: 'Ошибка генерации задач' });
     }
 }
 
@@ -349,17 +349,24 @@ function onRegenerateQuarterClick() {
 function openRegenerateQuarterModal({ teamId, year, quarter, startDate }) {
     let modal = document.getElementById('modal-regenerate-quarter');
     if (!modal) {
-        modal = document.createElement('div');
+        modal = document.createElement('dialog');
         modal.id = 'modal-regenerate-quarter';
-        modal.className = 'modal hidden';
+        modal.className = 'modal';
+        modal.setAttribute('aria-labelledby', 'modal-regenerate-quarter-title');
         document.body.appendChild(modal);
+        // Клик по фону (области dialog за пределами .modal-content) закрывает
+        // модалку — замена клика по .modal-overlay при переходе на <dialog>
+        // (design.md, Decision 3). Слушатель вешается один раз при создании
+        // элемента, а не при каждой перерисовке innerHTML.
+        modal.addEventListener('click', (e) => {
+            if (!e.target.closest('.modal-content')) closeModal(modal);
+        });
     }
 
     modal.innerHTML = `
-        <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Перегенерация задач квартала</h2>
+                <h2 id="modal-regenerate-quarter-title">Перегенерация задач квартала</h2>
                 <button type="button" class="btn-icon btn-close-modal">✕</button>
             </div>
             <div class="modal-body">
@@ -376,28 +383,22 @@ function openRegenerateQuarterModal({ teamId, year, quarter, startDate }) {
                     выполнения. Отменить это действие будет невозможно.
                 </p>
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer modal-footer--destructive">
                 <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
                 <button type="button" id="btn-confirm-regenerate-quarter" class="btn btn-danger">Перегенерировать</button>
             </div>
         </div>
     `;
 
-    modal.classList.remove('hidden');
-    modal.style.display = 'flex';
+    openModal(modal);
 
-    const closeModal = () => {
-        modal.classList.add('hidden');
-        modal.style.display = 'none';
-    };
-
-    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
-        btn.onclick = closeModal;
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => closeModal(modal);
     });
 
     const btnConfirm = modal.querySelector('#btn-confirm-regenerate-quarter');
     btnConfirm.onclick = async () => {
-        closeModal();
+        closeModal(modal);
         await runRegenerateQuarter({ teamId, year, quarter, startDate });
     };
 }
@@ -410,40 +411,45 @@ function openRegenerateQuarterModal({ teamId, year, quarter, startDate }) {
 async function runRegenerateQuarter({ teamId, year, quarter, startDate }) {
     const btn = document.getElementById('btn-regenerate-quarter');
     const originalLabel = btn ? btn.innerHTML : '';
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '⏳ Перегенерация...';
-    }
 
-    try {
-        const result = await apiPost('/tasks/generate-quarter', {
-            team_id: teamId,
-            year,
-            quarter,
-            start_date: startDate,
-        });
+    // btn-regenerate-quarter не является submit-кнопкой формы (кнопка вызывается
+    // из модалки подтверждения) — передаётся в withSubmitLock напрямую, чтобы
+    // блокировка отправки оставалась единым паттерном (design.md, Decision 7).
+    await withSubmitLock(btn, async () => {
+        if (btn) btn.innerHTML = '⏳ Перегенерация...';
+        try {
+            const result = await apiPost('/tasks/generate-quarter', {
+                team_id: teamId,
+                year,
+                quarter,
+                start_date: startDate,
+            });
 
-        if (!result.epics_total) {
-            showToast('В выбранном квартале нет заскоренных эпиков — перегенерировать нечего', 'info');
-        } else if (result.epics_failed > 0) {
-            showToast(
-                `Перегенерировано эпиков: ${result.epics_regenerated} из ${result.epics_total}. ` +
-                `Не удалось перегенерировать: ${result.epics_failed}`,
-                'error'
-            );
-        } else {
-            showToast(`Задачи квартала перегенерированы: ${result.epics_regenerated} эпик(ов)`, 'success');
+            if (!result.epics_total) {
+                showToast('В выбранном квартале нет заскоренных эпиков — перегенерировать нечего', 'info');
+            } else if (result.epics_failed > 0) {
+                showToast(
+                    `Перегенерировано эпиков: ${result.epics_regenerated} из ${result.epics_total}. ` +
+                    `Не удалось перегенерировать: ${result.epics_failed}`,
+                    'error'
+                );
+            } else {
+                showToast(`Задачи квартала перегенерированы: ${result.epics_regenerated} эпик(ов)`, 'success');
+            }
+
+            await loadTasks(teamId);
+        } catch (err) {
+            handleApiError(err, { title: 'Ошибка перегенерации квартала' });
+        } finally {
+            if (btn) btn.innerHTML = originalLabel;
         }
+    });
 
-        await loadTasks(teamId);
-    } catch (err) {
-        showToast('Ошибка перегенерации квартала: ' + err.message, 'error');
-    } finally {
-        if (btn) {
-            btn.disabled = !state.get('selectedTeamId');
-            btn.innerHTML = originalLabel;
-        }
-    }
+    // withSubmitLock всегда снимает блокировку (disabled = false) в своём
+    // finally; здесь восстанавливается фактически корректное состояние — кнопка
+    // недоступна, если команда не выбрана (условие не связано с самой
+    // блокировкой запроса, поэтому применяется отдельным шагом после неё).
+    if (btn) btn.disabled = !state.get('selectedTeamId');
 }
 
 function switchTab(tabName) {
@@ -515,7 +521,7 @@ async function loadRoles() {
         state.set('roles', roles);
     } catch (err) {
         if (err.message !== 'FORBIDDEN' && err.message !== 'UNAUTHORIZED') {
-            showToast('Ошибка загрузки ролей: ' + err.message, 'error');
+            handleApiError(err, { title: 'Ошибка загрузки ролей' });
         }
     }
 }

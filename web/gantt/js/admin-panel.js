@@ -2,7 +2,7 @@
 
 import { state } from './state.js';
 import { apiPost, apiGet, apiPut, apiDelete } from './api.js';
-import { showToast } from './utils.js';
+import { showToast, handleApiError, withSubmitLock, renderTableState, openModal, closeModal } from './utils.js';
 
 // ID команды, выбранной в разделе "Администраторы команд" (независим от глобального selectedTeamId)
 let selectedTeamAdminsTeamId = '';
@@ -151,7 +151,16 @@ async function loadUsers() {
     } catch (err) {
         console.error('loadUsers: Ошибка при загрузке пользователей:', err);
         if (err.message !== 'UNAUTHORIZED' && err.message !== 'FORBIDDEN') {
-            showToast('Не удалось загрузить пользователей: ' + err.message, 'error');
+            // Рендерим состояние ошибки НАПРЯМУЮ в таблицу, а не только тостом:
+            // state.set здесь не вызывается, поэтому подписка на 'users' не
+            // сработает и таблица иначе осталась бы в состоянии "Загрузка..."
+            // навсегда (web-async-feedback, design.md Decision 8).
+            renderTableState(document.getElementById('table-users-body'), 'error', {
+                colspan: 7,
+                errorText: 'Не удалось загрузить список пользователей.',
+                onRetry: loadUsers,
+            });
+            handleApiError(err, { title: 'Не удалось загрузить список пользователей' });
         }
     }
 }
@@ -267,9 +276,9 @@ async function openEditUserModal(userId) {
             cb.checked = (user.team_ids || []).includes(cb.value);
         });
 
-        modal.classList.remove('hidden');
+        openModal(modal);
     } catch (err) {
-        showToast('Не удалось загрузить данные пользователя: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось загрузить данные пользователя' });
     }
 }
 
@@ -277,7 +286,7 @@ async function openEditUserModal(userId) {
 function closeEditUserModal() {
     const modal = document.getElementById('modal-edit-user');
     if (modal) {
-        modal.classList.add('hidden');
+        closeModal(modal);
     }
 }
 
@@ -289,14 +298,16 @@ function setupFormListeners() {
         const name = document.getElementById('team-name').value.trim();
         const description = document.getElementById('team-desc').value.trim();
 
-        try {
-            const newTeam = await apiPost('/teams', { name, description });
-            showToast(`Команда "${newTeam.name || name}" успешно создана!`, 'success');
-            teamForm.reset();
-            reloadTeams();
-        } catch (err) {
-            showToast('Не удалось создать команду: ' + err.message, 'error');
-        }
+        await withSubmitLock(teamForm, async () => {
+            try {
+                const newTeam = await apiPost('/teams', { name, description });
+                showToast(`Команда "${newTeam.name || name}" успешно создана!`, 'success');
+                teamForm.reset();
+                reloadTeams();
+            } catch (err) {
+                handleApiError(err, { title: 'Не удалось создать команду' });
+            }
+        });
     });
 
     // Форма создания эпика
@@ -315,31 +326,33 @@ function setupFormListeners() {
         const roleCbs = document.querySelectorAll('#epic-evaluating-roles-container input[type="checkbox"]:checked');
         const evaluatingRoleIds = Array.from(roleCbs).map(cb => cb.value);
 
-        try {
-            await apiPost('/epics', { 
-                team_id: teamId, 
-                number, 
-                name, 
-                description,
-                year,
-                quarter,
-                type,
-                evaluating_role_ids: evaluatingRoleIds
-            });
-            showToast(`Эпик "${number}: ${name}" успешно создан!`, 'success');
-            epicForm.reset();
-            
-            const epicYearInput = document.getElementById('epic-year');
-            if (epicYearInput) {
-                epicYearInput.value = new Date().getFullYear();
+        await withSubmitLock(epicForm, async () => {
+            try {
+                await apiPost('/epics', {
+                    team_id: teamId,
+                    number,
+                    name,
+                    description,
+                    year,
+                    quarter,
+                    type,
+                    evaluating_role_ids: evaluatingRoleIds
+                });
+                showToast(`Эпик "${number}: ${name}" успешно создан!`, 'success');
+                epicForm.reset();
+
+                const epicYearInput = document.getElementById('epic-year');
+                if (epicYearInput) {
+                    epicYearInput.value = new Date().getFullYear();
+                }
+
+                if (teamId === state.get('selectedTeamId')) {
+                    reloadEpics(teamId);
+                }
+            } catch (err) {
+                handleApiError(err, { title: 'Не удалось создать эпик' });
             }
-            
-            if (teamId === state.get('selectedTeamId')) {
-                reloadEpics(teamId);
-            }
-        } catch (err) {
-            showToast('Не удалось создать эпик: ' + err.message, 'error');
-        }
+        });
     });
 
     // Выбор команды для историй в админке
@@ -370,7 +383,7 @@ function setupFormListeners() {
                 storyEpicSelect.disabled = false;
             }
         } catch (err) {
-            showToast('Не удалось загрузить эпики: ' + err.message, 'error');
+            handleApiError(err, { title: 'Не удалось загрузить эпики' });
         }
     });
 
@@ -387,18 +400,20 @@ function setupFormListeners() {
             return;
         }
 
-        try {
-            await apiPost(`/epics/${epicId}/stories`, { name, description });
-            showToast('История успешно создана!', 'success');
-            adminStoryForm.reset();
-            storyEpicSelect.innerHTML = '<option value="">Сначала выберите команду...</option>';
-            storyEpicSelect.disabled = true;
-            
-            // Оповещаем другие панели о создании истории
-            window.dispatchEvent(new CustomEvent('story-created', { detail: { epicId } }));
-        } catch (err) {
-            showToast('Не удалось создать историю: ' + err.message, 'error');
-        }
+        await withSubmitLock(adminStoryForm, async () => {
+            try {
+                await apiPost(`/epics/${epicId}/stories`, { name, description });
+                showToast('История успешно создана!', 'success');
+                adminStoryForm.reset();
+                storyEpicSelect.innerHTML = '<option value="">Сначала выберите команду...</option>';
+                storyEpicSelect.disabled = true;
+
+                // Оповещаем другие панели о создании истории
+                window.dispatchEvent(new CustomEvent('story-created', { detail: { epicId } }));
+            } catch (err) {
+                handleApiError(err, { title: 'Не удалось создать историю' });
+            }
+        });
     });
 
     // Выбор команды для рисков (динамическая загрузка эпиков)
@@ -432,7 +447,7 @@ function setupFormListeners() {
                 riskEpicSelect.disabled = false;
             }
         } catch (err) {
-            showToast('Не удалось загрузить эпики: ' + err.message, 'error');
+            handleApiError(err, { title: 'Не удалось загрузить эпики' });
         }
     });
 
@@ -460,7 +475,7 @@ function setupFormListeners() {
                 riskStorySelect.disabled = false;
             }
         } catch (err) {
-            showToast('Не удалось загрузить истории: ' + err.message, 'error');
+            handleApiError(err, { title: 'Не удалось загрузить истории' });
         }
     });
 
@@ -476,17 +491,19 @@ function setupFormListeners() {
             return;
         }
 
-        try {
-            await apiPost('/risks', { description, epic_id: storyId });
-            showToast('Риск успешно добавлен к истории!', 'success');
-            riskForm.reset();
-            riskEpicSelect.innerHTML = '<option value="">Сначала выберите команду...</option>';
-            riskEpicSelect.disabled = true;
-            riskStorySelect.innerHTML = '<option value="">Сначала выберите эпик...</option>';
-            riskStorySelect.disabled = true;
-        } catch (err) {
-            showToast('Не удалось добавить риск: ' + err.message, 'error');
-        }
+        await withSubmitLock(riskForm, async () => {
+            try {
+                await apiPost('/risks', { description, epic_id: storyId });
+                showToast('Риск успешно добавлен к истории!', 'success');
+                riskForm.reset();
+                riskEpicSelect.innerHTML = '<option value="">Сначала выберите команду...</option>';
+                riskEpicSelect.disabled = true;
+                riskStorySelect.innerHTML = '<option value="">Сначала выберите эпик...</option>';
+                riskStorySelect.disabled = true;
+            } catch (err) {
+                handleApiError(err, { title: 'Не удалось добавить риск' });
+            }
+        });
     });
 
     // Форма импорта пользователей
@@ -496,14 +513,16 @@ function setupFormListeners() {
         const teamId = document.getElementById('import-team-select').value;
         const usersData = document.getElementById('import-data').value.trim();
 
-        try {
-            const resp = await apiPost('/users/bulk', { csv: usersData, team_id: teamId });
-            showToast(`Импортировано пользователей: ${resp.imported_count || resp.count || 0}`, 'success');
-            importForm.reset();
-            loadUsers(); // Перезагружаем список
-        } catch (err) {
-            showToast('Ошибка импорта пользователей: ' + err.message, 'error');
-        }
+        await withSubmitLock(importForm, async () => {
+            try {
+                const resp = await apiPost('/users/bulk', { csv: usersData, team_id: teamId });
+                showToast(`Импортировано пользователей: ${resp.imported_count || resp.count || 0}`, 'success');
+                importForm.reset();
+                loadUsers(); // Перезагружаем список
+            } catch (err) {
+                handleApiError(err, { title: 'Ошибка импорта пользователей' });
+            }
+        });
     });
 
     // Форма создания одиночного пользователя
@@ -523,22 +542,24 @@ function setupFormListeners() {
         const teamCbs = document.querySelectorAll('#single-user-teams-container input[type="checkbox"]:checked');
         const teamIds = Array.from(teamCbs).map(cb => cb.value);
 
-        try {
-            await apiPost('/admin/users', {
-                telegram_id: telegramId,
-                first_name: firstName,
-                last_name: lastName,
-                weight: weight,
-                role_ids: roleIds,
-                team_ids: teamIds
-            });
+        await withSubmitLock(singleUserForm, async () => {
+            try {
+                await apiPost('/admin/users', {
+                    telegram_id: telegramId,
+                    first_name: firstName,
+                    last_name: lastName,
+                    weight: weight,
+                    role_ids: roleIds,
+                    team_ids: teamIds
+                });
 
-            showToast(`Пользователь @${telegramId} успешно создан!`, 'success');
-            singleUserForm.reset();
-            loadUsers();
-        } catch (err) {
-            showToast('Не удалось создать пользователя: ' + err.message, 'error');
-        }
+                showToast(`Пользователь @${telegramId} успешно создан!`, 'success');
+                singleUserForm.reset();
+                loadUsers();
+            } catch (err) {
+                handleApiError(err, { title: 'Не удалось создать пользователя' });
+            }
+        });
     });
 
     // Форма редактирования пользователя
@@ -558,26 +579,37 @@ function setupFormListeners() {
         const teamCbs = document.querySelectorAll('#edit-user-teams-container input[type="checkbox"]:checked');
         const teamIds = Array.from(teamCbs).map(cb => cb.value);
 
-        try {
-            await apiPut(`/admin/users/${userId}`, {
-                first_name: firstName,
-                last_name: lastName,
-                weight: weight,
-                role_ids: roleIds,
-                team_ids: teamIds
-            });
+        await withSubmitLock(editUserForm, async () => {
+            try {
+                await apiPut(`/admin/users/${userId}`, {
+                    first_name: firstName,
+                    last_name: lastName,
+                    weight: weight,
+                    role_ids: roleIds,
+                    team_ids: teamIds
+                });
 
-            showToast('Данные пользователя успешно обновлены!', 'success');
-            closeEditUserModal();
-            loadUsers();
-        } catch (err) {
-            showToast('Не удалось обновить пользователя: ' + err.message, 'error');
-        }
+                showToast('Данные пользователя успешно обновлены!', 'success');
+                closeEditUserModal();
+                loadUsers();
+            } catch (err) {
+                // blocking: true — форма редактирования остаётся открытой, пользователю
+                // нужно понять причину отказа (например, диапазон веса) и исправить
+                // значение, а не потерять сообщение вместе с исчезающим тостом.
+                handleApiError(err, { title: 'Не удалось обновить пользователя', blocking: true });
+            }
+        });
     });
 
     // Закрытие модального окна редактирования
     document.getElementById('edit-user-close')?.addEventListener('click', closeEditUserModal);
     document.getElementById('edit-user-cancel')?.addEventListener('click', closeEditUserModal);
+    // Клик по фону (области dialog за пределами .modal-content) закрывает
+    // модалку — замена клика по .modal-overlay при переходе на <dialog>
+    // (design.md, Decision 3).
+    document.getElementById('modal-edit-user')?.addEventListener('click', (e) => {
+        if (!e.target.closest('.modal-content')) closeEditUserModal();
+    });
 
     // Кнопка обновления списка пользователей
     document.getElementById('btn-refresh-users')?.addEventListener('click', () => {
@@ -613,13 +645,15 @@ function setupFormListeners() {
             return;
         }
 
-        try {
-            await apiPost('/admin/team-admins', { user_id: userId, team_id: selectedTeamAdminsTeamId });
-            showToast('Администратор команды успешно назначен!', 'success');
-            await loadTeamAdmins(selectedTeamAdminsTeamId);
-        } catch (err) {
-            showToast('Не удалось назначить администратора команды: ' + err.message, 'error');
-        }
+        await withSubmitLock(assignTeamAdminForm, async () => {
+            try {
+                await apiPost('/admin/team-admins', { user_id: userId, team_id: selectedTeamAdminsTeamId });
+                showToast('Администратор команды успешно назначен!', 'success');
+                await loadTeamAdmins(selectedTeamAdminsTeamId);
+            } catch (err) {
+                handleApiError(err, { title: 'Не удалось назначить администратора команды' });
+            }
+        });
     });
 }
 
@@ -656,12 +690,7 @@ function populateTeamAdminUserSelect(users, currentAdminUserIds = []) {
 // Загружает список администраторов выбранной команды
 async function loadTeamAdmins(teamId) {
     const tbody = document.getElementById('table-team-admins-body');
-    if (tbody) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">Загрузка...</td>
-            </tr>`;
-    }
+    renderTableState(tbody, 'loading', { colspan: 4 });
 
     try {
         const data = await apiGet(`/admin/team-admins?team_id=${teamId}`);
@@ -670,9 +699,16 @@ async function loadTeamAdmins(teamId) {
         renderTeamAdminsTable(admins);
         populateTeamAdminUserSelect(state.get('users'), currentTeamAdminUserIds);
     } catch (err) {
-        showToast('Не удалось загрузить администраторов команды: ' + err.message, 'error');
+        // Ошибка и штатное "нет администраторов" — разные состояния (web-async-feedback,
+        // «Пустой результат и ошибка различимы»): renderTeamAdminsTable([]) сюда НЕ
+        // вызываем, иначе сетевой сбой выглядел бы как «у команды нет администраторов».
         currentTeamAdminUserIds = [];
-        renderTeamAdminsTable([]);
+        renderTableState(tbody, 'error', {
+            colspan: 4,
+            errorText: 'Не удалось загрузить администраторов команды. Проверьте соединение и повторите попытку.',
+            onRetry: () => loadTeamAdmins(teamId),
+        });
+        handleApiError(err, { title: 'Не удалось загрузить администраторов команды' });
     }
 }
 
@@ -681,16 +717,16 @@ function renderTeamAdminsTable(admins) {
     const tbody = document.getElementById('table-team-admins-body');
     if (!tbody) return;
 
-    tbody.innerHTML = '';
     if (!admins || admins.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">
-                    ${selectedTeamAdminsTeamId ? 'У этой команды нет назначенных администраторов' : 'Выберите команду, чтобы увидеть список администраторов'}
-                </td>
-            </tr>`;
+        // Штатное пустое состояние (не ошибка) — текст сохранён без изменений.
+        renderTableState(tbody, 'empty', {
+            colspan: 4,
+            emptyText: selectedTeamAdminsTeamId ? 'У этой команды нет назначенных администраторов' : 'Выберите команду, чтобы увидеть список администраторов',
+        });
         return;
     }
+
+    tbody.innerHTML = '';
 
     admins.forEach(admin => {
         const tr = document.createElement('tr');
@@ -711,12 +747,76 @@ function renderTeamAdminsTable(admins) {
         const btnRemove = document.createElement('button');
         btnRemove.className = 'btn btn-secondary btn-sm';
         btnRemove.textContent = '🗑️ Снять';
-        btnRemove.addEventListener('click', () => removeTeamAdmin(admin.id));
+        btnRemove.addEventListener('click', () => openRemoveTeamAdminModal(admin));
         tdActions.appendChild(btnRemove);
         tr.appendChild(tdActions);
 
         tbody.appendChild(tr);
     });
+}
+
+// Возвращает название команды по id из уже загруженного списка команд.
+function getTeamName(teamId) {
+    const team = (state.get('teams') || []).find(t => t.id === teamId);
+    return team ? team.name : '';
+}
+
+// Модальное окно подтверждения снятия администратора команды — кастомная
+// модалка вместо window.confirm (design.md Decision 3, web-destructive-confirm):
+// снятие прав необратимо влияет на доступ пользователя, запрос на сервер не
+// должен уходить по одному клику на «Снять».
+function openRemoveTeamAdminModal(admin) {
+    let modal = document.getElementById('modal-remove-team-admin');
+    if (!modal) {
+        modal = document.createElement('dialog');
+        modal.id = 'modal-remove-team-admin';
+        modal.className = 'modal';
+        modal.setAttribute('aria-labelledby', 'modal-remove-team-admin-title');
+        document.body.appendChild(modal);
+        // Клик по фону (области dialog за пределами .modal-content) закрывает
+        // модалку — замена клика по .modal-overlay при переходе на <dialog>
+        // (design.md, Decision 3). Слушатель вешается один раз при создании
+        // элемента, а не при каждой перерисовке innerHTML.
+        modal.addEventListener('click', (e) => {
+            if (!e.target.closest('.modal-content')) closeModal(modal);
+        });
+    }
+
+    const teamName = getTeamName(selectedTeamAdminsTeamId);
+    const fullName = [admin.first_name, admin.last_name].filter(Boolean).join(' ') || admin.telegram_id;
+
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-remove-team-admin-title">Снятие администратора команды</h2>
+                <button class="btn-icon btn-close-modal">✕</button>
+            </div>
+            <div class="modal-body">
+                <p>
+                    Снять права администратора команды <strong>${teamName}</strong> у пользователя <strong>${fullName}</strong>?
+                </p>
+                <p style="color: var(--color-danger);">
+                    Пользователь потеряет доступ к администрированию этой команды. Права можно назначить заново.
+                </p>
+            </div>
+            <div class="modal-footer modal-footer--destructive">
+                <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
+                <button type="button" id="btn-confirm-remove-team-admin" class="btn btn-danger">Снять права</button>
+            </div>
+        </div>
+    `;
+
+    openModal(modal);
+
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => closeModal(modal);
+    });
+
+    const btnConfirm = modal.querySelector('#btn-confirm-remove-team-admin');
+    btnConfirm.onclick = async () => {
+        closeModal(modal);
+        await removeTeamAdmin(admin.id);
+    };
 }
 
 // Снимает пользователя с роли администратора выбранной команды
@@ -728,7 +828,7 @@ async function removeTeamAdmin(userId) {
         showToast('Администратор команды успешно снят', 'success');
         await loadTeamAdmins(selectedTeamAdminsTeamId);
     } catch (err) {
-        showToast('Не удалось снять администратора команды: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось снять администратора команды' });
     }
 }
 

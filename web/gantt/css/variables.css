@@ -29,16 +29,41 @@
     --color-info: #3b82f6;
     --color-info-bg: rgba(59, 130, 246, 0.15);
 
-    /* Role Colors */
+    /* Role Colors — цвет кодирует ТОЛЬКО роль.
+       Проверено validate_palette.js --mode dark: все проверки PASS.
+       Пара qa↔mobile даёт ΔE 6.9 (deutan) — допустимо при вторичном
+       кодировании, которое обеспечивают легенда (цвет + текст) и имя
+       исполнителя на баре. Не удалять вторичное кодирование. */
     --color-role-it-leader: #8b5cf6;
-    --color-role-analyst: #3b82f6;
-    --color-role-be: #10b981;
-    --color-role-fe: #f59e0b;
-    --color-role-mobile: #ec4899;
-    --color-role-qa: #6366f1;
-    --color-epic: #6366f1;
-    --color-story: #a855f7;
-    --color-default: #64748b;
+    --color-role-analyst:   #0284c7;
+    --color-role-be:        #16a34a;
+    --color-role-fe:        #ea580c;
+    --color-role-mobile:    #ec4899;
+    --color-role-qa:        #0d9488;
+
+    /* Тёмные варианты для полосы прогресса бара (заменяют хардкод в gantt.css) */
+    --color-role-it-leader-progress: #6d28d9;
+    --color-role-analyst-progress:   #075985;
+    --color-role-be-progress:        #15803d;
+    --color-role-fe-progress:        #c2410c;
+    --color-role-mobile-progress:    #be185d;
+    --color-role-qa-progress:        #0f766e;
+
+    /* Структурные уровни — нейтральные, вне ролевой палитры.
+       Различаются между собой стилем заливки (см. gantt.css), а не цветом:
+       различить два нейтральных уровня цветом при протанопии невозможно
+       (измерено ΔE 6.0), поэтому уровень кодируется заливкой. */
+    --color-epic:  #e2e8f0;
+    --color-story: #cbd5e1;
+    --color-epic-progress:  #94a3b8;
+    --color-story-progress: #94a3b8;
+
+    --color-default: #64748b;  /* фолбэк для неизвестной роли — без изменений */
+    --color-default-progress: #334155;
+
+    /* Новые токены */
+    --color-danger-bg-subtle: rgba(239, 68, 68, 0.05);  /* слабая подсветка строки превышения квоты */
+    --tap-target-icon: 40px;                            /* тач-цель иконочной кнопки */
 
     /* Status Colors */
     --color-status-new: #3b82f6;

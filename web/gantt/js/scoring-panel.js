@@ -2,7 +2,7 @@
 
 import { state } from './state.js';
 import { apiGet, apiPost, apiPut, apiDelete } from './api.js';
-import { showToast, showErrorModal } from './utils.js';
+import { showToast, showErrorModal, handleApiError, withSubmitLock, escapeHtml, openModal, closeModal } from './utils.js';
 
 let selectedEpic = null;
 let rolesList = [];
@@ -182,7 +182,7 @@ async function loadScoringEpics(teamId) {
 
         renderFilteredEpicsList();
     } catch (err) {
-        showToast('Не удалось загрузить список эпиков: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось загрузить список эпиков' });
     }
 }
 
@@ -327,10 +327,10 @@ function renderEpicsList(epics) {
 
         item.innerHTML = `
             <div class="scoring-epic-header">
-                <span class="epic-num">${epic.number}</span>
+                <span class="epic-num">${escapeHtml(epic.number)}</span>
                 <span class="status-badge ${statusClass}">${statusText}</span>
             </div>
-            <div class="scoring-epic-name">${epic.name}</div>
+            <div class="scoring-epic-name">${escapeHtml(epic.name)}</div>
         `;
 
         item.addEventListener('click', () => {
@@ -408,7 +408,7 @@ async function loadEpicData() {
 
         renderDetails();
     } catch (err) {
-        showToast('Не удалось загрузить данные: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось загрузить данные' });
     }
 }
 
@@ -452,19 +452,19 @@ function renderDetails() {
     }
 
     const finalScoreText = selectedEpic.final_score !== null && selectedEpic.final_score !== undefined
-        ? `<div class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--color-role-be); font-size: 14px; padding: 6px 14px;">Итоговая оценка: ${selectedEpic.final_score} чд</div>`
+        ? `<div class="badge" style="background: var(--color-success-bg); color: var(--color-success); font-size: 14px; padding: 6px 14px;">Итоговая оценка: ${selectedEpic.final_score} чд</div>`
         : `<div class="badge" style="background: var(--bg-tertiary); font-size: 14px; padding: 6px 14px;">Статус оценки: ${selectedEpic.status === 'NEW' ? 'Не начата' : 'В процессе'}</div>`;
 
     let html = `
         <div class="scoring-details-header">
             <div class="scoring-epic-title">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <h2>${selectedEpic.number}: ${selectedEpic.name}</h2>
+                    <h2>${escapeHtml(selectedEpic.number)}: ${escapeHtml(selectedEpic.name)}</h2>
                     ${isAdmin ? `<button id="btn-edit-epic" class="btn btn-secondary btn-sm" title="Редактировать эпик" style="padding: 3px 8px; font-size: 12px;">✏️ Редактировать</button>` : ''}
                     ${isSuperAdmin ? `<button id="btn-delete-epic" class="btn btn-danger btn-sm" title="Удалить эпик" style="padding: 3px 8px; font-size: 12px;">🗑️ Удалить</button>` : ''}
                     ${isAdmin && selectedEpic.status === 'SCORING' ? `<button id="btn-notify-epic" class="btn btn-secondary btn-sm" title="Напомнить непроголосовавшим участникам" style="padding: 3px 8px; font-size: 12px;">🔔 Напомнить непроголосовавшим</button>` : ''}
                 </div>
-                <div class="scoring-epic-desc">${selectedEpic.description || 'Нет описания.'}</div>
+                <div class="scoring-epic-desc">${selectedEpic.description ? escapeHtml(selectedEpic.description) : 'Нет описания.'}</div>
             </div>
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
                 ${finalScoreText}
@@ -492,7 +492,7 @@ function renderDetails() {
                         if (story.status === 'SCORED') statusText = 'Оценен';
 
                         const scoreBadge = story.final_score !== null && story.final_score !== undefined
-                            ? `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: var(--color-role-be); font-size: 11px;">${story.final_score} чд</span>`
+                            ? `<span class="badge" style="background: var(--color-success-bg); color: var(--color-success); font-size: 11px;">${story.final_score} чд</span>`
                             : `<span class="badge ${statusClass}" style="font-size: 11px;">${statusText}</span>`;
 
                         const deleteBtn = isAdmin ? `
@@ -505,10 +505,10 @@ function renderDetails() {
                             <div class="story-item ${isSelected ? 'active' : ''}" data-story-id="${story.id}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: ${isSelected ? 'rgba(79, 70, 229, 0.15)' : 'var(--bg-tertiary)'}; border: 1px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border)'}; border-radius: 6px; cursor: pointer; transition: all 0.2s;">
                                 <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; margin-right: 8px;">
                                     <div style="font-weight: 600; font-size: 13px; color: var(--color-text); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
-                                        ${story.number}: ${story.name}
+                                        ${escapeHtml(story.number)}: ${escapeHtml(story.name)}
                                     </div>
                                     <div style="font-size: 11px; color: var(--text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
-                                        ${story.description || 'Нет описания'}
+                                        ${story.description ? escapeHtml(story.description) : 'Нет описания'}
                                     </div>
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 8px;">
@@ -684,13 +684,13 @@ function renderRoleScoresTableRowsScoring(evaluatingRoles, story, isAdmin) {
             : `<td style="color: var(--text-muted);">— (${r.voted_count}/${r.expected_count})</td>`;
         return `
         <tr>
-            <td><strong>${r.role_name}</strong></td>
+            <td><strong>${escapeHtml(r.role_name)}</strong></td>
             ${scoreCellHtml}
             ${showExpertVote ? `
             <td>
                 <div style="display: flex; align-items: center; gap: 6px;">
                     <input type="number" class="input expert-role-score-input" data-role-id="${r.role_id}" min="0" step="1" placeholder="чд" style="width: 70px; padding: 4px 6px; font-size: 12px;">
-                    <button class="btn btn-secondary btn-expert-role-score" data-role-id="${r.role_id}" data-role-name="${r.role_name}" style="padding: 4px 8px; font-size: 11px;">Оценить всей ролью</button>
+                    <button class="btn btn-secondary btn-expert-role-score" data-role-id="${r.role_id}" data-role-name="${escapeHtml(r.role_name)}" style="padding: 4px 8px; font-size: 11px;">Оценить всей ролью</button>
                 </div>
             </td>` : ''}
         </tr>
@@ -726,7 +726,7 @@ function renderRoleScoresTableRows(roleScores, story, isAdmin) {
     }
     return roleScores.map(rs => `
         <tr>
-            <td><strong>${rs.role_name || rs.role_id}</strong></td>
+            <td><strong>${escapeHtml(rs.role_name || rs.role_id)}</strong></td>
             <td>${rs.weighted_avg !== undefined ? rs.weighted_avg : rs.score} чд</td>
             ${showOverride ? `
             <td>
@@ -843,22 +843,29 @@ function bindExpertRoleScoreEvents(scopeEl) {
 function openExpertRoleScoreModal(roleId, roleName, score) {
     let modal = document.getElementById('modal-expert-role-score');
     if (!modal) {
-        modal = document.createElement('div');
+        modal = document.createElement('dialog');
         modal.id = 'modal-expert-role-score';
-        modal.className = 'modal hidden';
+        modal.className = 'modal';
+        modal.setAttribute('aria-labelledby', 'modal-expert-role-score-title');
         document.body.appendChild(modal);
+        // Клик по фону (области дialog за пределами .modal-content) закрывает
+        // модалку — замена клика по .modal-overlay при переходе на <dialog>
+        // (design.md, Decision 3). Слушатель вешается один раз при создании
+        // элемента, а не при каждой перерисовке innerHTML.
+        modal.addEventListener('click', (e) => {
+            if (!e.target.closest('.modal-content')) closeModal(modal);
+        });
     }
 
     modal.innerHTML = `
-        <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Экспертная оценка роли</h2>
+                <h2 id="modal-expert-role-score-title">Экспертная оценка роли</h2>
                 <button class="btn-icon btn-close-modal">✕</button>
             </div>
             <div class="modal-body">
                 <p>
-                    Проставить оценку <strong>${score} чд</strong> за роль <strong>${roleName}</strong> всем участникам команды с этой ролью?
+                    Проставить оценку <strong>${score} чд</strong> за роль <strong>${escapeHtml(roleName)}</strong> всем участникам команды с этой ролью?
                 </p>
                 <p style="color: var(--color-danger);">
                     Это перезапишет личные голоса участников этой роли, если они уже есть. Отменить действие будет невозможно.
@@ -871,22 +878,16 @@ function openExpertRoleScoreModal(roleId, roleName, score) {
         </div>
     `;
 
-    modal.classList.remove('hidden');
-    modal.style.display = 'flex';
+    openModal(modal);
 
-    const closeModal = () => {
-        modal.classList.add('hidden');
-        modal.style.display = 'none';
-    };
-
-    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
-        btn.onclick = closeModal;
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => closeModal(modal);
     });
 
     const btnConfirm = modal.querySelector('#btn-confirm-expert-role-score');
     btnConfirm.onclick = async () => {
         if (!selectedStory) {
-            closeModal();
+            closeModal(modal);
             return;
         }
 
@@ -897,7 +898,7 @@ function openExpertRoleScoreModal(roleId, roleName, score) {
                 score: score
             });
             showToast('Экспертная оценка роли проставлена!', 'success');
-            closeModal();
+            closeModal(modal);
             await loadEpicData();
         } catch (err) {
             showErrorModal(err.message);
@@ -954,7 +955,7 @@ function renderAdminScoresTableRows(epicOrStory, scoresData) {
                 </div>
             `;
         } else {
-            voteControlHtml = `<span style="font-weight:600; color:var(--color-role-be);">${userScore.score} чд</span>`;
+            voteControlHtml = `<span style="font-weight:600; color:var(--color-success);">${userScore.score} чд</span>`;
         }
 
         let actionsHtml = '';
@@ -973,13 +974,13 @@ function renderAdminScoresTableRows(epicOrStory, scoresData) {
         // чтобы не получить "@@username".
         const telegramUsername = m.telegram_id ? m.telegram_id.replace(/^@+/, '') : '';
         const telegramLinkHtml = telegramUsername
-            ? ` <a href="https://t.me/${telegramUsername}" target="_blank" rel="noopener noreferrer" class="telegram-username-link">@${telegramUsername}</a>`
+            ? ` <a href="https://t.me/${escapeHtml(telegramUsername)}" target="_blank" rel="noopener noreferrer" class="telegram-username-link">@${escapeHtml(telegramUsername)}</a>`
             : '';
 
         return `
             <tr>
-                <td><strong>${m.first_name} ${m.last_name || ''}</strong>${telegramLinkHtml}</td>
-                <td><span class="badge" style="background:var(--bg-tertiary); font-size:10px; padding: 2px 6px;">${m.role_name || 'Без роли'}</span></td>
+                <td><strong>${escapeHtml(m.first_name)} ${escapeHtml(m.last_name || '')}</strong>${telegramLinkHtml}</td>
+                <td><span class="badge" style="background:var(--bg-tertiary); font-size:10px; padding: 2px 6px;">${escapeHtml(m.role_name || 'Без роли')}</span></td>
                 <td>${voteControlHtml}</td>
                 <td>${actionsHtml}</td>
             </tr>
@@ -1006,9 +1007,9 @@ function renderRisksHtml(epicOrStory, scoresData, risks) {
                     const userName = `${rs.user?.first_name || ''} ${rs.user?.last_name || ''}`.trim() || rs.user?.telegram_id || 'Участник';
                     return `
                         <div class="risk-vote-member-item">
-                            <span style="color: var(--text-muted);">${userName}:</span>
-                            <span class="risk-vote-member-badge" style="color: var(--color-role-be)">P: ${rs.probability}</span>
-                            <span class="risk-vote-member-badge" style="color: var(--color-role-fe)">I: ${rs.impact}</span>
+                            <span style="color: var(--text-muted);">${escapeHtml(userName)}:</span>
+                            <span class="risk-vote-member-badge" style="color: var(--text-secondary)">P: ${rs.probability}</span>
+                            <span class="risk-vote-member-badge" style="color: var(--text-secondary)">I: ${rs.impact}</span>
                         </div>
                     `;
                 }).join('')}
@@ -1053,7 +1054,7 @@ function renderRisksHtml(epicOrStory, scoresData, risks) {
                     <div class="risk-sel-group" style="flex: 1.5; min-width: 120px;">
                         <label style="font-size: 11px;">Участник</label>
                         <select class="select risk-admin-user" style="width: 100%; min-width: 0; padding: 4px; font-size: 12px;">
-                            ${members.map(m => `<option value="${m.id}">${m.first_name} ${m.last_name || ''}</option>`).join('')}
+                            ${members.map(m => `<option value="${m.id}">${escapeHtml(m.first_name)} ${escapeHtml(m.last_name || '')}</option>`).join('')}
                         </select>
                     </div>
                     <div class="risk-sel-group" style="flex: 1; min-width: 80px;">
@@ -1087,7 +1088,7 @@ function renderRisksHtml(epicOrStory, scoresData, risks) {
             <div class="risk-vote-item" data-risk-id="${risk.id}" style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--color-border);">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div style="display: flex; align-items: center; gap: 4px;">
-                        <div class="risk-vote-desc" style="font-weight:600; font-size: 13px;">${risk.description}</div>
+                        <div class="risk-vote-desc" style="font-weight:600; font-size: 13px;">${escapeHtml(risk.description)}</div>
                         ${editRiskBtnHtml}
                     </div>
                     <div style="font-size: 12px;">${scoreDisplay}</div>
@@ -1130,7 +1131,7 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
     }
 
     const finalScoreText = story.final_score !== null && story.final_score !== undefined
-        ? `<div class="badge" style="background: rgba(16, 185, 129, 0.15); color: var(--color-role-be); font-size: 12px; padding: 4px 10px;">Финальная оценка: ${story.final_score} чд</div>`
+        ? `<div class="badge" style="background: var(--color-success-bg); color: var(--color-success); font-size: 12px; padding: 4px 10px;">Финальная оценка: ${story.final_score} чд</div>`
         : `<div class="badge" style="background: var(--bg-tertiary); font-size: 12px; padding: 4px 10px;">Статус: ${story.status === 'NEW' ? 'Новый' : 'Оценка'}</div>`;
 
     // Прямой override итоговой оценки доступен админу только после завершения скоринга (SCORED)
@@ -1149,10 +1150,10 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
         <div style="border-bottom: 1px solid var(--color-border); padding-bottom: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
             <div style="min-width: 0;">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: var(--color-text);">${story.number}: ${story.name}</h3>
+                    <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: var(--color-text);">${escapeHtml(story.number)}: ${escapeHtml(story.name)}</h3>
                     ${isAdmin ? `<button id="btn-edit-story" class="btn btn-secondary btn-sm" data-story-id="${story.id}" title="Редактировать историю" style="padding: 2px 6px; font-size: 11px;">✏️ Редактировать</button>` : ''}
                 </div>
-                <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px; overflow-wrap: break-word;">${story.description || 'Нет описания.'}</div>
+                <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px; overflow-wrap: break-word;">${story.description ? escapeHtml(story.description) : 'Нет описания.'}</div>
             </div>
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
                 ${finalScoreText}
@@ -1164,13 +1165,13 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
             <div>
                 <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Оценить Сторю</h4>
                 ${story.status === 'NEW' ? '<div style="color: var(--text-muted); text-align: center; padding: 15px 0; font-size: 13px;">Оценка еще не запущена.</div>' : ''}
-                ${story.status === 'SCORED' ? '<div style="color: var(--color-role-be); text-align: center; padding: 15px 0; font-weight: 600; font-size: 13px;">Оценка завершена!</div>' : ''}
+                ${story.status === 'SCORED' ? '<div style="color: var(--color-success); text-align: center; padding: 15px 0; font-weight: 600; font-size: 13px;">Оценка завершена!</div>' : ''}
                 
                 ${story.status === 'SCORING' ? `
                     <div class="form-group" style="margin-bottom: 8px;">
                         <label for="vote-role-select-story" style="font-size: 12px;">Ваша роль</label>
                         <select id="vote-role-select-story" class="select" style="width: 100%; padding: 6px 10px; font-size: 13px;">
-                            ${rolesList.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+                            ${rolesList.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('')}
                         </select>
                     </div>
                     <div class="form-group" style="display: flex; align-items: center;">
@@ -1239,41 +1240,32 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 return;
             }
 
-            // Блокируем кнопку сразу, чтобы повторный/двойной клик не запустил второй запрос
-            btnCreateStory.disabled = true;
-            try {
-                await apiPost(`/epics/${selectedEpic.id}/stories`, {
-                    name,
-                    description
-                });
-                showToast('История успешно добавлена!', 'success');
-                await loadEpicData();
-            } catch (err) {
-                showToast('Не удалось создать историю: ' + err.message, 'error');
-            } finally {
-                btnCreateStory.disabled = false;
-            }
+            // btnCreateStory — не submit-кнопка формы (секция без <form>), поэтому
+            // передаётся в withSubmitLock напрямую: паттерн блокировки остаётся
+            // единым (design.md, Decision 7), не требуя оборачивания в <form>.
+            await withSubmitLock(btnCreateStory, async () => {
+                try {
+                    await apiPost(`/epics/${selectedEpic.id}/stories`, {
+                        name,
+                        description
+                    });
+                    showToast('История успешно добавлена!', 'success');
+                    await loadEpicData();
+                } catch (err) {
+                    handleApiError(err, { title: 'Не удалось создать историю' });
+                }
+            });
         });
     }
 
     // 4. Admin: Delete story
     if (isAdmin) {
         container.querySelectorAll('.btn-delete-story').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
+            btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const storyId = btn.dataset.storyId;
-                if (!confirm('Вы уверены, что хотите удалить эту историю?')) return;
-
-                try {
-                    await apiDelete(`/stories/${storyId}`);
-                    showToast('История успешно удалена!', 'success');
-                    if (selectedStory && selectedStory.id === storyId) {
-                        selectedStory = null;
-                    }
-                    await loadEpicData();
-                } catch (err) {
-                    showToast('Не удалось удалить историю: ' + err.message, 'error');
-                }
+                const story = currentStories.find(s => s.id === storyId);
+                if (story) openDeleteStoryModal(story);
             });
         });
     }
@@ -1379,7 +1371,7 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 showToast('Оценка риска участника успешно сохранена!', 'success');
                 await refreshAfterAdminEdit();
             } catch (err) {
-                showToast('Не удалось оценить риск: ' + err.message, 'error');
+                handleApiError(err, { title: 'Не удалось оценить риск' });
             }
         });
     });
@@ -1440,7 +1432,7 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
                 delete activeVotesObj[userId];
                 await refreshAfterAdminEdit();
             } catch (err) {
-                showToast('Не удалось проставить оценку: ' + err.message, 'error');
+                handleApiError(err, { title: 'Не удалось проставить оценку' });
             }
         });
     });
@@ -1537,23 +1529,26 @@ function bindEvents(isAdmin, isLeaderOrAdmin) {
 
 async function startEpicScoring(epicId) {
     if (currentStories.length === 0) {
-        alert('Невозможно запустить оценку: у эпика нет ни одной истории (стори).');
+        // Штатное состояние средствами интерфейса вместо браузерного окна
+        // оповещения (design.md Decision 3, web-destructive-confirm: «Штатное
+        // состояние вместо браузерного оповещения»).
+        showToast('Невозможно запустить оценку: у эпика нет ни одной истории.', 'error');
         return;
     }
 
     try {
         await apiPost('/epics/start', { epic_id: epicId });
         showToast('Процесс оценки успешно запущен!', 'success');
-        
+
         const teamId = state.get('selectedTeamId');
         await loadScoringEpics(teamId);
-        
+
         if (selectedEpic && selectedEpic.id === epicId) {
             selectedEpic.status = 'SCORING';
             await loadEpicData();
         }
     } catch (err) {
-        showToast('Не удалось запустить оценку: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось запустить оценку' });
     }
 }
 
@@ -1575,17 +1570,21 @@ async function notifyEpicReminders(epicId) {
         }
         showToast(message, type);
     } catch (err) {
-        showToast('Не удалось отправить напоминания: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось отправить напоминания' });
     }
 }
 
 async function openEditEpicModal(epic) {
     let modal = document.getElementById('modal-edit-epic');
     if (!modal) {
-        modal = document.createElement('div');
+        modal = document.createElement('dialog');
         modal.id = 'modal-edit-epic';
-        modal.className = 'modal hidden';
+        modal.className = 'modal';
+        modal.setAttribute('aria-labelledby', 'modal-edit-epic-title');
         document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {
+            if (!e.target.closest('.modal-content')) closeModal(modal);
+        });
     }
 
     const isNew = epic.status === 'NEW';
@@ -1601,30 +1600,29 @@ async function openEditEpicModal(epic) {
     }
 
     modal.innerHTML = `
-        <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Редактирование Эпика</h2>
+                <h2 id="modal-edit-epic-title">Редактирование Эпика</h2>
                 <button class="btn-icon btn-close-modal">✕</button>
             </div>
             <form id="form-edit-epic">
                 <div class="modal-body">
                     <div class="form-group">
                         <label>Номер эпика</label>
-                        <input type="text" id="edit-epic-number" class="input" value="${epic.number || ''}" required>
+                        <input type="text" id="edit-epic-number" class="input" value="${escapeHtml(epic.number || '')}" required>
                     </div>
                     <div class="form-group">
                         <label>Название эпика</label>
-                        <input type="text" id="edit-epic-name" class="input" value="${epic.name || ''}" required>
+                        <input type="text" id="edit-epic-name" class="input" value="${escapeHtml(epic.name || '')}" required>
                     </div>
                     <div class="form-group">
                         <label>Описание</label>
-                        <textarea id="edit-epic-desc" class="input" style="min-height: 70px;">${epic.description || ''}</textarea>
+                        <textarea id="edit-epic-desc" class="input" style="min-height: 70px;">${escapeHtml(epic.description || '')}</textarea>
                     </div>
                     <div class="form-group">
                         <label>Команда ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано: скоринг запущен)</span>' : ''}</label>
                         <select id="edit-epic-team" class="select" ${!isNew ? 'disabled' : ''}>
-                            ${teamsList.map(t => `<option value="${t.id}" ${t.id === epic.team_id ? 'selected' : ''}>${t.name}</option>`).join('')}
+                            ${teamsList.map(t => `<option value="${t.id}" ${t.id === epic.team_id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}
                         </select>
                     </div>
                     <div class="form-grid-3col">
@@ -1658,7 +1656,7 @@ async function openEditEpicModal(epic) {
                                 return `
                                     <div class="checkbox-item">
                                         <input type="checkbox" id="edit-epic-role-${r.id}" value="${r.id}" ${isChecked ? 'checked' : ''} ${!isNew ? 'disabled' : ''}>
-                                        <label for="edit-epic-role-${r.id}">${r.name}</label>
+                                        <label for="edit-epic-role-${r.id}">${escapeHtml(r.name)}</label>
                                     </div>
                                 `;
                             }).join('')}
@@ -1673,14 +1671,10 @@ async function openEditEpicModal(epic) {
         </div>
     `;
 
-    modal.classList.remove('hidden');
-    modal.style.display = 'flex';
+    openModal(modal);
 
-    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
-        btn.onclick = () => {
-            modal.classList.add('hidden');
-            modal.style.display = 'none';
-        };
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => closeModal(modal);
     });
 
     const form = modal.querySelector('#form-edit-epic');
@@ -1709,14 +1703,16 @@ async function openEditEpicModal(epic) {
                 evaluating_role_ids: evaluatingRoleIds
             });
             showToast('Эпик успешно обновлен!', 'success');
-            modal.classList.add('hidden');
-            modal.style.display = 'none';
+            closeModal(modal);
             selectedEpic = updatedEpic;
             const currentTeamId = state.get('selectedTeamId');
             await loadScoringEpics(currentTeamId);
             await loadEpicData();
         } catch (err) {
-            showToast('Ошибка при обновлении эпика: ' + err.message, 'error');
+            // blocking: true — форма редактирования остаётся открытой, пользователю
+            // нужно понять причину отказа (например, диапазон веса) и исправить
+            // значение, поэтому сообщение не должно исчезать тостом самостоятельно.
+            handleApiError(err, { title: 'Ошибка при обновлении эпика', blocking: true });
         }
     };
 }
@@ -1724,10 +1720,14 @@ async function openEditEpicModal(epic) {
 async function openEditStoryModal(story) {
     let modal = document.getElementById('modal-edit-story');
     if (!modal) {
-        modal = document.createElement('div');
+        modal = document.createElement('dialog');
         modal.id = 'modal-edit-story';
-        modal.className = 'modal hidden';
+        modal.className = 'modal';
+        modal.setAttribute('aria-labelledby', 'modal-edit-story-title');
         document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {
+            if (!e.target.closest('.modal-content')) closeModal(modal);
+        });
     }
 
     const isNew = story.status === 'NEW';
@@ -1741,30 +1741,29 @@ async function openEditStoryModal(story) {
     }
 
     modal.innerHTML = `
-        <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Редактирование Истории</h2>
+                <h2 id="modal-edit-story-title">Редактирование Истории</h2>
                 <button class="btn-icon btn-close-modal">✕</button>
             </div>
             <form id="form-edit-story">
                 <div class="modal-body">
                     <div class="form-group">
                         <label>Номер истории</label>
-                        <input type="text" id="edit-story-number" class="input" value="${story.number || ''}" required>
+                        <input type="text" id="edit-story-number" class="input" value="${escapeHtml(story.number || '')}" required>
                     </div>
                     <div class="form-group">
                         <label>Название истории</label>
-                        <input type="text" id="edit-story-name" class="input" value="${story.name || ''}" required>
+                        <input type="text" id="edit-story-name" class="input" value="${escapeHtml(story.name || '')}" required>
                     </div>
                     <div class="form-group">
                         <label>Описание истории</label>
-                        <textarea id="edit-story-desc" class="input" style="min-height: 70px;">${story.description || ''}</textarea>
+                        <textarea id="edit-story-desc" class="input" style="min-height: 70px;">${escapeHtml(story.description || '')}</textarea>
                     </div>
                     <div class="form-group">
                         <label>Родительский Эпик ${!isNew ? '<span style="font-size: 11px; color: var(--color-danger);">(Заблокировано: скоринг запущен)</span>' : ''}</label>
                         <select id="edit-story-parent-epic" class="select" ${!isNew ? 'disabled' : ''}>
-                            ${epicsList.map(e => `<option value="${e.id}" ${story.parent_epic_id === e.id ? 'selected' : ''}>${e.number}: ${e.name}</option>`).join('')}
+                            ${epicsList.map(e => `<option value="${e.id}" ${story.parent_epic_id === e.id ? 'selected' : ''}>${escapeHtml(e.number)}: ${escapeHtml(e.name)}</option>`).join('')}
                         </select>
                     </div>
                 </div>
@@ -1776,14 +1775,10 @@ async function openEditStoryModal(story) {
         </div>
     `;
 
-    modal.classList.remove('hidden');
-    modal.style.display = 'flex';
+    openModal(modal);
 
-    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
-        btn.onclick = () => {
-            modal.classList.add('hidden');
-            modal.style.display = 'none';
-        };
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => closeModal(modal);
     });
 
     const form = modal.querySelector('#form-edit-story');
@@ -1802,38 +1797,46 @@ async function openEditStoryModal(story) {
                 parent_epic_id: parentEpicId
             });
             showToast('История успешно обновлена!', 'success');
-            modal.classList.add('hidden');
-            modal.style.display = 'none';
+            closeModal(modal);
             selectedStory = updatedStory;
             await loadEpicData();
         } catch (err) {
-            showToast('Ошибка при обновлении истории: ' + err.message, 'error');
+            handleApiError(err, { title: 'Ошибка при обновлении истории', blocking: true });
         }
     };
 }
 
+// Структура .modal-header/.modal-body/.modal-footer приведена к эталону
+// openEditEpicModal (задача 8.1) до перевода на <dialog> (задача 8.2) — раньше
+// здесь были <h3> и произвольные div style=..., из-за чего футер не подчинялся
+// общим адаптивным правилам .modal-footer из responsive.css.
 function openEditRiskModal(risk) {
     let modal = document.getElementById('modal-edit-risk');
     if (!modal) {
-        modal = document.createElement('div');
+        modal = document.createElement('dialog');
         modal.id = 'modal-edit-risk';
-        modal.className = 'modal hidden';
+        modal.className = 'modal';
+        modal.setAttribute('aria-labelledby', 'modal-edit-risk-title');
         document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {
+            if (!e.target.closest('.modal-content')) closeModal(modal);
+        });
     }
 
     modal.innerHTML = `
-        <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-width: 500px; width: 90%;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <h3 style="margin: 0; font-size: 16px;">Редактирование риска</h3>
-                <button class="btn-close-modal" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted);">&times;</button>
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2 id="modal-edit-risk-title">Редактирование риска</h2>
+                <button class="btn-icon btn-close-modal">✕</button>
             </div>
             <form id="form-edit-risk">
-                <div class="form-group">
-                    <label>Описание риска</label>
-                    <textarea id="edit-risk-desc" class="input" style="min-height: 70px;" required>${risk.description || ''}</textarea>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Описание риска</label>
+                        <textarea id="edit-risk-desc" class="input" style="min-height: 70px;" required>${escapeHtml(risk.description || '')}</textarea>
+                    </div>
                 </div>
-                <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
+                <div class="modal-footer">
                     <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
                     <button type="submit" class="btn btn-primary">Сохранить</button>
                 </div>
@@ -1841,14 +1844,10 @@ function openEditRiskModal(risk) {
         </div>
     `;
 
-    modal.classList.remove('hidden');
-    modal.style.display = 'flex';
+    openModal(modal);
 
-    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
-        btn.onclick = () => {
-            modal.classList.add('hidden');
-            modal.style.display = 'none';
-        };
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => closeModal(modal);
     });
 
     const form = modal.querySelector('#form-edit-risk');
@@ -1863,11 +1862,10 @@ function openEditRiskModal(risk) {
         try {
             await apiPut(`/risks/${risk.id}`, { description });
             showToast('Риск успешно обновлён!', 'success');
-            modal.classList.add('hidden');
-            modal.style.display = 'none';
+            closeModal(modal);
             await loadEpicData();
         } catch (err) {
-            showToast('Ошибка при обновлении риска: ' + err.message, 'error');
+            handleApiError(err, { title: 'Ошибка при обновлении риска', blocking: true });
         }
     };
 }
@@ -1878,44 +1876,41 @@ function openEditRiskModal(risk) {
 function openDeleteEpicModal(epic) {
     let modal = document.getElementById('modal-delete-epic');
     if (!modal) {
-        modal = document.createElement('div');
+        modal = document.createElement('dialog');
         modal.id = 'modal-delete-epic';
-        modal.className = 'modal hidden';
+        modal.className = 'modal';
+        modal.setAttribute('aria-labelledby', 'modal-delete-epic-title');
         document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {
+            if (!e.target.closest('.modal-content')) closeModal(modal);
+        });
     }
 
     modal.innerHTML = `
-        <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Удаление эпика</h2>
+                <h2 id="modal-delete-epic-title">Удаление эпика</h2>
                 <button class="btn-icon btn-close-modal">✕</button>
             </div>
             <div class="modal-body">
                 <p>
-                    Вы уверены, что хотите безвозвратно удалить эпик <strong>${epic.number}: ${epic.name}</strong>?
+                    Вы уверены, что хотите безвозвратно удалить эпик <strong>${escapeHtml(epic.number)}: ${escapeHtml(epic.name)}</strong>?
                 </p>
                 <p style="color: var(--color-danger);">
                     Это действие также удалит все истории, риски и оценки этого эпика. Отменить удаление будет невозможно.
                 </p>
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer modal-footer--destructive">
                 <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
                 <button type="button" id="btn-confirm-delete-epic" class="btn btn-danger">Удалить</button>
             </div>
         </div>
     `;
 
-    modal.classList.remove('hidden');
-    modal.style.display = 'flex';
+    openModal(modal);
 
-    const closeModal = () => {
-        modal.classList.add('hidden');
-        modal.style.display = 'none';
-    };
-
-    modal.querySelectorAll('.btn-close-modal, .modal-overlay').forEach(btn => {
-        btn.onclick = closeModal;
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => closeModal(modal);
     });
 
     const btnConfirm = modal.querySelector('#btn-confirm-delete-epic');
@@ -1923,12 +1918,72 @@ function openDeleteEpicModal(epic) {
         try {
             await apiDelete(`/epics/${epic.id}`);
             showToast('Эпик успешно удалён!', 'success');
-            closeModal();
+            closeModal(modal);
             clearDetails();
             await loadScoringEpics(state.get('selectedTeamId'));
         } catch (err) {
             // Список эпиков и панель деталей намеренно не трогаем — эпик остаётся как есть
-            showToast('Не удалось удалить эпик: ' + err.message, 'error');
+            handleApiError(err, { title: 'Не удалось удалить эпик' });
+        }
+    };
+}
+
+// Модальное окно подтверждения удаления истории — по образцу openDeleteEpicModal
+// (design.md Decision 3, web-destructive-confirm): кастомная модалка вместо
+// window.confirm, т.к. удаление истории каскадно и безвозвратно затрагивает
+// её риски и оценки участников.
+function openDeleteStoryModal(story) {
+    let modal = document.getElementById('modal-delete-story');
+    if (!modal) {
+        modal = document.createElement('dialog');
+        modal.id = 'modal-delete-story';
+        modal.className = 'modal';
+        modal.setAttribute('aria-labelledby', 'modal-delete-story-title');
+        document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {
+            if (!e.target.closest('.modal-content')) closeModal(modal);
+        });
+    }
+
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-delete-story-title">Удаление истории</h2>
+                <button class="btn-icon btn-close-modal">✕</button>
+            </div>
+            <div class="modal-body">
+                <p>
+                    Вы уверены, что хотите безвозвратно удалить историю <strong>${escapeHtml(story.name)}</strong>?
+                </p>
+                <p style="color: var(--color-danger);">
+                    Это действие также удалит все риски этой истории и все оценки участников по ней. Отменить удаление будет невозможно.
+                </p>
+            </div>
+            <div class="modal-footer modal-footer--destructive">
+                <button type="button" class="btn btn-secondary btn-close-modal">Отмена</button>
+                <button type="button" id="btn-confirm-delete-story" class="btn btn-danger">Удалить</button>
+            </div>
+        </div>
+    `;
+
+    openModal(modal);
+
+    modal.querySelectorAll('.btn-close-modal').forEach(btn => {
+        btn.onclick = () => closeModal(modal);
+    });
+
+    const btnConfirm = modal.querySelector('#btn-confirm-delete-story');
+    btnConfirm.onclick = async () => {
+        try {
+            await apiDelete(`/stories/${story.id}`);
+            showToast('История успешно удалена!', 'success');
+            if (selectedStory && selectedStory.id === story.id) {
+                selectedStory = null;
+            }
+            closeModal(modal);
+            await loadEpicData();
+        } catch (err) {
+            handleApiError(err, { title: 'Не удалось удалить историю' });
         }
     };
 }

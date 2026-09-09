@@ -54,6 +54,29 @@ export async function checkAuth() {
             return;
         } catch (e) {
             console.error('Profile fetch failed:', e);
+
+            // Различаем отказ авторизации и сетевой/серверный сбой иного рода
+            // (web-async-feedback, «Сетевой сбой не трактуется как отсутствие
+            // авторизации»). api.js выставляет e.status явно для обеих веток —
+            // строковое сравнение с e.message не нужно.
+            if (e.status === 401) {
+                // handleHttpError в api.js уже показал экран входа и скрыл
+                // #app — здесь только гарантируем скрытие loading-overlay.
+                hideLoadingOverlay();
+                return;
+            }
+            if (e.status === 403) {
+                // handleHttpError в api.js уже показал denied-overlay — не
+                // перекрываем его экраном входа.
+                hideLoadingOverlay();
+                return;
+            }
+
+            // Сетевая ошибка (сервер не отвечает, DNS, offline и т.п.) или
+            // неизвестный сбой без статуса — это не отказ доступа, показываем
+            // состояние недоступности сервера с возможностью повторить.
+            showConnectionError();
+            return;
         }
     }
 
@@ -69,16 +92,49 @@ export function logout() {
     showAuth();
 }
 
+function hideLoadingOverlay() {
+    document.getElementById('loading-overlay')?.classList.add('hidden');
+}
+
 function showAuth() {
     document.getElementById('loading-overlay').classList.add('hidden');
     document.getElementById('auth-overlay').classList.remove('hidden');
     document.getElementById('app').classList.add('hidden');
     document.getElementById('denied-overlay').classList.add('hidden');
+    document.getElementById('connection-error-overlay')?.classList.add('hidden');
 }
 
 function showApp() {
     document.getElementById('loading-overlay').classList.add('hidden');
     document.getElementById('auth-overlay').classList.add('hidden');
     document.getElementById('denied-overlay').classList.add('hidden');
+    document.getElementById('connection-error-overlay')?.classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
 }
+
+// showConnectionError — состояние «нет связи с сервером» (web-async-feedback,
+// «Временная недоступность сервера при загрузке страницы»): показывается
+// вместо экрана входа, когда проверка профиля не удалась не из-за отказа
+// авторизации, а из-за сетевой/серверной ошибки иного рода.
+function showConnectionError() {
+    document.getElementById('loading-overlay').classList.add('hidden');
+    document.getElementById('auth-overlay').classList.add('hidden');
+    document.getElementById('app').classList.add('hidden');
+    document.getElementById('denied-overlay').classList.add('hidden');
+    document.getElementById('connection-error-overlay')?.classList.remove('hidden');
+}
+
+// Кнопки экрана «Доступ ограничен» (web-async-feedback, «Экран отказа в
+// доступе предлагает действие»): «Обновить» повторяет проверку без ручной
+// перезагрузки страницы, «Выйти» сбрасывает токен и возвращает на экран входа.
+document.getElementById('denied-btn-refresh')?.addEventListener('click', () => {
+    checkAuth();
+});
+document.getElementById('denied-btn-logout')?.addEventListener('click', () => {
+    logout();
+});
+
+// Кнопка повтора на экране «Нет связи с сервером».
+document.getElementById('connection-error-btn-retry')?.addEventListener('click', () => {
+    checkAuth();
+});

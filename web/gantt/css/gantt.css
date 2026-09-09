@@ -116,24 +116,43 @@
 }
 
 /* Text Label Contrast Styles */
+/* fit-gantt-chart-width (ux-brief.md п.2): растягивание колонок увеличивает
+   долю подписей, остающихся внутри цветного бара (вместо ухода в
+   `.bar-label.big` на тёмный фон страницы), а drop-shadow в контраст по
+   WCAG не засчитывается — ниже 4.5:1 почти для всех шести ролевых цветов.
+   Заменено на SVG-обводку текста токеном фона (`stroke` вместо `filter`) —
+   она разрывает силуэт глифа с заливкой при любом ролевом цвете. */
 .gantt .bar-label {
     fill: #ffffff !important;
     font-weight: 600;
-    filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.9));
+    paint-order: stroke;
+    stroke: var(--bg-primary);
+    stroke-width: 3px;
+    stroke-linejoin: round;
 }
 
 .gantt .bar-label.big {
-    fill: #f0f0ff !important;
-    filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.9));
+    fill: var(--text-primary) !important;
+    paint-order: stroke;
+    stroke: var(--bg-primary);
+    stroke-width: 3px;
+    stroke-linejoin: round;
 }
 
-/* Custom Task Colors based on Role */
+/* Custom Task Colors based on Role.
+   Уровень «эпик»/«стори» кодируется не цветом (оба нейтральные — см.
+   variables.css), а стилем заливки: эпик — сплошная непрозрачная заливка,
+   стори — полупрозрачная заливка со сплошным контуром того же нейтраля.
+   Различимость сохраняется и при чёрно-белой печати за счёт непрозрачности
+   и вторичного кодирования (rx, font-weight подписи). */
 .gantt .gantt-epic .bar {
-    fill: var(--color-epic, #4f46e5);
+    fill: var(--color-epic);
+    fill-opacity: 1;
+    stroke: none;
     rx: 6px;
 }
 .gantt .gantt-epic .bar-progress {
-    fill: #3730a3;
+    fill: var(--color-epic-progress);
     rx: 6px;
 }
 .gantt .gantt-epic .bar-label {
@@ -142,11 +161,14 @@
 }
 
 .gantt .gantt-story .bar {
-    fill: var(--color-story); /* Purple for stories */
+    fill: var(--color-story);
+    fill-opacity: 0.45;
+    stroke: var(--color-story);
+    stroke-width: 1.5px;
     rx: 4px;
 }
 .gantt .gantt-story .bar-progress {
-    fill: #7c3aed;
+    fill: var(--color-story-progress);
     rx: 4px;
 }
 .gantt .gantt-story .bar-label {
@@ -158,49 +180,49 @@
     fill: var(--color-role-analyst);
 }
 .gantt .gantt-analyst .bar-progress {
-    fill: #1d4ed8;
+    fill: var(--color-role-analyst-progress);
 }
 
 .gantt .gantt-be .bar {
     fill: var(--color-role-be);
 }
 .gantt .gantt-be .bar-progress {
-    fill: #047857;
+    fill: var(--color-role-be-progress);
 }
 
 .gantt .gantt-fe .bar {
     fill: var(--color-role-fe);
 }
 .gantt .gantt-fe .bar-progress {
-    fill: #d97706;
+    fill: var(--color-role-fe-progress);
 }
 
 .gantt .gantt-mobile .bar {
     fill: var(--color-role-mobile);
 }
 .gantt .gantt-mobile .bar-progress {
-    fill: #db2777;
+    fill: var(--color-role-mobile-progress);
 }
 
 .gantt .gantt-qa .bar {
     fill: var(--color-role-qa);
 }
 .gantt .gantt-qa .bar-progress {
-    fill: #4338ca;
+    fill: var(--color-role-qa-progress);
 }
 
 .gantt .gantt-leader .bar {
     fill: var(--color-role-it-leader);
 }
 .gantt .gantt-leader .bar-progress {
-    fill: #6d28d9;
+    fill: var(--color-role-it-leader-progress);
 }
 
 .gantt .gantt-default .bar {
     fill: var(--color-default);
 }
 .gantt .gantt-default .bar-progress {
-    fill: #334155;
+    fill: var(--color-default-progress);
 }
 
 /* Handles for dragging dates */
@@ -215,6 +237,7 @@
    прогресс-бара, чтобы визуально отличать закрытые задачи от текущих. */
 .gantt .bar-wrapper.gantt-completed .bar {
     fill: var(--bg-tertiary);
+    fill-opacity: 1;
     stroke: var(--color-success);
     stroke-width: 1.5px;
     opacity: 0.85;
@@ -243,6 +266,7 @@
    чтобы не зависеть от каскада, если блоки позже переставят местами. */
 .gantt .bar-wrapper.gantt-no-assignee:not(.gantt-completed) .bar {
     fill: var(--bg-tertiary);
+    fill-opacity: 1;
     stroke: var(--text-muted);
     stroke-width: 1.5px;
     stroke-dasharray: 4 3;

@@ -2,11 +2,28 @@
 
 import { state } from './state.js';
 import { apiPut, apiGet } from './api.js';
-import { showToast } from './utils.js';
+import { showToast, handleApiError, withSubmitLock, openModal, closeModal } from './utils.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+// ── Заполнение доступной ширины (fit-gantt-chart-width) ──────────────
+//
+// Штатные ширины колонки по масштабу — сверено по факту в UMD-бандле
+// frappe-gantt@1.2.2 с CDN (design.md, Context): Day не задаёт column_width
+// в дескрипторе режима и падает на дефолт библиотеки 45, Week — 140,
+// Month — 120. Year в интерфейсе не используется (design.md Non-Goals).
+const DEFAULT_COLUMN_WIDTHS = { Day: 45, Week: 140, Month: 120 };
+
+// Задержка гашения дребезга resize (design.md Решение 5) — события идут
+// десятками в секунду при перетаскивании края окна, каждое применение
+// ширины перерисовывает SVG целиком.
+const RESIZE_DEBOUNCE_MS = 150;
+
 let ganttChart = null;
+
+// Хэндл текущего отложенного пересчёта ширины после resize — используется
+// для гашения дребезга (см. scheduleFitColumnWidthRecalc).
+let resizeDebounceHandle = null;
 
 // Отпечаток набора задач текущей отрисованной диаграммы (отсортированные id
 // через запятую) — используется, чтобы отличить «структурное» изменение
@@ -65,11 +82,148 @@ export function initGanttRenderer() {
     state.subscribe('viewMode', (mode) => {
         if (ganttChart) {
             ganttChart.change_view_mode(mode);
+            // Ширина колонки, подобранная под предыдущий масштаб, иначе
+            // «утечёт» в новый — column_width в опциях побеждает штатное
+            // значение режима безусловно (design.md Решение 3, спека
+            // «Ширина пересчитывается при смене масштаба»). Вызов синхронный,
+            // без await/setTimeout — второй (уже верный) рендер перекрывает
+            // первый в том же такте JS, до следующей отрисовки браузера.
+            applyFitColumnWidth(ganttChart);
         }
+    });
+
+    // Возврат на вкладку «Гант» после resize, случившегося на другой
+    // вкладке (tasks.md 2.7): switchTab (app.js) вызывает
+    // state.set('activeTab', ...) ДО снятия класса `.hidden` с
+    // `#tab-content-gantt` — на момент срабатывания этого колбэка контейнер
+    // ещё может быть скрыт (нулевая ширина). requestAnimationFrame переносит
+    // фактический пересчёт на следующий кадр, когда switchTab уже полностью
+    // отработал (он весь синхронный) и `.hidden` снят — это не тот же
+    // приём, что двухшаговый первый рендер (там пересчёт обязан быть
+    // синхронным, здесь, наоборот, обязан быть отложен на кадр, т.к. сам
+    // источник изменения — переключение вкладки, а не построение чарта).
+    state.subscribe('activeTab', (tab) => {
+        if (tab !== 'gantt') return;
+        requestAnimationFrame(() => {
+            if (!ganttChart) return;
+            applyFitColumnWidth(ganttChart);
+        });
     });
 
     setupGanttEvents();
     setupParentDragReorder();
+    setupGanttResizeHandler();
+}
+
+// ── Вычисление и применение ширины колонки под доступную ширину ─────
+// (fit-gantt-chart-width, design.md Решения 1–5)
+
+// Доступная ширина рабочей области диаграммы — ширина `.app-gantt-wrapper`
+// за вычетом его собственных горизонтальных отступов (`padding: clamp(12px,
+// 3vw, 24px)`, gantt.css:61-67). Без вычета отступов полотно оказалось бы
+// шире контейнера и появилась бы лишняя прокрутка (design.md Решение 5).
+function getGanttWrapperAvailableWidth() {
+    const wrapper = document.getElementById('app-gantt-wrapper');
+    if (!wrapper) return 0;
+
+    const rect = wrapper.getBoundingClientRect();
+    const styles = window.getComputedStyle(wrapper);
+    const paddingLeft = parseFloat(styles.paddingLeft) || 0;
+    const paddingRight = parseFloat(styles.paddingRight) || 0;
+
+    return Math.max(0, rect.width - paddingLeft - paddingRight);
+}
+
+// computeFitColumnWidth — считает ширину колонки как
+// `max(штатная ширина режима, доступная ширина / число колонок)`,
+// без верхнего клампа (продуктовое решение зафиксировано в ux-brief.md п.1
+// и подтверждено пользователем — потолок растягивания не вводится).
+//
+// Число колонок берётся из состояния уже построенного экземпляра
+// (`chart.dates`, сверено по факту в UMD-бандле — setup_date_values()
+// заполняет именно это поле), а не пересчитывается заново из дат задач:
+// дублирование логики `padding` дало бы расхождение на несколько пикселей
+// (design.md Решение 2).
+//
+// Возвращает null, если доступная ширина сейчас неизвестна (контейнер
+// скрыт — например, активна другая вкладка): в этом случае пересчёт
+// пропускается целиком, а не откатывается к штатной ширине — иначе
+// resize-событие, случайно произошедшее при скрытой вкладке «Гант»,
+// схлопнуло бы уже подобранную ширину до штатной.
+function computeFitColumnWidth(chart) {
+    if (!chart || !chart.config) return null;
+
+    const viewModeName = (chart.config.view_mode && chart.config.view_mode.name)
+        || state.get('viewMode')
+        || 'Day';
+    const defaultWidth = DEFAULT_COLUMN_WIDTHS[viewModeName] || DEFAULT_COLUMN_WIDTHS.Day;
+
+    const columnCount = Array.isArray(chart.dates) ? chart.dates.length : 0;
+    if (!columnCount) return defaultWidth;
+
+    const availableWidth = getGanttWrapperAvailableWidth();
+    if (availableWidth <= 0) return null;
+
+    return Math.max(defaultWidth, availableWidth / columnCount);
+}
+
+// applyFitColumnWidth — применяет вычисленную ширину через
+// `update_options({ column_width })` (design.md Решение 3): это
+// единственный путь библиотеки, который меняет `config.column_width` не
+// затираемым способом (прямое присваивание в `config` перетёрлось бы при
+// первой же смене масштаба) и в конце вызывает `trigger_event("view_change")`,
+// на который приложение уже подписано (`on_view_change` → applyPostRenderEnhancements).
+//
+// Позиция прокрутки сохраняется не абсолютным `scrollLeft` (это сделала бы
+// сама библиотека через ветку `change_view_mode(undefined, true)` внутри
+// `update_options`), а относительной долей `scrollLeft / scrollWidth`
+// (ux-brief.md п.5): при изменении ширины колонки меняется масштаб
+// «пикселей на день», и абсолютный scrollLeft начинает указывать на другую
+// дату — пересчитываем долю сами и применяем её поверх того, что уже
+// сделала библиотека.
+function applyFitColumnWidth(chart) {
+    if (!chart) return;
+
+    const newWidth = computeFitColumnWidth(chart);
+    if (newWidth === null) return;
+    if (chart.config.column_width === newWidth) return;
+
+    const scrollContainer = chart.$container;
+    const oldScrollWidth = scrollContainer ? scrollContainer.scrollWidth : 0;
+    const scrollRatio = (scrollContainer && oldScrollWidth > 0)
+        ? scrollContainer.scrollLeft / oldScrollWidth
+        : 0;
+
+    chart.update_options({ column_width: newWidth });
+
+    if (scrollContainer) {
+        scrollContainer.scrollLeft = scrollRatio * scrollContainer.scrollWidth;
+    }
+}
+
+// scheduleFitColumnWidthRecalc — гасит дребезг resize простым debounce по
+// времени (design.md Решение 5: альтернатива ResizeObserver оставлена
+// реализации, здесь выбран `window.resize`, т.к. в приложении не требуется
+// ловить изменения раскладки без изменения размера окна, а отдельный
+// observer добавил бы обязанность по отписке при уходе с вкладки «Гант»).
+// Ширина контейнера читается уже внутри applyFitColumnWidth в момент
+// фактического срабатывания — не из значения, вычисленного заранее
+// (ux-brief.md п.3).
+function scheduleFitColumnWidthRecalc() {
+    if (resizeDebounceHandle) {
+        clearTimeout(resizeDebounceHandle);
+    }
+    resizeDebounceHandle = setTimeout(() => {
+        resizeDebounceHandle = null;
+        if (!ganttChart) return;
+        applyFitColumnWidth(ganttChart);
+    }, RESIZE_DEBOUNCE_MS);
+}
+
+// setupGanttResizeHandler — регистрируется один раз при инициализации
+// модуля (симметрично setupParentDragReorder), не внутри renderGantt.
+function setupGanttResizeHandler() {
+    window.addEventListener('resize', scheduleFitColumnWidthRecalc);
 }
 
 // Собственный document-level mouseup-слушатель для завершения drag-reorder
@@ -205,7 +359,15 @@ function renderGantt(tasks) {
         if (scrollContainer && savedScrollLeft !== undefined) {
             requestAnimationFrame(() => {
                 scrollContainer.scrollLeft = savedScrollLeft;
+                // Пересчёт ширины колонки под доступную ширину
+                // (fit-gantt-chart-width, design.md Решение 4) — после того,
+                // как scrollLeft уже восстановлен, чтобы относительная доля
+                // прокрутки внутри applyFitColumnWidth считалась от верной
+                // базовой позиции, а не от временной, оставленной refresh().
+                applyFitColumnWidth(ganttChart);
             });
+        } else {
+            applyFitColumnWidth(ganttChart);
         }
 
         applyPostRenderEnhancements(tasks);
@@ -294,11 +456,20 @@ function renderGantt(tasks) {
                 // полный список задач заново.
                 await reloadCurrentTeamTasks();
             } catch (err) {
-                showToast('Не удалось обновить прогресс: ' + err.message, 'error');
+                handleApiError(err, { title: 'Не удалось обновить прогресс' });
                 renderGantt(state.get('tasks'));
             }
         },
     });
+
+    // Двухшаговый первый рендер (design.md Решение 2, ux-brief.md п.5):
+    // экземпляр только что построен со штатной шириной колонки текущего
+    // масштаба (chart.dates уже посчитан библиотекой в setup_dates), теперь
+    // можно узнать фактическое число колонок и применить вычисленную
+    // ширину. Вызывается синхронно, в том же такте JS, без await/setTimeout
+    // между шагами — иначе пользователь на долю секунды увидел бы
+    // нерастянутую сетку.
+    applyFitColumnWidth(ganttChart);
 
     applyPostRenderEnhancements(tasks);
 }
@@ -346,9 +517,8 @@ function buildGanttPopup({ task, chart, set_title, set_subtitle, set_details }) 
     // (исключающая граница) — минус секунда, чтобы отобразить последний
     // включённый день, тем же приёмом, что и дефолтный попап библиотеки.
     const endStr = formatPopupMonthDay(new Date(task._end.getTime() - 1000), lang);
-    const dayWord = task.actual_duration === 1 ? 'day' : 'days';
-    const excluded = task.ignored_duration ? ` + ${task.ignored_duration} excluded` : '';
-    let details = `${startStr} - ${endStr} (${task.actual_duration} ${dayWord}${excluded})<br/>Progress: ${Math.floor(task.progress * 100) / 100}%`;
+    const excluded = task.ignored_duration ? ` + ${task.ignored_duration} искл.` : '';
+    let details = `${startStr} - ${endStr} (${task.actual_duration} дн.${excluded})<br/>Прогресс: ${Math.floor(task.progress * 100) / 100}%`;
 
     if (!task._is_parent && task._role_id) {
         const rawTasks = state.get('tasks');
@@ -568,11 +738,11 @@ function openTaskDetailsModal(feTask) {
     currentDetailsAssigneeOriginal = null;
     populateAssigneeSelect(t);
 
-    document.getElementById('task-details-modal').classList.remove('hidden');
+    openModal(document.getElementById('task-details-modal'));
 }
 
 function closeTaskDetailsModal() {
-    document.getElementById('task-details-modal').classList.add('hidden');
+    closeModal(document.getElementById('task-details-modal'));
     currentDetailsTaskId = null;
     currentDetailsOriginal = null;
     currentDetailsAssigneeOriginal = null;
@@ -636,7 +806,7 @@ async function populateAssigneeSelect(t) {
         select.innerHTML = '<option value="" disabled selected>Ошибка загрузки исполнителей</option>';
         select.disabled = true;
         help.textContent = '';
-        showToast('Не удалось загрузить список исполнителей: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось загрузить список исполнителей' });
         return;
     }
 
@@ -754,39 +924,36 @@ async function saveTaskDetails() {
     }
 
     // Блокировка кнопок на время запроса (закрывает дефект: без неё двойной
-    // клик уходит двумя параллельными запросами) — как уже сделано в
-    // app.js, runRegenerateQuarter.
+    // клик уходит двумя параллельными запросами) — через общий withSubmitLock
+    // (design.md, Decision 7). Save/Cancel — пара кнопок модалки, а не submit
+    // формы, поэтому передаются списком: блокируются обе.
     const saveBtn = document.getElementById('task-details-save');
     const cancelBtn = document.getElementById('task-details-cancel');
-    if (saveBtn) saveBtn.disabled = true;
-    if (cancelBtn) cancelBtn.disabled = true;
-
     const taskId = currentDetailsTaskId;
-    try {
-        // Порядок: сначала исполнитель, затем прогресс/смещение — оба в
-        // одном try/catch.
-        if (assigneeChanged) {
-            await apiPut(`/tasks/${taskId}/assignee`, { user_id: assigneeSelect.value || null });
+    await withSubmitLock([saveBtn, cancelBtn], async () => {
+        try {
+            // Порядок: сначала исполнитель, затем прогресс/смещение — оба в
+            // одном try/catch.
+            if (assigneeChanged) {
+                await apiPut(`/tasks/${taskId}/assignee`, { user_id: assigneeSelect.value || null });
+            }
+            if (Object.keys(payload).length > 0) {
+                await apiPut(`/tasks/${taskId}`, payload);
+            }
+            showToast('Задача обновлена', 'success');
+            closeTaskDetailsModal();
+            // Любое из изменений (прогресс/смещение/исполнитель) может сдвинуть
+            // расписание всей команды (конвейер) — тянем полный список заново.
+            await reloadCurrentTeamTasks();
+        } catch (err) {
+            handleApiError(err, { title: 'Не удалось сохранить' });
+            // Один из двух PUT выше мог уже примениться на бэкенде, пока второй
+            // упал — перезагружаем задачи, чтобы диаграмма не разошлась с
+            // фактическим состоянием (модалку при этом не закрываем, как и
+            // раньше).
+            await reloadCurrentTeamTasks();
         }
-        if (Object.keys(payload).length > 0) {
-            await apiPut(`/tasks/${taskId}`, payload);
-        }
-        showToast('Задача обновлена', 'success');
-        closeTaskDetailsModal();
-        // Любое из изменений (прогресс/смещение/исполнитель) может сдвинуть
-        // расписание всей команды (конвейер) — тянем полный список заново.
-        await reloadCurrentTeamTasks();
-    } catch (err) {
-        showToast('Не удалось сохранить: ' + err.message, 'error');
-        // Один из двух PUT выше мог уже примениться на бэкенде, пока второй
-        // упал — перезагружаем задачи, чтобы диаграмма не разошлась с
-        // фактическим состоянием (модалку при этом не закрываем, как и
-        // раньше).
-        await reloadCurrentTeamTasks();
-    } finally {
-        if (saveBtn) saveBtn.disabled = false;
-        if (cancelBtn) cancelBtn.disabled = false;
-    }
+    });
 }
 
 async function reloadCurrentTeamTasks() {
@@ -926,7 +1093,7 @@ async function handleParentDragRelease(drag) {
             // запрос упал) — это то же ограничение, что и у существующего
             // saveOrder() для модалки, отдельно не чиним в рамках этого
             // изменения.
-            showToast('Не удалось изменить порядок: ' + err.message, 'error');
+            handleApiError(err, { title: 'Не удалось изменить порядок' });
             renderGantt(state.get('tasks'));
         }
     } finally {
@@ -988,7 +1155,7 @@ function openOrderModal(title, items, config, onSave) {
     });
 
     setupDragAndDropForModal();
-    document.getElementById('reorder-modal').classList.remove('hidden');
+    openModal(document.getElementById('reorder-modal'));
 }
 
 // Клик по бару стори — переупорядочивание ролей внутри неё (как и раньше).
@@ -1030,7 +1197,7 @@ async function openStoryReorderModal() {
     try {
         stories = await apiGet(`/epics/${epicId}/stories`);
     } catch (err) {
-        showToast('Не удалось загрузить истории эпика: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось загрузить истории эпика' });
         return;
     }
 
@@ -1063,7 +1230,7 @@ async function openEpicReorderModal() {
         const data = await apiGet(`/epics?team_id=${teamId}`);
         epics = (data.epics || []).filter(e => !e.parent_epic_id);
     } catch (err) {
-        showToast('Не удалось загрузить эпиков: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось загрузить эпиков' });
         return;
     }
 
@@ -1125,7 +1292,7 @@ function updateModalInputsOrder() {
 }
 
 function closeReorderModal() {
-    document.getElementById('reorder-modal').classList.add('hidden');
+    closeModal(document.getElementById('reorder-modal'));
     currentOrderConfig = null;
 }
 
@@ -1160,7 +1327,7 @@ async function saveOrder() {
         // перезагружаем полный список задач.
         reloadCurrentTeamTasks();
     } catch (err) {
-        showToast('Не удалось сохранить изменения: ' + err.message, 'error');
+        handleApiError(err, { title: 'Не удалось сохранить изменения' });
     }
 }
 
@@ -1168,7 +1335,13 @@ function setupGanttEvents() {
     document.getElementById('modal-close')?.addEventListener('click', closeReorderModal);
     document.getElementById('modal-cancel')?.addEventListener('click', closeReorderModal);
     document.getElementById('modal-save')?.addEventListener('click', saveOrder);
-    document.querySelector('.modal-overlay')?.addEventListener('click', closeReorderModal);
+    // Клик по фону (области dialog за пределами .modal-content) закрывает
+    // модалку — замена клика по .modal-overlay при переходе на <dialog>
+    // (design.md, Decision 3). Селектор явно скоупнут на #reorder-modal, что
+    // снимает задачу 9.1 (там был неспецифичный querySelector('.modal-overlay')).
+    document.getElementById('reorder-modal')?.addEventListener('click', (e) => {
+        if (!e.target.closest('.modal-content')) closeReorderModal();
+    });
 
     // Новые точки входа для переупорядочивания эпиков/сторей (тулбар Ганта).
     document.getElementById('btn-reorder-epics')?.addEventListener('click', openEpicReorderModal);
@@ -1178,7 +1351,9 @@ function setupGanttEvents() {
     document.getElementById('task-details-close')?.addEventListener('click', closeTaskDetailsModal);
     document.getElementById('task-details-cancel')?.addEventListener('click', closeTaskDetailsModal);
     document.getElementById('task-details-save')?.addEventListener('click', saveTaskDetails);
-    document.querySelector('#task-details-modal .modal-overlay')?.addEventListener('click', closeTaskDetailsModal);
+    document.getElementById('task-details-modal')?.addEventListener('click', (e) => {
+        if (!e.target.closest('.modal-content')) closeTaskDetailsModal();
+    });
 
     // View modes
     document.querySelectorAll('.btn-view').forEach(btn => {

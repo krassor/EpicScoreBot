@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { apiGet } from './api.js';
-import { showToast } from './utils.js';
+import { handleApiError, renderTableState, escapeHtml } from './utils.js';
 
 const API_BASE = '/api/gantt';
 
@@ -175,9 +175,12 @@ async function loadCapacityReport() {
         renderQuotasTable(data);
     } catch (err) {
         console.error('Ошибка при загрузке отчета о вместимости:', err);
-        const errMsg = `<p style="color: var(--color-danger); padding: 10px; margin: 0;">Ошибка загрузки данных: ${err.message}</p>`;
-        if (capacityContainer) capacityContainer.innerHTML = errMsg;
-        if (quotasContainer) quotasContainer.innerHTML = errMsg;
+        // Рендерим состояние ошибки через общий renderTableState (с «Повторить»)
+        // вместо прямой подстановки err.message в HTML — технический текст сервера
+        // не всегда понятен пользователю (web-async-feedback).
+        if (capacityContainer) renderTableState(capacityContainer, 'error', { onRetry: loadCapacityReport });
+        if (quotasContainer) renderTableState(quotasContainer, 'error', { onRetry: loadCapacityReport });
+        handleApiError(err, { title: 'Не удалось загрузить отчёт о вместимости' });
     }
 }
 
@@ -269,7 +272,7 @@ function renderCapacityTable(data) {
 
     // Добавляем роли как колонки в шапку
     roleCapacities.forEach(rc => {
-        html += `<th style="text-align: center; min-width: 100px;">${rc.role_name}</th>`;
+        html += `<th style="text-align: center; min-width: 100px;">${escapeHtml(rc.role_name)}</th>`;
     });
 
     html += `
@@ -284,8 +287,8 @@ function renderCapacityTable(data) {
         html += `
             <tr>
                 <td style="font-weight: 500; text-align: left;">
-                    <span style="color: var(--color-primary); font-weight: bold; margin-right: 6px;">#${epic.number}</span>
-                    <span>${epic.name}</span>
+                    <span style="color: var(--color-primary); font-weight: bold; margin-right: 6px;">#${escapeHtml(epic.number)}</span>
+                    <span>${escapeHtml(epic.name)}</span>
                 </td>
                 <td style="text-align: center;">
                     <span class="badge badge-type-${epic.type}" style="font-size: 11px;">${epic.type}</span>
@@ -382,7 +385,7 @@ function renderQuotasTable(data) {
     };
 
     const getRowStyle = (status) => {
-        return status === 'EXCEEDED' ? 'background-color: rgba(239, 68, 68, 0.05);' : '';
+        return status === 'EXCEEDED' ? 'background-color: var(--color-danger-bg-subtle);' : '';
     };
 
     let html = `
@@ -398,7 +401,7 @@ function renderQuotasTable(data) {
             <tbody>
                 <tr style="${getRowStyle(featureQuota.status)}">
                     <td style="font-weight: 500;">
-                        <span style="display: inline-block; width: 12px; height: 12px; background-color: var(--color-primary); border-radius: 3px; margin-right: 8px; vertical-align: middle;"></span>
+                        <span style="display: inline-block; width: 12px; height: 12px; background-color: var(--color-info); border-radius: 3px; margin-right: 8px; vertical-align: middle;"></span>
                         Feature (Бизнес-фичи)
                     </td>
                     <td style="text-align: center;">&le; ${featureQuota.limit_percent}%</td>
@@ -409,7 +412,6 @@ function renderQuotasTable(data) {
                 </tr>
                 <tr style="${getRowStyle(techQuota.status)}">
                     <td style="font-weight: 500;">
-                        <span style="display: inline-block; width: 12px; height: 12px; background-color: var(--color-role-it-leader); border-radius: 3px; margin-right: 8px; vertical-align: middle;"></span>
                         Architecture + Techdebt (Архитектура и техдолг)
                     </td>
                     <td style="text-align: center;">&le; ${techQuota.limit_percent}%</td>

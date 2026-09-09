@@ -130,6 +130,18 @@ type TeamService interface {
 	RemoveUserTeam(ctx context.Context, userID, teamID uuid.UUID) error
 }
 
+// GanttTaskSource — узкий источник задач диаграммы Ганта команды, нужный
+// epicService.GetReportData для листа диаграммы PDF-отчёта
+// (openspec/changes/add-gantt-page-to-pdf-report, design.md Решение 4).
+// Единственная реализация — gantt.Service.GetTeamTasks; отдельный интерфейс
+// вместо прямой зависимости от пакета gantt сохраняет разделение слоёв
+// (services не знает о деталях пакета gantt, только о контракте, который ему
+// нужен — тот же приём, что GanttHandler.WithReportServices на транспортном
+// уровне, см. handlers/gantt.go).
+type GanttTaskSource interface {
+	GetTeamTasks(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error)
+}
+
 // EpicService defines the business logic for epics.
 type EpicService interface {
 	CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error)

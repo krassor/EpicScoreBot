@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"EpicScoreBot/internal/models/domain"
@@ -19,13 +20,35 @@ import (
 type epicService struct {
 	log  *slog.Logger
 	repo Repository
+	// ganttTasks — источник задач диаграммы Ганта команды для листа PDF-
+	// отчёта (см. GetReportData, GanttTaskSource). Может быть не задан
+	// (WithGanttTaskSource не вызывался) — тогда GetReportData просто не
+	// заполняет ReportData.GanttTasks, без ошибки (design.md Решение 5).
+	ganttTasks GanttTaskSource
 }
 
-func NewEpicService(log *slog.Logger, repo Repository) EpicService {
+// NewEpicService возвращает *epicService (а не интерфейс EpicService) — это
+// позволяет вызывающему коду доопределить необязательные зависимости через
+// WithGanttTaskSource, не меняя сигнатуру конструктора и не задевая
+// существующие вызовы/тесты (тот же приём, что и
+// handlers.NewGanttHandler/WithReportServices — см. handlers/gantt.go).
+// *epicService по-прежнему удовлетворяет EpicService структурно.
+func NewEpicService(log *slog.Logger, repo Repository) *epicService {
 	return &epicService{
 		log:  log.With(slog.String("service", "epic")),
 		repo: repo,
 	}
+}
+
+// WithGanttTaskSource устанавливает источник задач диаграммы Ганта,
+// используемый GetReportData при сборке листа диаграммы PDF-отчёта (см.
+// GanttTaskSource, design.md change add-gantt-page-to-pdf-report). Вынесено
+// отдельным методом по тем же причинам, что и
+// handlers.GanttHandler.WithReportServices — не менять сигнатуру
+// конструктора и не задевать существующие вызовы NewEpicService(log, repo).
+func (s *epicService) WithGanttTaskSource(src GanttTaskSource) *epicService {
+	s.ganttTasks = src
+	return s
 }
 
 func (s *epicService) CreateEpic(ctx context.Context, number, name, description string, teamID uuid.UUID, year, quarter int, epicType string, evaluatingRoleIDs []uuid.UUID) (*domain.Epic, error) {
@@ -152,6 +175,24 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 		return nil, err
 	}
 
+	// periodEpicIDs — ID ВСЕХ верхнеуровневых эпиков отчётного периода (до
+	// фильтрации по статусу ниже), тот же набор, что уже вернул
+	// GetEpicsByTeamYearQuarter внутри BuildCapacityReport. Захватывается
+	// здесь же, а не отдельным повторным вызовом репозитория в
+	// collectGanttReportRows: во-первых, это лишний запрос к БД за уже
+	// имеющимися данными, во-вторых — повторный вызов того же метода мог бы
+	// либо задвоить ошибку с уже проверенной строкой выше (core уже собран
+	// успешно), либо разойтись с ней, если данные изменились между двумя
+	// вызовами (design.md change add-gantt-page-to-pdf-report, задача 2.6).
+	periodEpicIDs := make(map[uuid.UUID]struct{}, len(core.Epics))
+	for _, e := range core.Epics {
+		if id, parseErr := uuid.Parse(e.ID); parseErr == nil {
+			periodEpicIDs[id] = struct{}{}
+		} else {
+			log.Error("failed to parse epic id for gantt period filter", sl.Err(parseErr), slog.String("epic_id", e.ID))
+		}
+	}
+
 	scoredEpics := make([]report.EpicReportItem, 0, len(core.Epics))
 	for _, e := range core.Epics {
 		if e.Status == string(domain.StatusScored) {
@@ -178,10 +219,141 @@ func (s *epicService) GetReportData(ctx context.Context, teamID uuid.UUID, year,
 	reportData := &report.ReportData{
 		CapacityReportResponse: *core,
 		Epics:                  epicReportItems,
+		GanttTasks:             s.collectGanttReportRows(ctx, teamID, periodEpicIDs, log),
 		Generated:              time.Now(),
 	}
 
 	return reportData, nil
+}
+
+// collectGanttReportRows собирает дерево задач диаграммы Ганта команды **за
+// отчётный период** для листа PDF-отчёта (см. report.GanttReportRow,
+// gantt_svg.go). Источник задач — s.ganttTasks (GanttTaskSource,
+// единственная реализация — gantt.Service.GetTeamTasks), который возвращает
+// задачи ВСЕЙ команды без фильтра по периоду (design.md change
+// add-gantt-page-to-pdf-report, задача 2.6) — отчёт за Q4 без
+// дополнительной фильтрации показал бы заодно задачи Q1–Q3, что расходится
+// с требованием «диаграмма запланированных работ этой команды за этот же
+// период».
+//
+// periodEpicIDs — ID верхнеуровневых эпиков ИМЕННО этого периода
+// (year/quarter), уже вычисленные вызывающим кодом (GetReportData) из
+// core.Epics — того же среза, который под капотом собрал
+// GetEpicsByTeamYearQuarter внутри BuildCapacityReport. Повторного запроса
+// к репозиторию здесь намеренно нет: он был бы избыточен (данные уже
+// получены) и мог бы либо задвоить уже проверенную выше ошибку (core уже
+// собран успешно к этому моменту), либо разойтись с ней, если данные
+// изменились между двумя вызовами. domain.GanttTask.EpicID у ЛЮБОЙ строки
+// эпика (включая листовые задачи любой его стори) равен ID именно
+// верхнеуровневого эпика — см. комментарий у
+// gantt.Service.GetTeamTasksWithAssignments в internal/gantt/ganttService.go
+// — поэтому сравнения с periodEpicIDs достаточно, без похода в БД за
+// сторями.
+//
+// Период здесь — это принадлежность ЭПИКА году/кварталу, а не дат
+// отдельных задач: задача эпика отчётного квартала, заканчивающаяся уже в
+// следующем, по-прежнему показывается целиком — это отдельное требование
+// «Календарная шкала покрывает весь диапазон работ», которое эта
+// фильтрация не затрагивает (обрезаются целые эпики других периодов, а не
+// хвосты задач внутри отчётного).
+//
+// Ошибка получения задач или отсутствие источника (WithGanttTaskSource не
+// вызывался) НЕ прерывают формирование отчёта — лист диаграммы просто не
+// заполняется, остальные разделы отчёта не затрагиваются (design.md
+// Решение 5).
+func (s *epicService) collectGanttReportRows(ctx context.Context, teamID uuid.UUID, periodEpicIDs map[uuid.UUID]struct{}, log *slog.Logger) []report.GanttReportRow {
+	if s.ganttTasks == nil {
+		return nil
+	}
+
+	tasks, err := s.ganttTasks.GetTeamTasks(ctx, teamID)
+	if err != nil {
+		log.Error("failed to get gantt tasks for report, rendering report without the gantt page", sl.Err(err))
+		return nil
+	}
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	periodTasks := make([]domain.GanttTask, 0, len(tasks))
+	for _, t := range tasks {
+		if _, ok := periodEpicIDs[t.EpicID]; ok {
+			periodTasks = append(periodTasks, t)
+		}
+	}
+	if len(periodTasks) == 0 {
+		return nil
+	}
+
+	return s.buildGanttReportRows(ctx, teamID, periodTasks)
+}
+
+// buildGanttReportRows резолвит текстовые поля (роль/исполнитель), нужные
+// SVG-построителю (gantt_svg.go), из плоского упорядоченного среза
+// domain.GanttTask — тем же приёмом, что handlers.GanttHandler.GetTasks
+// резолвит AssigneeName: имена участников команды выбираются пачкой одним
+// запросом, а не по пользователю на задачу, точечный GetUserByID — только
+// для исполнителей, выбывших из команды (см. GetUsersByTeamID ниже).
+//
+// Уровень строки (эпик/стори/роль) и глубина отступа выводятся из
+// IsParent/ParentTaskID без похода в БД — leaf-задача (!IsParent) вложена в
+// стори, если её непосредственный родитель сам оказался строкой уровня
+// "стори" (levelByID), иначе — legacy-эпик без сторей, и задача вложена
+// прямо в эпик.
+func (s *epicService) buildGanttReportRows(ctx context.Context, teamID uuid.UUID, tasks []domain.GanttTask) []report.GanttReportRow {
+	usersByID := make(map[uuid.UUID]domain.User)
+	if members, err := s.repo.GetUsersByTeamID(ctx, teamID); err == nil {
+		for _, u := range members {
+			usersByID[u.ID] = u
+		}
+	}
+	assigneeName := func(id uuid.UUID) string {
+		if u, ok := usersByID[id]; ok {
+			return strings.TrimSpace(u.FirstName + " " + u.LastName)
+		}
+		if u, err := s.repo.GetUserByID(ctx, id); err == nil && u != nil {
+			usersByID[id] = *u
+			return strings.TrimSpace(u.FirstName + " " + u.LastName)
+		}
+		return ""
+	}
+
+	levelByID := make(map[uuid.UUID]report.GanttReportLevel, len(tasks))
+	rows := make([]report.GanttReportRow, 0, len(tasks))
+	for _, t := range tasks {
+		var level report.GanttReportLevel
+		var depth int
+		switch {
+		case t.IsParent && t.ParentTaskID == nil:
+			level = report.GanttReportLevelEpic
+			depth = 0
+		case t.IsParent:
+			level = report.GanttReportLevelStory
+			depth = 1
+		default:
+			level = report.GanttReportLevelRole
+			depth = 1
+			if t.ParentTaskID != nil && levelByID[*t.ParentTaskID] == report.GanttReportLevelStory {
+				depth = 2
+			}
+		}
+		levelByID[t.ID] = level
+
+		row := report.GanttReportRow{
+			Level:     level,
+			Depth:     depth,
+			Name:      t.Name,
+			StartDate: t.StartDate,
+			EndDate:   t.EndDate,
+			Completed: t.ActualEndDate != nil || t.Progress >= 100,
+		}
+		if level == report.GanttReportLevelRole && t.AssigneeID != nil {
+			row.HasAssignee = true
+			row.AssigneeName = assigneeName(*t.AssigneeID)
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 // collectEpicRisks собирает риски эпика (включая риски его историй) и

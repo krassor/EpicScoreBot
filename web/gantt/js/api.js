@@ -23,8 +23,14 @@ function handleHttpError(status, errData) {
         // Show auth overlay
         document.getElementById('auth-overlay').classList.remove('hidden');
         document.getElementById('app').classList.add('hidden');
-        
-        throw new Error('UNAUTHORIZED');
+
+        // .status выставляется явно (в отличие от ветки ниже, где message —
+        // технический sentinel, а не текст сервера), чтобы вызывающий код
+        // (auth.js:checkAuth) мог отличить отказ авторизации от сетевой
+        // ошибки по статусу, а не строковым сравнением (web-async-feedback).
+        const error = new Error('UNAUTHORIZED');
+        error.status = 401;
+        throw error;
     }
     if (status === 403) {
         const appEl = document.getElementById('app');
@@ -38,7 +44,9 @@ function handleHttpError(status, errData) {
             appEl.classList.add('hidden');
             document.getElementById('denied-overlay').classList.remove('hidden');
 
-            throw new Error('FORBIDDEN');
+            const error = new Error('FORBIDDEN');
+            error.status = 403;
+            throw error;
         }
         // #app уже показан — пробрасываем ошибку с реальным текстом дальше,
         // без изменения видимости приложения и оверлеев.
