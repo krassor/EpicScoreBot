@@ -46,6 +46,16 @@ const roleColorMap = {
     'IT-лидер': 'leader',
 };
 
+// isGanttReadOnly — единый признак «редактирование диаграммы недоступно»,
+// используется и для readonly/readonly_dates/гейта on_click самой диаграммы
+// (renderGantt), и для скрытия управления исполнителем в модалке деталей
+// задачи (openTaskDetailsModal, задача 5.4 add-gantt-task-assignees) — чтобы
+// эти два места гарантированно не разошлись со временем.
+function isGanttReadOnly() {
+    const userProfile = state.get('userProfile');
+    return !userProfile || userProfile.role === 'member';
+}
+
 export function initGanttRenderer() {
     // Subscribe to state changes
     state.subscribe('tasks', (tasks) => {
@@ -141,6 +151,16 @@ function renderGantt(tasks) {
             displayName = `  └─ ${t.name}`;
         } else if (level === 3) {
             displayName = `    └─ ${t.name}`;
+            // Имя исполнителя в подписи (design.md Решение 10, ux-brief.md п.1):
+            // только для ролевых задач С исполнителем — задача без исполнителя
+            // остаётся чистым именем роли, отличие бара (см. applyPostRenderEnhancements)
+            // уже сигнализирует «нет кандидатов» без текстового шума.
+            // Фамилия, а не полное имя — assignee_name приходит как «Имя Фамилия»,
+            // берём последнее слово.
+            if (t.role_id && t.assignee_id && t.assignee_name) {
+                const lastName = t.assignee_name.trim().split(/\s+/).pop();
+                displayName += ` — ${lastName}`;
+            }
         }
 
         return {
@@ -158,8 +178,7 @@ function renderGantt(tasks) {
         };
     });
 
-    const userProfile = state.get('userProfile');
-    const isReadOnly = !userProfile || userProfile.role === 'member';
+    const isReadOnly = isGanttReadOnly();
 
     // Отпечаток нового набора задач — если совпадает с уже отрисованным,
     // структура диаграммы (набор строк) не менялась, можно обойтись
@@ -214,6 +233,13 @@ function renderGantt(tasks) {
         // глобально, поэтому блокировка для листовых баров реализована через
         // немедленный откат в колбэке on_date_change, а не через эту опцию.
         readonly_dates: isReadOnly,
+        // Единственный канал информации об исполнителе для роли member,
+        // которой модалка деталей задачи недоступна (задача 5.5). Опция
+        // называется `popup`, а не `custom_popup_html` — в постановке
+        // фигурировало имя опции из более старой версии библиотеки; в
+        // установленной 1.2.2 (сверено по факту в исходниках UMD-бандла с
+        // CDN, а не по памяти) единственная точка расширения попапа — эта.
+        popup: buildGanttPopup,
         // Пересобираем факт-маркеры/подсветку завершённых задач после
         // каждого рендера (в т.ч. при переключении Day/Week/Month —
         // Frappe Gantt полностью перерисовывает бары и теряет наш DOM).
@@ -275,6 +301,64 @@ function renderGantt(tasks) {
     });
 
     applyPostRenderEnhancements(tasks);
+}
+
+// ── Попап Frappe Gantt (задача 5.5) ──────────────────────────────────
+//
+// Единственный канал информации об исполнителе для роли member, которой
+// модалка деталей задачи недоступна (on_click гейтится isGanttReadOnly()
+// целиком, см. renderGantt). Опция чарта называется `popup`, а не
+// `custom_popup_html` (в постановке фигурировало имя из более старой версии
+// библиотеки) — в установленной 1.2.2 это единственная точка расширения.
+//
+// Для родительских (эпик/стори) баров разметка попапа воспроизводит ровно
+// то, что делает библиотека по умолчанию при отсутствии опции `popup`
+// (сверено по исходникам UMD-бандла frappe-gantt@1.2.2 с CDN, а не по
+// памяти — см. минифицированный дефолт `popup: n => {...}` в бандле):
+// заголовок = имя задачи, подзаголовок = task.description (у наших задач не
+// заполняется, поэтому пусто — как и сегодня для ВСЕХ баров), детали = диапазон
+// дат в формате "MMM DD" на языке чарта + длительность в днях + прогресс.
+// Для ролевых листовых баров к тем же деталям добавляется строка состояния
+// исполнителя — единственное отличие от дефолта.
+function formatPopupMonthDay(date, lang) {
+    const month = new Intl.DateTimeFormat(lang, { month: 'short' }).format(date);
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${month} ${day}`;
+}
+
+// assigneeStatusText — строка состояния исполнителя ролевой задачи по
+// сырым (не Frappe-обёрнутым) полям задачи, тем же 4-состояниям, что и
+// в модалке деталей (populateAssigneeSelect) и в ux-brief.md, задача 5.5.
+function assigneeStatusText(t) {
+    if (t.assignee_pin_invalid) return '⚠ Закрепление недействительно — работает автоматически';
+    if (t.assignee_is_manual) return 'Закреплён вручную';
+    if (t.assignee_id) return 'Назначен автоматически';
+    return 'Нет исполнителя — нет участников с этой ролью в команде';
+}
+
+function buildGanttPopup({ task, chart, set_title, set_subtitle, set_details }) {
+    set_title(task.name);
+    set_subtitle(task.description ? task.description : '');
+
+    const lang = chart.options.language;
+    const startStr = formatPopupMonthDay(task._start, lang);
+    // Конец диапазона в Frappe Gantt хранится как полночь СЛЕДУЮЩЕГО дня
+    // (исключающая граница) — минус секунда, чтобы отобразить последний
+    // включённый день, тем же приёмом, что и дефолтный попап библиотеки.
+    const endStr = formatPopupMonthDay(new Date(task._end.getTime() - 1000), lang);
+    const dayWord = task.actual_duration === 1 ? 'day' : 'days';
+    const excluded = task.ignored_duration ? ` + ${task.ignored_duration} excluded` : '';
+    let details = `${startStr} - ${endStr} (${task.actual_duration} ${dayWord}${excluded})<br/>Progress: ${Math.floor(task.progress * 100) / 100}%`;
+
+    if (!task._is_parent && task._role_id) {
+        const rawTasks = state.get('tasks');
+        const rawTask = rawTasks.find(x => x.id === task.id);
+        if (rawTask) {
+            details += `<br/>${assigneeStatusText(rawTask)}`;
+        }
+    }
+
+    set_details(details);
 }
 
 function cleanTaskName(name) {
@@ -360,6 +444,26 @@ function applyPostRenderEnhancements(tasks) {
             wrapper.appendChild(icon);
         }
 
+        // Нет исполнителя / недействующее закрепление (задача 5.3,
+        // add-gantt-task-assignees) — два разных состояния по спеке и по
+        // риску (design.md Решение 7), кодируются разными классами.
+        // Классы навешиваются точечно (см. комментарий выше про
+        // custom_class), а не через custom_class сервера.
+        if (!t.is_parent && t.role_id && !t.assignee_id) {
+            wrapper.classList.add('gantt-no-assignee');
+        }
+        if (!t.is_parent && t.assignee_pin_invalid) {
+            wrapper.classList.add('gantt-pin-invalid');
+
+            const pinIcon = document.createElementNS(SVG_NS, 'text');
+            pinIcon.setAttribute('class', 'gantt-pin-invalid-icon');
+            pinIcon.setAttribute('x', String(x + 6));
+            pinIcon.setAttribute('y', String(y + height / 2 + 4));
+            pinIcon.setAttribute('text-anchor', 'start');
+            pinIcon.textContent = '⚠';
+            wrapper.appendChild(pinIcon);
+        }
+
         // Факт-маркер — только для листовых задач с зафиксированным фактом,
         // отличающимся от планового окончания.
         const endStr = t.end_date || t.end;
@@ -408,6 +512,15 @@ let currentDetailsTaskId = null;
 // Исходные значения открытой задачи — чтобы отправлять в PUT только реально
 // изменившиеся поля (progress / start_offset_days независимы друг от друга).
 let currentDetailsOriginal = null;
+// Исходное значение селекта исполнителя на момент открытия модалки —
+// '' (Автоматически) для состояний 1/3/4, assignee_id для состояния 2
+// (см. ux-brief.md, «Критичное правило сохранения намерения»). null —
+// «сохранение исполнителя недоступно/ещё не определено» (read-only
+// пользователь ИЛИ кандидаты роли ещё не загружены) — в этом состоянии
+// saveTaskDetails() обязан трактовать выбор как «не изменился», иначе
+// быстрый клик «Сохранить» до завершения загрузки мог бы уйти с неверным
+// намерением.
+let currentDetailsAssigneeOriginal = null;
 
 function formatDisplayDate(isoDate) {
     if (!isoDate) return '';
@@ -446,6 +559,15 @@ function openTaskDetailsModal(feTask) {
     document.getElementById('task-details-offset').value = offset;
     currentDetailsOriginal = { percent, offset };
 
+    // Исполнитель (задачи 5.1/5.4) — сбрасываем «исходное значение» синхронно
+    // ДО запуска асинхронной загрузки кандидатов: пока populateAssigneeSelect
+    // не завершится, currentDetailsAssigneeOriginal остаётся null, и
+    // saveTaskDetails() не станет отправлять PUT .../assignee на основании
+    // устаревшего (от предыдущей открытой задачи) значения, если пользователь
+    // успеет нажать «Сохранить» раньше, чем прогрузится список кандидатов.
+    currentDetailsAssigneeOriginal = null;
+    populateAssigneeSelect(t);
+
     document.getElementById('task-details-modal').classList.remove('hidden');
 }
 
@@ -453,6 +575,131 @@ function closeTaskDetailsModal() {
     document.getElementById('task-details-modal').classList.add('hidden');
     currentDetailsTaskId = null;
     currentDetailsOriginal = null;
+    currentDetailsAssigneeOriginal = null;
+}
+
+// resolveRoleName — отображаемое имя роли по её id из уже загруженного
+// state.get('roles') (app.js грузит его один раз при старте приложения).
+function resolveRoleName(roleId) {
+    const roles = state.get('roles') || [];
+    const role = roles.find(r => r.id === roleId);
+    return role ? role.name : '';
+}
+
+// populateAssigneeSelect — заполняет селект исполнителя и текст под ним по
+// одному из 5 состояний (загрузка / авто / закреплён / закрепление
+// недействительно / нет кандидатов), ux-brief.md п.2. Кандидатов роли
+// загружает заново при каждом открытии модалки (без кеша — состав команды
+// мог измениться), напрямую через apiGet, по аналогии с
+// openStoryReorderModal. Скрывает саму группу целиком для read-only
+// пользователя (задача 5.4) — независимо от того, что on_click и так не
+// даёт такому пользователю открыть модалку (защита в глубину).
+async function populateAssigneeSelect(t) {
+    const group = document.getElementById('task-details-assignee-group');
+    const select = document.getElementById('task-details-assignee');
+    const help = document.getElementById('task-details-assignee-help');
+    if (!group || !select || !help) return;
+
+    if (isGanttReadOnly()) {
+        group.classList.add('hidden');
+        return;
+    }
+    group.classList.remove('hidden');
+    help.style.color = '';
+
+    if (!t.role_id) {
+        // Защита в глубину: openTaskDetailsModal открывается только для
+        // листовых (ролевых) баров, у которых role_id есть всегда — сюда
+        // попасть не должны, но на случай расхождения не оставляем селект
+        // в состоянии "Загрузка...".
+        select.innerHTML = '<option value="">Автоматически</option>';
+        select.value = '';
+        help.textContent = '';
+        currentDetailsAssigneeOriginal = '';
+        return;
+    }
+
+    // Состояние «Загрузка».
+    select.innerHTML = '<option value="" disabled selected>Загрузка исполнителей…</option>';
+    select.disabled = true;
+    help.textContent = '';
+
+    const teamId = state.get('selectedTeamId');
+    let members;
+    try {
+        const data = await apiGet(`/teams/${teamId}/members`);
+        members = data.members || [];
+    } catch (err) {
+        // Модалку могли успеть закрыть/переоткрыть на другую задачу, пока
+        // шёл запрос — не затираем её текущее состояние чужим ответом.
+        if (currentDetailsTaskId !== t.id) return;
+        select.innerHTML = '<option value="" disabled selected>Ошибка загрузки исполнителей</option>';
+        select.disabled = true;
+        help.textContent = '';
+        showToast('Не удалось загрузить список исполнителей: ' + err.message, 'error');
+        return;
+    }
+
+    if (currentDetailsTaskId !== t.id) return;
+
+    const candidates = members.filter(m => (m.role_ids || []).includes(t.role_id));
+
+    select.innerHTML = '';
+    const autoOpt = document.createElement('option');
+    autoOpt.value = '';
+    autoOpt.textContent = 'Автоматически';
+    select.appendChild(autoOpt);
+    candidates.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = `${m.first_name} ${m.last_name || ''}`;
+        select.appendChild(opt);
+    });
+    select.disabled = false;
+
+    // Состояние 4: нет кандидатов роли в команде.
+    if (candidates.length === 0) {
+        select.value = '';
+        const roleName = resolveRoleName(t.role_id);
+        help.textContent = `В команде нет участников с ролью «${roleName}». Задача останется без исполнителя, пока в команде не появится участник с этой ролью.`;
+        currentDetailsAssigneeOriginal = '';
+        return;
+    }
+
+    // Состояние 3: закрепление есть, но не действует — контракт API не
+    // сообщает, КТО был закреплён, только фактического исполнителя и флаг
+    // is_manual=false. Единственный честный пункт селекта — «Автоматически»
+    // (ux-brief.md объясняет это подробно в предупреждающем тексте).
+    if (t.assignee_pin_invalid) {
+        select.value = '';
+        help.style.color = 'var(--color-warning)';
+        help.textContent = `Ручное закрепление на эту задачу есть, но закреплённый ранее человек больше не кандидат этой роли в команде (потерял роль или покинул её). Сейчас задачу автоматически ведёт ${t.assignee_name || 'неизвестный участник'}. Закрепление вернётся в силу, если этот человек снова станет кандидатом, либо будет заменено, если вы выберете здесь другого.`;
+        currentDetailsAssigneeOriginal = '';
+        return;
+    }
+
+    // Состояние 2: закреплён и работает.
+    if (t.assignee_is_manual) {
+        select.value = t.assignee_id;
+        help.textContent = `Закреплено за ${t.assignee_name}. Закрепление гарантирует исполнителя, но не дату: если он занят другими задачами, старт задачи сдвинется на его освобождение.`;
+        currentDetailsAssigneeOriginal = t.assignee_id;
+        return;
+    }
+
+    // Состояние 1: авто.
+    if (t.assignee_id) {
+        select.value = '';
+        help.textContent = `Сейчас задачу ведёт ${t.assignee_name} — назначен автоматически. Закрепление гарантирует исполнителя, но не дату: если он занят другими задачами, старт задачи сдвинется на его освобождение.`;
+        currentDetailsAssigneeOriginal = '';
+        return;
+    }
+
+    // Кандидаты роли есть, но assignee_id отсутствует — по контракту не
+    // должно происходить одновременно (assignee_id отсутствует только при
+    // пустом пуле роли), но на случай расхождения не оставляем
+    // currentDetailsAssigneeOriginal неопределённым.
+    select.value = '';
+    currentDetailsAssigneeOriginal = '';
 }
 
 async function saveTaskDetails() {
@@ -482,21 +729,63 @@ async function saveTaskDetails() {
     if (!currentDetailsOriginal || offset !== currentDetailsOriginal.offset) {
         payload.start_offset_days = offset;
     }
-    if (Object.keys(payload).length === 0) {
+
+    // Исполнитель — отдельный PUT, отправляется, ТОЛЬКО если пользователь
+    // реально изменил выбор относительно того, что было при открытии
+    // модалки (ux-brief.md, «Критичное правило сохранения намерения»).
+    // Без этой проверки в состоянии 3 (селект по умолчанию показывает
+    // "Автоматически" = "") нажатие «Сохранить» без изменения выбора
+    // безусловно отправило бы {"user_id": null} и сняло бы дремлющее
+    // закрепление, которое обязано сохраняться в ожидании возврата
+    // человека в пул. currentDetailsAssigneeOriginal === null означает
+    // «сохранение недоступно/ещё не определено» (read-only или кандидаты
+    // ещё не загрузились) — в этом случае изменение не отправляем.
+    const assigneeGroup = document.getElementById('task-details-assignee-group');
+    const assigneeSelect = document.getElementById('task-details-assignee');
+    const assigneeVisible = assigneeGroup && !assigneeGroup.classList.contains('hidden');
+    const assigneeChanged = assigneeVisible
+        && currentDetailsAssigneeOriginal !== null
+        && assigneeSelect
+        && assigneeSelect.value !== currentDetailsAssigneeOriginal;
+
+    if (Object.keys(payload).length === 0 && !assigneeChanged) {
         closeTaskDetailsModal();
         return;
     }
 
+    // Блокировка кнопок на время запроса (закрывает дефект: без неё двойной
+    // клик уходит двумя параллельными запросами) — как уже сделано в
+    // app.js, runRegenerateQuarter.
+    const saveBtn = document.getElementById('task-details-save');
+    const cancelBtn = document.getElementById('task-details-cancel');
+    if (saveBtn) saveBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+
+    const taskId = currentDetailsTaskId;
     try {
-        await apiPut(`/tasks/${currentDetailsTaskId}`, payload);
+        // Порядок: сначала исполнитель, затем прогресс/смещение — оба в
+        // одном try/catch.
+        if (assigneeChanged) {
+            await apiPut(`/tasks/${taskId}/assignee`, { user_id: assigneeSelect.value || null });
+        }
+        if (Object.keys(payload).length > 0) {
+            await apiPut(`/tasks/${taskId}`, payload);
+        }
         showToast('Задача обновлена', 'success');
         closeTaskDetailsModal();
-        // Прогресс/смещение листовой задачи может сдвинуть расписание всей
-        // команды (конвейер) и зафиксировать факт закрытия — тянем полный
-        // список заново.
+        // Любое из изменений (прогресс/смещение/исполнитель) может сдвинуть
+        // расписание всей команды (конвейер) — тянем полный список заново.
         await reloadCurrentTeamTasks();
     } catch (err) {
         showToast('Не удалось сохранить: ' + err.message, 'error');
+        // Один из двух PUT выше мог уже примениться на бэкенде, пока второй
+        // упал — перезагружаем задачи, чтобы диаграмма не разошлась с
+        // фактическим состоянием (модалку при этом не закрываем, как и
+        // раньше).
+        await reloadCurrentTeamTasks();
+    } finally {
+        if (saveBtn) saveBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
     }
 }
 

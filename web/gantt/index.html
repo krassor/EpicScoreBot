@@ -145,6 +145,25 @@
                     </div>
                 </div>
 
+                <!-- Компактная легенда состояний бара (add-gantt-task-assignees, задача 5.6):
+                     цвета ролей, завершённость, факт-маркер, нет исполнителя, недействующее
+                     закрепление. Использует те же CSS-классы/токены, что и сама диаграмма. -->
+                <div class="gantt-legend" role="note" aria-label="Легенда диаграммы Ганта">
+                    <span class="gantt-legend-item"><span class="gantt-legend-swatch role-leader"></span>IT-лидер</span>
+                    <span class="gantt-legend-item"><span class="gantt-legend-swatch role-analyst"></span>Аналитик</span>
+                    <span class="gantt-legend-item"><span class="gantt-legend-swatch role-be"></span>BE</span>
+                    <span class="gantt-legend-item"><span class="gantt-legend-swatch role-fe"></span>FE</span>
+                    <span class="gantt-legend-item"><span class="gantt-legend-swatch role-mobile"></span>Mobile</span>
+                    <span class="gantt-legend-item"><span class="gantt-legend-swatch role-qa"></span>QA</span>
+                    <span class="gantt-legend-item"><span class="gantt-legend-swatch completed">✓</span>Завершено</span>
+                    <span class="gantt-legend-item">
+                        <span class="gantt-legend-fact"><span class="gantt-legend-fact-dot early"></span><span class="gantt-legend-fact-dot late"></span></span>
+                        Факт-маркер: раньше / позже плана
+                    </span>
+                    <span class="gantt-legend-item"><span class="gantt-legend-swatch no-assignee"></span>Нет исполнителя</span>
+                    <span class="gantt-legend-item"><span class="gantt-legend-swatch pin-invalid">⚠</span>Закрепление недействительно</span>
+                </div>
+
                 <div id="app-gantt-wrapper" class="app-gantt-wrapper">
                     <div id="gantt-empty" class="empty-state">
                         <div class="empty-icon">📋</div>
@@ -574,6 +593,15 @@
                     <div id="task-details-fact-group" class="form-group hidden">
                         <label>Факт</label>
                         <div id="task-details-fact" class="form-help"></div>
+                    </div>
+                    <!-- Выбор исполнителя (add-gantt-task-assignees, задача 5.1). Порядок
+                         «кто → сколько сделано» — между «Факт» и «Прогресс выполнения».
+                         Скрывается для роли member (задача 5.4), см. isGanttReadOnly()
+                         в gantt-renderer.js. -->
+                    <div class="form-group" id="task-details-assignee-group">
+                        <label for="task-details-assignee">Исполнитель</label>
+                        <select id="task-details-assignee" class="select"></select>
+                        <div id="task-details-assignee-help" class="form-help"></div>
                     </div>
                     <div class="form-group">
                         <label for="task-details-progress">Прогресс выполнения, %</label>

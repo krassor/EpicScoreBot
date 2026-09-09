@@ -48,6 +48,14 @@ func findStoryTask(f *fakeRepo, name string) *domain.GanttTask {
 	return nil
 }
 
+// assignmentStartOffset reads the manual start offset stored in
+// task_assignments for a (story-or-epic, role) pair — the source of truth
+// since add-gantt-task-assignees (design.md Решение 5), replacing the old
+// gantt_tasks.start_offset_days column checked directly in tests before it.
+func assignmentStartOffset(f *fakeRepo, storyOrEpicID, roleID uuid.UUID) int {
+	return f.assignments[assignmentKey{epicID: storyOrEpicID, roleID: roleID}].StartOffsetDays
+}
+
 func TestMoveToWorkDay(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -858,8 +866,9 @@ func TestSetTaskStartOffset_PositiveDelaysStart(t *testing.T) {
 	if !got.StartDate.Equal(want) {
 		t.Errorf("dev start with offset=+3 = %v, want %v", got.StartDate, want)
 	}
-	if got.StartOffsetDays != 3 {
-		t.Errorf("StartOffsetDays = %d, want 3", got.StartOffsetDays)
+	// Легаси-эпик без сторей: ключ task_assignments — сам эпик, а не стори.
+	if offset := assignmentStartOffset(f, epicID, devID); offset != 3 {
+		t.Errorf("task_assignments start offset = %d, want 3", offset)
 	}
 }
 
@@ -929,8 +938,8 @@ func TestSetTaskStartOffset_NegativeClampedByRoleContinuity(t *testing.T) {
 		t.Errorf("dev story2 start with offset=-10 = %v, want %v (clamped by role continuity, not the offset)",
 			got.StartDate, want)
 	}
-	if got.StartOffsetDays != -10 {
-		t.Errorf("StartOffsetDays = %d, want -10", got.StartOffsetDays)
+	if offset := assignmentStartOffset(f, story2ID, devID); offset != -10 {
+		t.Errorf("task_assignments start offset = %d, want -10", offset)
 	}
 }
 

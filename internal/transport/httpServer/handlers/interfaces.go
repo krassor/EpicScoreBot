@@ -30,6 +30,21 @@ type GanttService interface {
 	// группы внутри той же стори.
 	SetTaskStartOffset(ctx context.Context, taskID uuid.UUID, offsetDays int) ([]domain.GanttTask, error)
 	GetTeamTasks(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, error)
+	// GetTeamTasksWithAssignments — то же самое, что GetTeamTasks, плюс
+	// для каждой листовой (ролевой) задачи, у которой есть запись
+	// task_assignments (закрепление и/или смещение старта), её значение —
+	// с ключом по ID самой задачи. Единый источник данных для полей
+	// assignee_* и актуального start_offset_days в ganttTaskResp (см.
+	// openspec/changes/add-gantt-task-assignees).
+	GetTeamTasksWithAssignments(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, error)
+	// SetTaskAssignee закрепляет (userID != nil) либо снимает закрепление
+	// (userID == nil — возврат к автоматическому распределению)
+	// исполнителя ролевой задачи и пересчитывает расписание команды.
+	SetTaskAssignee(ctx context.Context, taskID uuid.UUID, userID *uuid.UUID) ([]domain.GanttTask, error)
+	// GetTeamMembers возвращает состав команды с полным перечнем ролей
+	// каждого участника (в отличие от Repository.GetRoleByUserID —
+	// одна роль на пользователя, тогда как user_roles — M:N).
+	GetTeamMembers(ctx context.Context, teamID uuid.UUID) ([]domain.TeamMember, error)
 }
 
 // Repository defines the data-access contract used by handlers.
@@ -52,6 +67,10 @@ type Repository interface {
 	FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error)
 	GetUserByID(ctx context.Context, userID uuid.UUID) (*domain.User, error)
 	GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
+	// GetUsersByTeamIDAndRoleID — пул кандидатов на роль исполнителя
+	// (используется при валидации PUT /tasks/{id}/assignee: закрепляемый
+	// user_id обязан быть кандидатом роли задачи).
+	GetUsersByTeamIDAndRoleID(ctx context.Context, teamID, roleID uuid.UUID) ([]domain.User, error)
 	AssignUserTeam(ctx context.Context, userID, teamID uuid.UUID) error
 	RemoveUserTeam(ctx context.Context, userID, teamID uuid.UUID) error
 	AssignUserRole(ctx context.Context, userID, roleID uuid.UUID) error

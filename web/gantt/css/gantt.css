@@ -232,6 +232,41 @@
     pointer-events: none;
 }
 
+/* ── Нет исполнителя / недействующее закрепление (add-gantt-task-assignees) ── */
+/* Классы навешиваются точечно после рендера (см. applyPostRenderEnhancements
+   в gantt-renderer.js), тем же приёмом, что и gantt-completed — не через
+   custom_class (Frappe Gantt 1.2.2 не поддерживает несколько custom-классов
+   на одной задаче, а custom_class уже занят сервером под цвет роли). */
+
+/* Нет исполнителя — роль без кандидатов: гасим роль-цвет, пунктир
+   сигнализирует «не укомплектовано». :not() вместо порядка объявлений —
+   чтобы не зависеть от каскада, если блоки позже переставят местами. */
+.gantt .bar-wrapper.gantt-no-assignee:not(.gantt-completed) .bar {
+    fill: var(--bg-tertiary);
+    stroke: var(--text-muted);
+    stroke-width: 1.5px;
+    stroke-dasharray: 4 3;
+    opacity: 0.6;
+}
+.gantt .bar-wrapper.gantt-no-assignee:not(.gantt-completed) .bar-progress {
+    fill: var(--text-muted);
+    opacity: 0.5;
+}
+
+/* Недействующее закрепление — роль-цвет сохраняется (работу реально ведёт
+   показанный человек), тонкий предупреждающий пунктирный контур. */
+.gantt .bar-wrapper.gantt-pin-invalid .bar {
+    stroke: var(--color-warning);
+    stroke-width: 2px;
+    stroke-dasharray: 2 2;
+}
+.gantt .gantt-pin-invalid-icon {
+    fill: var(--color-warning);
+    font-size: 12px;
+    font-weight: 700;
+    pointer-events: none;
+}
+
 /* ── Факт-маркер (плановая дата vs фактическая дата закрытия) ────────── */
 /* Тонкая вертикальная линия + ромб на позиции фактической даты поверх
    бара листовой задачи: зелёный — закрыли раньше плана, красный — позже. */
@@ -278,4 +313,86 @@
     font-family: var(--font-family) !important;
     font-size: 11px !important;
     color: var(--text-secondary) !important;
+}
+
+/* ── Легенда состояний бара (add-gantt-task-assignees, задача 5.6) ────── */
+/* Компактный ряд с переносом (flex-wrap) — не ломает тулбар на узких
+   экранах, использует те же токены/классы, что и сама диаграмма. */
+.gantt-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 16px;
+    padding: 8px clamp(14px, 3vw, 24px);
+    background: var(--bg-glass);
+    border-bottom: 1px solid var(--border-color);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.gantt-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.gantt-legend-swatch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1;
+}
+
+.gantt-legend-swatch.role-leader { background: var(--color-role-it-leader); }
+.gantt-legend-swatch.role-analyst { background: var(--color-role-analyst); }
+.gantt-legend-swatch.role-be { background: var(--color-role-be); }
+.gantt-legend-swatch.role-fe { background: var(--color-role-fe); }
+.gantt-legend-swatch.role-mobile { background: var(--color-role-mobile); }
+.gantt-legend-swatch.role-qa { background: var(--color-role-qa); }
+
+.gantt-legend-swatch.completed {
+    background: var(--bg-tertiary);
+    border: 1.5px solid var(--color-success);
+    color: var(--color-success);
+    font-weight: 700;
+}
+
+.gantt-legend-swatch.no-assignee {
+    background: var(--bg-tertiary);
+    border: 1.5px dashed var(--text-muted);
+    opacity: 0.8;
+}
+
+.gantt-legend-swatch.pin-invalid {
+    background: var(--bg-tertiary);
+    border: 2px dashed var(--color-warning);
+    color: var(--color-warning);
+    font-weight: 700;
+}
+
+.gantt-legend-fact {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.gantt-legend-fact-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.gantt-legend-fact-dot.early {
+    background: var(--color-success);
+}
+
+.gantt-legend-fact-dot.late {
+    background: var(--color-danger);
 }

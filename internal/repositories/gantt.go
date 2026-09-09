@@ -17,14 +17,14 @@ func (r *Repository) CreateGanttTask(ctx context.Context, task *domain.GanttTask
 	query := `INSERT INTO gantt_tasks
 		(id, epic_id, role_id, name, start_date, end_date,
 		 progress, sort_order, is_parent, parent_task_id,
-		 actual_end_date, actual_effort_days, start_offset_days)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 actual_end_date, actual_effort_days, start_offset_days, assignee_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING created_at, updated_at`
 	err := r.DB.QueryRowContext(ctx, query,
 		task.ID, task.EpicID, task.RoleID, task.Name,
 		task.StartDate, task.EndDate, task.Progress,
 		task.SortOrder, task.IsParent, task.ParentTaskID,
-		task.ActualEndDate, task.ActualEffortDays, task.StartOffsetDays,
+		task.ActualEndDate, task.ActualEffortDays, task.StartOffsetDays, task.AssigneeID,
 	).Scan(&task.CreatedAt, &task.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
@@ -38,7 +38,7 @@ func (r *Repository) GetGanttTasksByTeamID(ctx context.Context, teamID uuid.UUID
 	query := `SELECT gt.id, gt.epic_id, gt.role_id, gt.name,
 		gt.start_date, gt.end_date, gt.progress,
 		gt.sort_order, gt.is_parent, gt.parent_task_id,
-		gt.actual_end_date, gt.actual_effort_days, gt.start_offset_days,
+		gt.actual_end_date, gt.actual_effort_days, gt.start_offset_days, gt.assignee_id,
 		gt.created_at, gt.updated_at
 		FROM gantt_tasks gt
 		INNER JOIN epics e ON e.id = gt.epic_id
@@ -57,7 +57,7 @@ func (r *Repository) GetGanttTasksByTeamID(ctx context.Context, teamID uuid.UUID
 			&t.ID, &t.EpicID, &t.RoleID, &t.Name,
 			&t.StartDate, &t.EndDate, &t.Progress,
 			&t.SortOrder, &t.IsParent, &t.ParentTaskID,
-			&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays,
+			&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays, &t.AssigneeID,
 			&t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
@@ -73,7 +73,7 @@ func (r *Repository) GetGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID
 	query := `SELECT id, epic_id, role_id, name,
 		start_date, end_date, progress,
 		sort_order, is_parent, parent_task_id,
-		actual_end_date, actual_effort_days, start_offset_days,
+		actual_end_date, actual_effort_days, start_offset_days, assignee_id,
 		created_at, updated_at
 		FROM gantt_tasks WHERE epic_id = $1
 		ORDER BY sort_order, name`
@@ -90,7 +90,7 @@ func (r *Repository) GetGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID
 			&t.ID, &t.EpicID, &t.RoleID, &t.Name,
 			&t.StartDate, &t.EndDate, &t.Progress,
 			&t.SortOrder, &t.IsParent, &t.ParentTaskID,
-			&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays,
+			&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays, &t.AssigneeID,
 			&t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
@@ -107,14 +107,14 @@ func (r *Repository) GetGanttTaskByID(ctx context.Context, taskID uuid.UUID) (*d
 	query := `SELECT id, epic_id, role_id, name,
 		start_date, end_date, progress,
 		sort_order, is_parent, parent_task_id,
-		actual_end_date, actual_effort_days, start_offset_days,
+		actual_end_date, actual_effort_days, start_offset_days, assignee_id,
 		created_at, updated_at
 		FROM gantt_tasks WHERE id = $1`
 	err := r.DB.QueryRowContext(ctx, query, taskID).Scan(
 		&t.ID, &t.EpicID, &t.RoleID, &t.Name,
 		&t.StartDate, &t.EndDate, &t.Progress,
 		&t.SortOrder, &t.IsParent, &t.ParentTaskID,
-		&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays,
+		&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays, &t.AssigneeID,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -194,7 +194,7 @@ func (r *Repository) GetGanttChildTasks(ctx context.Context, parentTaskID uuid.U
 	query := `SELECT id, epic_id, role_id, name,
 		start_date, end_date, progress,
 		sort_order, is_parent, parent_task_id,
-		actual_end_date, actual_effort_days, start_offset_days,
+		actual_end_date, actual_effort_days, start_offset_days, assignee_id,
 		created_at, updated_at
 		FROM gantt_tasks WHERE parent_task_id = $1
 		ORDER BY sort_order, name`
@@ -211,7 +211,7 @@ func (r *Repository) GetGanttChildTasks(ctx context.Context, parentTaskID uuid.U
 			&t.ID, &t.EpicID, &t.RoleID, &t.Name,
 			&t.StartDate, &t.EndDate, &t.Progress,
 			&t.SortOrder, &t.IsParent, &t.ParentTaskID,
-			&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays,
+			&t.ActualEndDate, &t.ActualEffortDays, &t.StartOffsetDays, &t.AssigneeID,
 			&t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
@@ -262,4 +262,83 @@ func (r *Repository) HasGanttTasksForEpic(ctx context.Context, epicID uuid.UUID)
 		return false, fmt.Errorf("%s: %w", op, err)
 	}
 	return count > 0, nil
+}
+
+// UpdateGanttTaskAssignee sets the assignee (executor) of a Gantt task —
+// the outcome of the scheduler's automatic distribution or of an applied
+// manual pin (task_assignments), never a direct user action. nil clears it
+// (e.g. the role's pool is empty, or the pinned candidate no longer belongs
+// to it — see design.md Решение 1/7).
+func (r *Repository) UpdateGanttTaskAssignee(ctx context.Context, taskID uuid.UUID, assigneeID *uuid.UUID) error {
+	op := "Repository.UpdateGanttTaskAssignee"
+	query := `UPDATE gantt_tasks
+		SET assignee_id = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2`
+	_, err := r.DB.ExecContext(ctx, query, assigneeID, taskID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// GetTaskAssignmentsByTeamID returns every task_assignments row belonging to
+// a team's epics/stories in one query (read pачкой на команду — см.
+// design.md Risks/Trade-offs, "Рост числа запросов к БД в пересчёте"). Both
+// stories and legacy epics without stories live in the epics table and
+// carry team_id, so a single join on task_assignments.epic_id covers both
+// keys used by the scheduler.
+func (r *Repository) GetTaskAssignmentsByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.TaskAssignment, error) {
+	op := "Repository.GetTaskAssignmentsByTeamID"
+	query := `SELECT ta.epic_id, ta.role_id, ta.user_id, ta.start_offset_days
+		FROM task_assignments ta
+		INNER JOIN epics e ON e.id = ta.epic_id
+		WHERE e.team_id = $1`
+	rows, err := r.DB.QueryContext(ctx, query, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	var assignments []domain.TaskAssignment
+	for rows.Next() {
+		var a domain.TaskAssignment
+		if err := rows.Scan(&a.EpicID, &a.RoleID, &a.UserID, &a.StartOffsetDays); err != nil {
+			return nil, fmt.Errorf("%s: scan: %w", op, err)
+		}
+		assignments = append(assignments, a)
+	}
+	return assignments, nil
+}
+
+// UpsertTaskAssignmentUser pins (userID != nil) or unpins (userID == nil) an
+// executor for a story/epic+role pair, creating the task_assignments row on
+// first use (start_offset_days defaults to 0) and preserving an existing
+// start_offset_days on conflict — pinning an assignee and shifting a start
+// are independent user actions on the same row (design.md Решение 4).
+func (r *Repository) UpsertTaskAssignmentUser(ctx context.Context, epicID, roleID uuid.UUID, userID *uuid.UUID) error {
+	op := "Repository.UpsertTaskAssignmentUser"
+	query := `INSERT INTO task_assignments (epic_id, role_id, user_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (epic_id, role_id) DO UPDATE SET user_id = EXCLUDED.user_id`
+	_, err := r.DB.ExecContext(ctx, query, epicID, roleID, userID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// UpsertTaskAssignmentStartOffset sets the manual start offset (lead/lag, in
+// days) for a story/epic+role pair, creating the task_assignments row on
+// first use (user_id defaults to NULL, i.e. automatic) and preserving an
+// existing user_id on conflict — see UpsertTaskAssignmentUser.
+func (r *Repository) UpsertTaskAssignmentStartOffset(ctx context.Context, epicID, roleID uuid.UUID, offsetDays int) error {
+	op := "Repository.UpsertTaskAssignmentStartOffset"
+	query := `INSERT INTO task_assignments (epic_id, role_id, start_offset_days)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (epic_id, role_id) DO UPDATE SET start_offset_days = EXCLUDED.start_offset_days`
+	_, err := r.DB.ExecContext(ctx, query, epicID, roleID, offsetDays)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
 }

@@ -16,12 +16,20 @@ import (
 // сквозное поведение конвейерного планировщика (RecalculateTeamSchedule),
 // которое многократно читает и пишет эпики/задачи в рамках одного вызова —
 // закрытие-моки для этого было бы громоздко и хрупко.
+// assignmentKey (тип определён в ganttService.go) переиспользуется здесь как
+// ключ карты assignments — см. domain.TaskAssignment.
+
 type fakeRepo struct {
 	epics      map[uuid.UUID]*domain.Epic
 	tasks      map[uuid.UUID]*domain.GanttTask
 	roles      map[uuid.UUID]*domain.Role
 	roleScores map[uuid.UUID][]domain.EpicRoleScore // epicID/storyID -> role scores
 	risks      map[uuid.UUID][]domain.Risk          // epicID/storyID -> risks
+
+	users       map[uuid.UUID]*domain.User
+	userTeams   map[uuid.UUID]map[uuid.UUID]bool // userID -> set of teamID
+	userRoles   map[uuid.UUID]map[uuid.UUID]bool // userID -> set of roleID
+	assignments map[assignmentKey]domain.TaskAssignment
 
 	// Инструментарий только для тестов блокировки (см. locking_test.go):
 	// GetTeamEpicsOrdered — первый repo-вызов внутри RecalculateTeamSchedule,
@@ -47,11 +55,15 @@ type fakeRepo struct {
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		epics:      make(map[uuid.UUID]*domain.Epic),
-		tasks:      make(map[uuid.UUID]*domain.GanttTask),
-		roles:      make(map[uuid.UUID]*domain.Role),
-		roleScores: make(map[uuid.UUID][]domain.EpicRoleScore),
-		risks:      make(map[uuid.UUID][]domain.Risk),
+		epics:       make(map[uuid.UUID]*domain.Epic),
+		tasks:       make(map[uuid.UUID]*domain.GanttTask),
+		roles:       make(map[uuid.UUID]*domain.Role),
+		roleScores:  make(map[uuid.UUID][]domain.EpicRoleScore),
+		risks:       make(map[uuid.UUID][]domain.Risk),
+		users:       make(map[uuid.UUID]*domain.User),
+		userTeams:   make(map[uuid.UUID]map[uuid.UUID]bool),
+		userRoles:   make(map[uuid.UUID]map[uuid.UUID]bool),
+		assignments: make(map[assignmentKey]domain.TaskAssignment),
 	}
 }
 
@@ -63,6 +75,28 @@ func (f *fakeRepo) addEpic(e *domain.Epic) *domain.Epic {
 
 func (f *fakeRepo) addRole(r *domain.Role) {
 	f.roles[r.ID] = r
+}
+
+// addUser регистрирует пользователя-кандидата на роли исполнителя: teamIDs —
+// команды, в которые он входит (user_teams), roleIDs — его роли (user_roles,
+// M:N — участник может входить в несколько ролей одновременно).
+func (f *fakeRepo) addUser(u *domain.User, teamIDs, roleIDs []uuid.UUID) *domain.User {
+	cp := *u
+	f.users[cp.ID] = &cp
+
+	teams := make(map[uuid.UUID]bool, len(teamIDs))
+	for _, t := range teamIDs {
+		teams[t] = true
+	}
+	f.userTeams[cp.ID] = teams
+
+	roles := make(map[uuid.UUID]bool, len(roleIDs))
+	for _, r := range roleIDs {
+		roles[r] = true
+	}
+	f.userRoles[cp.ID] = roles
+
+	return &cp
 }
 
 // compareEpicOrder mirrors "ORDER BY sort_order NULLS LAST, number".
@@ -366,4 +400,79 @@ func (f *fakeRepo) GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]
 		out[i] = *e
 	}
 	return out, nil
+}
+
+func (f *fakeRepo) UpdateGanttTaskAssignee(ctx context.Context, taskID uuid.UUID, assigneeID *uuid.UUID) error {
+	t, ok := f.tasks[taskID]
+	if !ok {
+		return errors.New("task not found")
+	}
+	t.AssigneeID = assigneeID
+	return nil
+}
+
+// GetUsersByTeamIDAndRoleID mirrors Repository.GetUsersByTeamIDAndRoleID
+// (INNER JOIN user_teams, user_roles), sorted by ID to give
+// recalculateEpicSchedule a deterministic pool order (design.md Решение 2).
+func (f *fakeRepo) GetUsersByTeamIDAndRoleID(ctx context.Context, teamID, roleID uuid.UUID) ([]domain.User, error) {
+	var res []domain.User
+	for id, u := range f.users {
+		if f.userTeams[id][teamID] && f.userRoles[id][roleID] {
+			res = append(res, *u)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].ID.String() < res[j].ID.String() })
+	return res, nil
+}
+
+func (f *fakeRepo) GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error) {
+	var res []domain.User
+	for id, u := range f.users {
+		if f.userTeams[id][teamID] {
+			res = append(res, *u)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].ID.String() < res[j].ID.String() })
+	return res, nil
+}
+
+func (f *fakeRepo) GetUserRoles(ctx context.Context, userID uuid.UUID) ([]domain.Role, error) {
+	var res []domain.Role
+	for roleID := range f.userRoles[userID] {
+		if r, ok := f.roles[roleID]; ok {
+			res = append(res, *r)
+		}
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].Name < res[j].Name })
+	return res, nil
+}
+
+func (f *fakeRepo) GetTaskAssignmentsByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.TaskAssignment, error) {
+	var res []domain.TaskAssignment
+	for _, a := range f.assignments {
+		epic, ok := f.epics[a.EpicID]
+		if !ok || epic.TeamID != teamID {
+			continue
+		}
+		res = append(res, a)
+	}
+	return res, nil
+}
+
+func (f *fakeRepo) UpsertTaskAssignmentUser(ctx context.Context, epicID, roleID uuid.UUID, userID *uuid.UUID) error {
+	key := assignmentKey{epicID: epicID, roleID: roleID}
+	a := f.assignments[key]
+	a.EpicID, a.RoleID = epicID, roleID
+	a.UserID = userID
+	f.assignments[key] = a
+	return nil
+}
+
+func (f *fakeRepo) UpsertTaskAssignmentStartOffset(ctx context.Context, epicID, roleID uuid.UUID, offsetDays int) error {
+	key := assignmentKey{epicID: epicID, roleID: roleID}
+	a := f.assignments[key]
+	a.EpicID, a.RoleID = epicID, roleID
+	a.StartOffsetDays = offsetDays
+	f.assignments[key] = a
+	return nil
 }

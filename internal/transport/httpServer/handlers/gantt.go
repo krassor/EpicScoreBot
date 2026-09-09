@@ -272,7 +272,29 @@ type ganttTaskResp struct {
 	// StartOffsetDays — смещение (lead/lag, в днях) планового старта листовой
 	// задачи относительно окончания предыдущей ролевой группы внутри стори.
 	// Без omitempty — 0 такое же значимое значение, как и любое другое.
+	// Источник — task_assignments (см. GetTeamTasksWithAssignments), а не
+	// gantt_tasks.start_offset_days: эта колонка перестала писаться
+	// планировщиком начиная с add-gantt-task-assignees (backend §2.3), но
+	// продолжала бы отдаваться нулём в этом ответе, если бы не §3.5.
 	StartOffsetDays int `json:"start_offset_days"`
+	// AssigneeID — исполнитель ролевой задачи (см. domain.GanttTask.AssigneeID).
+	// Отсутствует у родительских (стори/эпик) задач и у ролевых задач без
+	// исполнителя (пул роли пуст в команде).
+	AssigneeID *string `json:"assignee_id,omitempty"`
+	// AssigneeName — отображаемое имя исполнителя ("Имя Фамилия"). Те же
+	// случаи отсутствия, что и у AssigneeID.
+	AssigneeName *string `json:"assignee_name,omitempty"`
+	// AssigneeIsManual — true, если текущий исполнитель определён
+	// ДЕЙСТВУЮЩИМ ручным закреплением (task_assignments.user_id), а не
+	// автоматическим распределением планировщика.
+	AssigneeIsManual bool `json:"assignee_is_manual"`
+	// AssigneePinInvalid — ручное закрепление есть (task_assignments.user_id
+	// задан), но не действует: закреплённый человек больше не кандидат роли
+	// этой задачи (вышел из команды/лишился роли), поэтому фактический
+	// исполнитель — результат автоматического распределения, отличный от
+	// закреплённого (design.md Решение 7). Позволяет фронтенду отличить
+	// «закреплён и работает» от «закрепление есть, но не действует».
+	AssigneePinInvalid bool `json:"assignee_pin_invalid"`
 }
 
 // roleToCSS maps role names to CSS class names.
@@ -294,11 +316,34 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.svc.GetTeamTasks(r.Context(), teamID)
+	tasks, assignments, err := h.svc.GetTeamTasksWithAssignments(r.Context(), teamID)
 	if err != nil {
 		h.log.Error("failed to get tasks", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "failed to get tasks")
 		return
+	}
+
+	// Резолвим отображаемые имена исполнителей ПАЧКОЙ одним запросом
+	// (GetTasks дёргается на каждое изменение прогресса — см. design.md
+	// Решение 9), а не по пользователю на задачу. usersByID дополняется
+	// точечно только для исполнителей замороженных задач, уже выбывших из
+	// команды (design.md Решение 6) и потому отсутствующих в выборке по
+	// team_id — редкий случай, а не путь по каждой задаче.
+	usersByID := make(map[uuid.UUID]domain.User)
+	if members, errU := h.repo.GetUsersByTeamID(r.Context(), teamID); errU == nil {
+		for _, u := range members {
+			usersByID[u.ID] = u
+		}
+	}
+	assigneeName := func(id uuid.UUID) string {
+		if u, ok := usersByID[id]; ok {
+			return strings.TrimSpace(u.FirstName + " " + u.LastName)
+		}
+		if u, errU := h.repo.GetUserByID(r.Context(), id); errU == nil && u != nil {
+			usersByID[id] = *u
+			return strings.TrimSpace(u.FirstName + " " + u.LastName)
+		}
+		return ""
 	}
 
 	// Build dependency strings: child tasks depend on the previous
@@ -361,17 +406,16 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 		}
 
 		item := ganttTaskResp{
-			ID:              t.ID.String(),
-			Name:            name,
-			Start:           t.StartDate.Format("2006-01-02"),
-			End:             t.EndDate.Format("2006-01-02"),
-			Progress:        t.Progress,
-			Dependencies:    deps,
-			CustomClass:     css,
-			IsParent:        t.IsParent,
-			SortOrder:       t.SortOrder,
-			StartOffsetDays: t.StartOffsetDays,
-			EpicID:          t.EpicID.String(),
+			ID:           t.ID.String(),
+			Name:         name,
+			Start:        t.StartDate.Format("2006-01-02"),
+			End:          t.EndDate.Format("2006-01-02"),
+			Progress:     t.Progress,
+			Dependencies: deps,
+			CustomClass:  css,
+			IsParent:     t.IsParent,
+			SortOrder:    t.SortOrder,
+			EpicID:       t.EpicID.String(),
 		}
 		if t.ParentTaskID != nil {
 			item.ParentID = t.ParentTaskID.String()
@@ -385,6 +429,25 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		if t.ActualEffortDays != nil {
 			item.ActualEffortDays = t.ActualEffortDays
+		}
+
+		// task_assignments (закрепление/смещение) — единый источник и для
+		// StartOffsetDays (backend §3.5), и для полей assignee_* ниже
+		// (backend §3.1), см. gantt.Service.GetTeamTasksWithAssignments.
+		assignment, hasAssignment := assignments[t.ID]
+		if hasAssignment {
+			item.StartOffsetDays = assignment.StartOffsetDays
+		}
+		if t.AssigneeID != nil {
+			idStr := t.AssigneeID.String()
+			item.AssigneeID = &idStr
+			if displayName := assigneeName(*t.AssigneeID); displayName != "" {
+				item.AssigneeName = &displayName
+			}
+		}
+		if hasAssignment && assignment.UserID != nil {
+			item.AssigneeIsManual = t.AssigneeID != nil && *t.AssigneeID == *assignment.UserID
+			item.AssigneePinInvalid = !item.AssigneeIsManual
 		}
 		resp = append(resp, item)
 	}
@@ -559,6 +622,209 @@ func (h *GanttHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "task updated",
 	})
+}
+
+// sessionRole extracts the UserSession from the request context and
+// classifies it into the project's three-tier role (superadmin/admin/
+// member) — the same classification GetProfile/GetTeams already do inline.
+// Duplicated here rather than refactored into a single shared helper used
+// everywhere (out of scope for this change — see openspec/changes/
+// add-gantt-task-assignees) so that SetTaskAssignee can gate on role
+// without depending on middleware.RoleAuth, which unit tests calling the
+// handler function directly (as the rest of this package's handler tests
+// do) don't go through. Writes a 401 response and returns ok=false if
+// there's no valid session.
+func (h *GanttHandler) sessionRole(w http.ResponseWriter, r *http.Request) (*middleware.UserSession, string, bool) {
+	sessionData := r.Context().Value(middleware.UserSessionKey)
+	if sessionData == nil {
+		writeErrorCode(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
+		return nil, "", false
+	}
+	session, ok := sessionData.(*middleware.UserSession)
+	if !ok || session.TelegramID == "" {
+		writeErrorCode(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid session")
+		return nil, "", false
+	}
+
+	if isSuperAdminSession(session, &h.cfg) {
+		return session, "superadmin", true
+	}
+	if isAdmin, _ := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID); isAdmin {
+		return session, "admin", true
+	}
+	// Regular member — same DB-existence check GetProfile/GetTeams already
+	// perform: an unrecognized Telegram user is denied outright, not
+	// silently treated as a member.
+	user, err := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
+	if err != nil || user == nil {
+		writeErrorCode(w, http.StatusForbidden, "FORBIDDEN", "access denied")
+		return nil, "", false
+	}
+	return session, "member", true
+}
+
+// SetTaskAssignee pins (user_id set) or unpins (user_id null — "Автоматически")
+// the executor of a leaf (role) Gantt task. Only admin/superadmin sessions
+// may call this — a plain "member" is rejected (design.md, сценарий
+// "Пользователь без права редактирования не может закрепить исполнителя").
+// A non-null user_id must be a current candidate of the task's role (in the
+// team AND holding the role) — otherwise the request is rejected outright
+// rather than silently accepted as an inactive pin (design.md Решение 7
+// covers a candidate BECOMING invalid after being pinned, not being pinned
+// while already invalid). Recalculates the team's schedule and returns the
+// updated task count, same response shape as the other task mutation
+// endpoints (UpdateTask/ReorderTask).
+func (h *GanttHandler) SetTaskAssignee(w http.ResponseWriter, r *http.Request) {
+	taskIDStr := chi.URLParam(r, "id")
+	taskID, err := uuid.Parse(taskIDStr)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_TASK_ID", "invalid task id")
+		return
+	}
+
+	session, role, ok := h.sessionRole(w, r)
+	if !ok {
+		return
+	}
+	if role == "member" {
+		writeErrorCode(w, http.StatusForbidden, "FORBIDDEN",
+			"только администратор команды может назначать исполнителя задачи")
+		return
+	}
+
+	var req struct {
+		UserID *string `json:"user_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY", "invalid request body")
+		return
+	}
+
+	task, err := h.repo.GetGanttTaskByID(r.Context(), taskID)
+	if err != nil {
+		writeErrorCode(w, http.StatusNotFound, "TASK_NOT_FOUND", "task not found")
+		return
+	}
+	if task.IsParent || task.RoleID == nil {
+		writeErrorCode(w, http.StatusBadRequest, "ASSIGNEE_NOT_ALLOWED_ON_PARENT",
+			"исполнителя можно назначить только листовой (ролевой) задаче")
+		return
+	}
+
+	epic, err := h.repo.GetEpicByID(r.Context(), task.EpicID)
+	if err != nil {
+		h.log.Error("failed to resolve task's epic", slog.String("error", err.Error()))
+		writeErrorCode(w, http.StatusInternalServerError, "EPIC_LOOKUP_FAILED",
+			"failed to resolve task's team")
+		return
+	}
+
+	// Точечная team-scoped проверка: RoleAuth("admin") на уровне группы
+	// маршрутов — грубый гейт "admin хотя бы одной команды" (см.
+	// middleware.RoleAuth), поэтому admin команды A без этой проверки мог
+	// бы назначать исполнителя в задачах команды B. Тот же приём, что уже
+	// применяют admin.go (UpdateEpic) и admin_scores.go
+	// (AdminSubmitEpicScore) — superadmin проверку проходит без
+	// ограничения.
+	if role != "superadmin" {
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epic.TeamID)
+		if err != nil || !isAdminOf {
+			writeErrorCode(w, http.StatusForbidden, "FORBIDDEN",
+				"вы не администратор команды, которой принадлежит эта задача")
+			return
+		}
+	}
+
+	var userID *uuid.UUID
+	if req.UserID != nil {
+		parsed, err := uuid.Parse(*req.UserID)
+		if err != nil {
+			writeErrorCode(w, http.StatusBadRequest, "INVALID_USER_ID", "invalid user_id")
+			return
+		}
+
+		candidates, err := h.repo.GetUsersByTeamIDAndRoleID(r.Context(), epic.TeamID, *task.RoleID)
+		if err != nil {
+			h.log.Error("failed to resolve role candidates", slog.String("error", err.Error()))
+			writeErrorCode(w, http.StatusInternalServerError, "CANDIDATES_LOOKUP_FAILED",
+				"failed to resolve role candidates")
+			return
+		}
+		isCandidate := false
+		for _, c := range candidates {
+			if c.ID == parsed {
+				isCandidate = true
+				break
+			}
+		}
+		if !isCandidate {
+			writeErrorCode(w, http.StatusBadRequest, "USER_NOT_ROLE_CANDIDATE",
+				"пользователь не входит в число кандидатов роли этой задачи")
+			return
+		}
+		userID = &parsed
+	}
+
+	tasks, err := h.svc.SetTaskAssignee(r.Context(), taskID, userID)
+	if err != nil {
+		h.log.Error("failed to set task assignee", slog.String("error", err.Error()))
+		writeErrorCode(w, http.StatusInternalServerError, "RESCHEDULE_FAILED",
+			"failed to set task assignee")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "assignee updated",
+		"count":   len(tasks),
+	})
+}
+
+// GetTeamMembers returns a team's roster with each member's full set of
+// roles — the candidate source for the assignee dropdown (design.md
+// Решение 9). Unlike Repository.GetRoleByUserID (one role per user), this
+// correctly reflects user_roles as an M:N relation.
+func (h *GanttHandler) GetTeamMembers(w http.ResponseWriter, r *http.Request) {
+	teamIDStr := chi.URLParam(r, "id")
+	teamID, err := uuid.Parse(teamIDStr)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_TEAM_ID", "invalid team id")
+		return
+	}
+
+	if _, err := h.repo.GetTeamByID(r.Context(), teamID); err != nil {
+		writeErrorCode(w, http.StatusNotFound, "TEAM_NOT_FOUND", "team not found")
+		return
+	}
+
+	members, err := h.svc.GetTeamMembers(r.Context(), teamID)
+	if err != nil {
+		h.log.Error("failed to get team members", slog.String("error", err.Error()))
+		writeErrorCode(w, http.StatusInternalServerError, "TEAM_MEMBERS_LOOKUP_FAILED",
+			"failed to get team members")
+		return
+	}
+
+	type memberResp struct {
+		ID        string   `json:"id"`
+		FirstName string   `json:"first_name"`
+		LastName  string   `json:"last_name"`
+		RoleIDs   []string `json:"role_ids"`
+	}
+	resp := make([]memberResp, 0, len(members))
+	for _, m := range members {
+		roleIDs := make([]string, len(m.RoleIDs))
+		for i, rid := range m.RoleIDs {
+			roleIDs[i] = rid.String()
+		}
+		resp = append(resp, memberResp{
+			ID:        m.ID.String(),
+			FirstName: m.FirstName,
+			LastName:  m.LastName,
+			RoleIDs:   roleIDs,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"members": resp})
 }
 
 // ReorderTask changes a task's sort order and recalculates dates.

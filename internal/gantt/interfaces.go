@@ -27,6 +27,14 @@ type Repository interface {
 	GetAllTeams(ctx context.Context) ([]domain.Team, error)
 	GetTeamByID(ctx context.Context, teamID uuid.UUID) (*domain.Team, error)
 
+	// Users: пул кандидатов на роль исполнителя (design.md Решение 1) и
+	// состав команды с ролями (design.md Решение 9).
+	// GetUsersByTeamIDAndRoleID возвращает участников команды с заданной
+	// ролью — учитывает user_roles как M:N, в отличие от GetRoleByUserID.
+	GetUsersByTeamIDAndRoleID(ctx context.Context, teamID, roleID uuid.UUID) ([]domain.User, error)
+	GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
+	GetUserRoles(ctx context.Context, userID uuid.UUID) ([]domain.Role, error)
+
 	// Scoring
 	GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error)
 
@@ -42,7 +50,19 @@ type Repository interface {
 	// UpdateGanttTaskStartOffset меняет смещение (lead/lag, в днях) старта
 	// листовой (ролевой) задачи относительно окончания предыдущей ролевой
 	// группы внутри той же стори.
+	//
+	// Начиная с миграции 011_task_assignees сервис больше не вызывает этот
+	// метод — источником истины для смещения старта стала task_assignments
+	// (см. UpsertTaskAssignmentStartOffset ниже и design.md Решение 5).
+	// Метод и колонка gantt_tasks.start_offset_days сохранены в схеме и
+	// контракте репозитория намеренно (форвард-only мигратор, откат релиза).
 	UpdateGanttTaskStartOffset(ctx context.Context, taskID uuid.UUID, offsetDays int) error
+	// UpdateGanttTaskAssignee записывает исполнителя листовой (ролевой)
+	// задачи — результат работы планировщика (автоматический выбор или
+	// применённое ручное закрепление), а не прямое действие пользователя.
+	// nil означает «исполнителя нет» (пустой пул роли либо закрепление,
+	// переставшее действовать — design.md Решение 1/7).
+	UpdateGanttTaskAssignee(ctx context.Context, taskID uuid.UUID, assigneeID *uuid.UUID) error
 	// UpdateGanttTaskActuals фиксирует факт завершения задачи (дата + трудоёмкость).
 	UpdateGanttTaskActuals(ctx context.Context, taskID uuid.UUID, actualEndDate time.Time, effortDays int) error
 	// ClearGanttTaskActuals сбрасывает факт завершения задачи (переоткрытие).
@@ -51,4 +71,21 @@ type Repository interface {
 	HasGanttTasksForEpic(ctx context.Context, epicID uuid.UUID) (bool, error)
 	GetRisksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Risk, error)
 	GetStoriesByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.Epic, error)
+
+	// Task assignments — пользовательский ввод (закрепление исполнителя,
+	// смещение старта), переживающий перегенерацию gantt_tasks — см.
+	// domain.TaskAssignment и design.md Решение 4.
+	//
+	// GetTaskAssignmentsByTeamID читает ВСЕ закрепления команды одним
+	// запросом — вызывается пачкой в начале RecalculateTeamSchedule, а не
+	// внутри цикла по задачам (design.md Risks: "Рост числа запросов к БД").
+	GetTaskAssignmentsByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.TaskAssignment, error)
+	// UpsertTaskAssignmentUser закрепляет (userID != nil) либо снимает
+	// закрепление (userID == nil) исполнителя за парой (epicID, roleID),
+	// где epicID — идентификатор стори или эпика без сторей. Не удаляет
+	// строку и не трогает StartOffsetDays.
+	UpsertTaskAssignmentUser(ctx context.Context, epicID, roleID uuid.UUID, userID *uuid.UUID) error
+	// UpsertTaskAssignmentStartOffset задаёт ручное смещение старта для
+	// пары (epicID, roleID). Не трогает UserID.
+	UpsertTaskAssignmentStartOffset(ctx context.Context, epicID, roleID uuid.UUID, offsetDays int) error
 }

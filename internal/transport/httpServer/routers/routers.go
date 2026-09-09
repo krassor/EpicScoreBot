@@ -134,7 +134,23 @@ func (r *Router) Mount(mux *chi.Mux) {
 					mux.Put("/", r.ganttHandler.UpdateTask)
 					mux.Put("/reorder", r.ganttHandler.ReorderTask)
 					mux.Delete("/", r.ganttHandler.DeleteTask)
+
+					// Закрепление исполнителя — редактирование, доступное
+					// только admin/superadmin (не "member"), как и остальные
+					// admin-эндпоинты выше; см. openspec/changes/
+					// add-gantt-task-assignees, backend §3.2.
+					mux.Group(func(mux chi.Router) {
+						mux.Use(myMiddleware.RoleAuth(r.ganttHandler.Repo(), r.ganttHandler.Repo(), r.ganttHandler.Config(), "admin"))
+						mux.Put("/assignee", r.ganttHandler.SetTaskAssignee)
+					})
 				})
+
+				// Состав команды с ролями каждого участника — источник
+				// списка кандидатов для закрепления исполнителя (design.md
+				// Решение 9, add-gantt-task-assignees). Доступен любому
+				// аутентифицированному пользователю, как и остальные GET
+				// в этой группе (сам выбор исполнителя гейтится выше).
+				mux.Get("/teams/{id}/members", r.ganttHandler.GetTeamMembers)
 			})
 		})
 	})

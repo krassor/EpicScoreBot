@@ -22,8 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
-	
 )
+
 // mockGanttRepo is a mock implementation of Repository for Gantt-specific tests.
 type mockGanttRepo struct {
 	Repository
@@ -33,6 +33,20 @@ type mockGanttRepo struct {
 		taskID    uuid.UUID
 		sortOrder int
 	}
+
+	// Поля для тестов backend §3.2/§3.3 (add-gantt-task-assignees):
+	// SetTaskAssignee (валидация кандидата/командной принадлежности задачи,
+	// проверка роли сессии) и GetTeamMembers/GetTasks (имена исполнителей).
+	getEpicByIDFunc             func(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error)
+	getUsersByTeamIDAndRoleFunc func(ctx context.Context, teamID, roleID uuid.UUID) ([]domain.User, error)
+	getTeamByIDFunc             func(ctx context.Context, teamID uuid.UUID) (*domain.Team, error)
+	getUsersByTeamIDFunc        func(ctx context.Context, teamID uuid.UUID) ([]domain.User, error)
+	getUserByIDFunc             func(ctx context.Context, userID uuid.UUID) (*domain.User, error)
+	isTeamAdminOfAny            bool
+	findUserByTelegramIDFunc    func(ctx context.Context, telegramID string) (*domain.User, error)
+	// isTeamAdminOfFunc — team-scoped проверка admin-а (backend §3.6,
+	// add-gantt-task-assignees). По умолчанию (не задан) — false.
+	isTeamAdminOfFunc func(ctx context.Context, telegramID string, teamID uuid.UUID) (bool, error)
 }
 
 func (m *mockGanttRepo) GetGanttTaskByID(ctx context.Context, taskID uuid.UUID) (*domain.GanttTask, error) {
@@ -40,6 +54,63 @@ func (m *mockGanttRepo) GetGanttTaskByID(ctx context.Context, taskID uuid.UUID) 
 		return m.getTaskFunc(ctx, taskID)
 	}
 	return nil, nil
+}
+
+func (m *mockGanttRepo) GetEpicByID(ctx context.Context, epicID uuid.UUID) (*domain.Epic, error) {
+	if m.getEpicByIDFunc != nil {
+		return m.getEpicByIDFunc(ctx, epicID)
+	}
+	// Незаданный getEpicByIDFunc мимикрирует поведение реального
+	// репозитория для неизвестного эпика (sql.ErrNoRows) — ошибка, а не
+	// (nil, nil), т.к. вызывающий код (см. SetTaskAssignee) читает
+	// epic.TeamID сразу после этого вызова.
+	return nil, errors.New("epic not found")
+}
+
+func (m *mockGanttRepo) GetUsersByTeamIDAndRoleID(ctx context.Context, teamID, roleID uuid.UUID) ([]domain.User, error) {
+	if m.getUsersByTeamIDAndRoleFunc != nil {
+		return m.getUsersByTeamIDAndRoleFunc(ctx, teamID, roleID)
+	}
+	return nil, nil
+}
+
+func (m *mockGanttRepo) GetTeamByID(ctx context.Context, teamID uuid.UUID) (*domain.Team, error) {
+	if m.getTeamByIDFunc != nil {
+		return m.getTeamByIDFunc(ctx, teamID)
+	}
+	return nil, nil
+}
+
+func (m *mockGanttRepo) GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.User, error) {
+	if m.getUsersByTeamIDFunc != nil {
+		return m.getUsersByTeamIDFunc(ctx, teamID)
+	}
+	return nil, nil
+}
+
+func (m *mockGanttRepo) GetUserByID(ctx context.Context, userID uuid.UUID) (*domain.User, error) {
+	if m.getUserByIDFunc != nil {
+		return m.getUserByIDFunc(ctx, userID)
+	}
+	return nil, errors.New("user not found")
+}
+
+func (m *mockGanttRepo) IsTeamAdminOfAny(ctx context.Context, telegramID string) (bool, error) {
+	return m.isTeamAdminOfAny, nil
+}
+
+func (m *mockGanttRepo) IsTeamAdminOf(ctx context.Context, telegramID string, teamID uuid.UUID) (bool, error) {
+	if m.isTeamAdminOfFunc != nil {
+		return m.isTeamAdminOfFunc(ctx, telegramID, teamID)
+	}
+	return false, nil
+}
+
+func (m *mockGanttRepo) FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error) {
+	if m.findUserByTelegramIDFunc != nil {
+		return m.findUserByTelegramIDFunc(ctx, telegramID)
+	}
+	return nil, errors.New("user not found")
 }
 
 // mockGanttSvc is a mock implementation of GanttService for Gantt-specific tests.
@@ -64,6 +135,40 @@ type mockGanttSvc struct {
 		quarter   int
 		startDate time.Time
 	}
+
+	// Методы backend §2.7/§3.1-3.3 (add-gantt-task-assignees).
+	setTaskAssigneeFunc   func(ctx context.Context, taskID uuid.UUID, userID *uuid.UUID) ([]domain.GanttTask, error)
+	setTaskAssigneeCalled bool
+	setTaskAssigneeArgs   struct {
+		taskID uuid.UUID
+		userID *uuid.UUID
+	}
+	getTeamMembersFunc              func(ctx context.Context, teamID uuid.UUID) ([]domain.TeamMember, error)
+	getTeamTasksWithAssignmentsFunc func(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, error)
+}
+
+func (m *mockGanttSvc) SetTaskAssignee(ctx context.Context, taskID uuid.UUID, userID *uuid.UUID) ([]domain.GanttTask, error) {
+	m.setTaskAssigneeCalled = true
+	m.setTaskAssigneeArgs.taskID = taskID
+	m.setTaskAssigneeArgs.userID = userID
+	if m.setTaskAssigneeFunc != nil {
+		return m.setTaskAssigneeFunc(ctx, taskID, userID)
+	}
+	return nil, nil
+}
+
+func (m *mockGanttSvc) GetTeamMembers(ctx context.Context, teamID uuid.UUID) ([]domain.TeamMember, error) {
+	if m.getTeamMembersFunc != nil {
+		return m.getTeamMembersFunc(ctx, teamID)
+	}
+	return nil, nil
+}
+
+func (m *mockGanttSvc) GetTeamTasksWithAssignments(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, error) {
+	if m.getTeamTasksWithAssignmentsFunc != nil {
+		return m.getTeamTasksWithAssignmentsFunc(ctx, teamID)
+	}
+	return nil, nil, nil
 }
 
 func (m *mockGanttSvc) GenerateTasksForQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int, startDate time.Time) (gantt.QuarterGenerationResult, error) {
@@ -803,13 +908,13 @@ func TestReorderStory_ServiceError(t *testing.T) {
 // mockCapacityReportRepo is a mock implementation of Repository for GetCapacityReport tests.
 type mockCapacityReportRepo struct {
 	Repository
-	getTeamByIDFunc                func(ctx context.Context, id uuid.UUID) (*domain.Team, error)
-	getUsersByTeamIDFunc           func(ctx context.Context, id uuid.UUID) ([]domain.User, error)
-	getRoleByUserIDFunc            func(ctx context.Context, id uuid.UUID) (*domain.Role, error)
-	getEpicsByTeamYearQuarterFunc  func(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
-	getStoriesByEpicIDFunc         func(ctx context.Context, id uuid.UUID) ([]domain.Epic, error)
-	getEpicRoleScoresByEpicIDFunc  func(ctx context.Context, id uuid.UUID) ([]domain.EpicRoleScore, error)
-	getRoleByIDFunc                func(ctx context.Context, id uuid.UUID) (*domain.Role, error)
+	getTeamByIDFunc               func(ctx context.Context, id uuid.UUID) (*domain.Team, error)
+	getUsersByTeamIDFunc          func(ctx context.Context, id uuid.UUID) ([]domain.User, error)
+	getRoleByUserIDFunc           func(ctx context.Context, id uuid.UUID) (*domain.Role, error)
+	getEpicsByTeamYearQuarterFunc func(ctx context.Context, teamID uuid.UUID, year, quarter int) ([]domain.Epic, error)
+	getStoriesByEpicIDFunc        func(ctx context.Context, id uuid.UUID) ([]domain.Epic, error)
+	getEpicRoleScoresByEpicIDFunc func(ctx context.Context, id uuid.UUID) ([]domain.EpicRoleScore, error)
+	getRoleByIDFunc               func(ctx context.Context, id uuid.UUID) (*domain.Role, error)
 }
 
 func (m *mockCapacityReportRepo) GetTeamByID(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
@@ -879,7 +984,7 @@ func TestGetCapacityReport_RawRoleScoresWithRiskFactor(t *testing.T) {
 		// - riskFactor = 120 / 150 = 0.8
 		// - role_scores будут: роль1=100*0.8=80, роль2=50*0.8=40, сумма=120
 		// - raw_role_scores будут: роль1=100, роль2=50, сумма=150
-		
+
 		const weightedAvg1 = 100.0
 		const weightedAvg2 = 50.0
 		var baseScore = weightedAvg1 + weightedAvg2 // 150
@@ -1339,13 +1444,13 @@ func TestExportTeamReport_InvalidFormat(t *testing.T) {
 func TestExportTeamReport_TeamNotFound(t *testing.T) {
 	teamID := uuid.New()
 	cfg := config.BotConfig{}
-	
+
 	repo := &mockCapacityReportRepo{
 		getTeamByIDFunc: func(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
 			return nil, nil // Команда не найдена
 		},
 	}
-	
+
 	svc := &mockGanttSvc{}
 	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
 	handler.WithReportServices(&mockReportDataProvider{}, &mockPDFReportGenerator{})
