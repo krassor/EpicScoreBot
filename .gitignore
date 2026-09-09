@@ -37,3 +37,5 @@ run_docker_build.sh
 .env
 CLAUDE.md
 coverage.out
+# Отчёты покрытия тестами (go tool cover)
+coverage*.out

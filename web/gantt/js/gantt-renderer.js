@@ -150,12 +150,22 @@ function getGanttWrapperAvailableWidth() {
 // пропускается целиком, а не откатывается к штатной ширине — иначе
 // resize-событие, случайно произошедшее при скрытой вкладке «Гант»,
 // схлопнуло бы уже подобранную ширину до штатной.
+// getCurrentViewModeName — единая точка чтения текущего масштаба,
+// используется и для подбора штатной ширины (computeFitColumnWidth), и для
+// того, чтобы передать этот же масштаб обратно в update_options
+// (applyFitColumnWidth, задача 2.8) — оба места обязаны читать один и тот
+// же масштаб в одной синхронной точке, а не с разницей в такте, иначе
+// штатная ширина будет посчитана под один режим, а применена к другому.
+function getCurrentViewModeName(chart) {
+    return (chart && chart.config && chart.config.view_mode && chart.config.view_mode.name)
+        || state.get('viewMode')
+        || 'Day';
+}
+
 function computeFitColumnWidth(chart) {
     if (!chart || !chart.config) return null;
 
-    const viewModeName = (chart.config.view_mode && chart.config.view_mode.name)
-        || state.get('viewMode')
-        || 'Day';
+    const viewModeName = getCurrentViewModeName(chart);
     const defaultWidth = DEFAULT_COLUMN_WIDTHS[viewModeName] || DEFAULT_COLUMN_WIDTHS.Day;
 
     const columnCount = Array.isArray(chart.dates) ? chart.dates.length : 0;
@@ -186,7 +196,14 @@ function applyFitColumnWidth(chart) {
 
     const newWidth = computeFitColumnWidth(chart);
     if (newWidth === null) return;
+
     if (chart.config.column_width === newWidth) return;
+
+    // Масштаб читается той же функцией и в той же синхронной точке, что и
+    // штатная ширина внутри computeFitColumnWidth (вызов чуть выше) —
+    // гарантирует, что ниже передаётся ровно тот режим, под который была
+    // посчитана ширина, а не промежуточное/устаревшее состояние.
+    const viewModeName = getCurrentViewModeName(chart);
 
     const scrollContainer = chart.$container;
     const oldScrollWidth = scrollContainer ? scrollContainer.scrollWidth : 0;
@@ -194,7 +211,18 @@ function applyFitColumnWidth(chart) {
         ? scrollContainer.scrollLeft / oldScrollWidth
         : 0;
 
-    chart.update_options({ column_width: newWidth });
+    // Задача 2.8: update_options({column_width}) без view_mode откатывает
+    // this.options.view_mode на значение из original_options (опции
+    // конструктора/предыдущего update_options) — setup_options пересобирает
+    // this.options из original_options при каждом вызове, а
+    // change_view_mode(void 0, true) внутри update_options берёт откаченное
+    // значение как масштаб по умолчанию. Явная передача view_mode вместе с
+    // column_width перебивает эту откатку тем же способом, каким сама
+    // библиотека резолвит строковое имя режима в change_view_mode
+    // (this.options.view_modes.find(...) — доступен, т.к. приложение не
+    // передаёт свой view_modes в конструктор, и библиотека молча
+    // подставляет свой дефолтный полный список режимов).
+    chart.update_options({ column_width: newWidth, view_mode: viewModeName });
 
     if (scrollContainer) {
         scrollContainer.scrollLeft = scrollRatio * scrollContainer.scrollWidth;
