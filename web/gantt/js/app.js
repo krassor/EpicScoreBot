@@ -60,13 +60,30 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAuth();
 });
 
+// syncSelectTitle — выставляет нативный title равным тексту выбранной опции.
+// Используется списками, усекающими значение многоточием (.select--team,
+// .select--epic), чтобы полный текст оставался доступен по наведению
+// (stabilize-control-widths, ux-brief.md раздел 2). #gantt-year/#gantt-quarter
+// сюда не входят — у них title занят статичной подписью поля.
+function syncSelectTitle(select) {
+    if (!select) return;
+    const selectedOption = select.options[select.selectedIndex];
+    select.title = selectedOption ? selectedOption.textContent : '';
+}
+
 function handleProfileLoaded(profile) {
     // Fill header user info
     const nameEl = document.getElementById('user-name');
     const badgeEl = document.getElementById('user-role-badge');
     const profileContainer = document.getElementById('user-profile');
     
-    if (nameEl) nameEl.textContent = profile.first_name || profile.username;
+    if (nameEl) {
+        const displayName = profile.first_name || profile.username;
+        nameEl.textContent = displayName;
+        // title — доступ к полному имени при усечении #user-name на узкой
+        // ширине (stabilize-control-widths, ux-brief.md раздел 4).
+        nameEl.title = displayName;
+    }
     if (badgeEl) {
         badgeEl.textContent = getRoleDisplayName(profile.role);
         badgeEl.className = `badge role-${profile.role}`;
@@ -149,10 +166,12 @@ async function loadTeams() {
             opt.textContent = team.name;
             select.appendChild(opt);
         });
+        syncSelectTitle(select);
 
         // Auto-select first team if only one exists
         if (teams.length === 1 && !select.value) {
             select.value = teams[0].id;
+            syncSelectTitle(select);
             select.dispatchEvent(new Event('change'));
         }
     } catch (err) {
@@ -264,6 +283,7 @@ function renderEpicSelectForPeriod() {
     const stillPresent = filteredEpics.some(epic => epic.id === previousEpicId);
     epicSelect.value = stillPresent ? previousEpicId : '';
     state.set('selectedEpicId', epicSelect.value);
+    syncSelectTitle(epicSelect);
 
     if (btnGenerate) {
         btnGenerate.disabled = !epicSelect.value;
@@ -489,11 +509,13 @@ function setupGlobalEventListeners() {
 
     // Team selection change
     document.getElementById('team-select')?.addEventListener('change', (e) => {
+        syncSelectTitle(e.target);
         state.set('selectedTeamId', e.target.value);
     });
 
     // Epic selection change (Gantt tab)
     document.getElementById('epic-select')?.addEventListener('change', (e) => {
+        syncSelectTitle(e.target);
         const btnGenerate = document.getElementById('btn-generate');
         if (btnGenerate) {
             btnGenerate.disabled = !e.target.value;

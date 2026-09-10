@@ -458,11 +458,11 @@ function renderDetails() {
     let html = `
         <div class="scoring-details-header">
             <div class="scoring-epic-title">
-                <div style="display: flex; align-items: center; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                     <h2>${escapeHtml(selectedEpic.number)}: ${escapeHtml(selectedEpic.name)}</h2>
-                    ${isAdmin ? `<button id="btn-edit-epic" class="btn btn-secondary btn-sm" title="Редактировать эпик" style="padding: 3px 8px; font-size: 12px;">✏️ Редактировать</button>` : ''}
-                    ${isSuperAdmin ? `<button id="btn-delete-epic" class="btn btn-danger btn-sm" title="Удалить эпик" style="padding: 3px 8px; font-size: 12px;">🗑️ Удалить</button>` : ''}
-                    ${isAdmin && selectedEpic.status === 'SCORING' ? `<button id="btn-notify-epic" class="btn btn-secondary btn-sm" title="Напомнить непроголосовавшим участникам" style="padding: 3px 8px; font-size: 12px;">🔔 Напомнить непроголосовавшим</button>` : ''}
+                    ${isAdmin ? `<button id="btn-edit-epic" class="btn btn-secondary btn-sm" title="Редактировать эпик">✏️ Редактировать</button>` : ''}
+                    ${isSuperAdmin ? `<button id="btn-delete-epic" class="btn btn-danger btn-sm" title="Удалить эпик">🗑️ Удалить</button>` : ''}
+                    ${isAdmin && selectedEpic.status === 'SCORING' ? `<button id="btn-notify-epic" class="btn btn-secondary btn-sm" title="Напомнить непроголосовавшим участникам">🔔 Напомнить непроголосовавшим</button>` : ''}
                 </div>
                 <div class="scoring-epic-desc">${selectedEpic.description ? escapeHtml(selectedEpic.description) : 'Нет описания.'}</div>
             </div>
@@ -689,8 +689,8 @@ function renderRoleScoresTableRowsScoring(evaluatingRoles, story, isAdmin) {
             ${showExpertVote ? `
             <td>
                 <div style="display: flex; align-items: center; gap: 6px;">
-                    <input type="number" class="input expert-role-score-input" data-role-id="${r.role_id}" min="0" step="1" placeholder="чд" style="width: 70px; padding: 4px 6px; font-size: 12px;">
-                    <button class="btn btn-secondary btn-expert-role-score" data-role-id="${r.role_id}" data-role-name="${escapeHtml(r.role_name)}" style="padding: 4px 8px; font-size: 11px;">Оценить всей ролью</button>
+                    <input type="number" class="input input-sm input--score expert-role-score-input" data-role-id="${r.role_id}" min="0" step="1" placeholder="чд">
+                    <button class="btn btn-secondary btn-sm btn-expert-role-score" data-role-id="${r.role_id}" data-role-name="${escapeHtml(r.role_name)}">Оценить всей ролью</button>
                 </div>
             </td>` : ''}
         </tr>
@@ -731,8 +731,8 @@ function renderRoleScoresTableRows(roleScores, story, isAdmin) {
             ${showOverride ? `
             <td>
                 <div style="display: flex; align-items: center; gap: 6px;">
-                    <input type="number" class="input role-score-override-input" data-role-id="${rs.role_id}" min="0" step="1" placeholder="чд" style="width: 70px; padding: 4px 6px; font-size: 12px;">
-                    <button class="btn btn-primary btn-override-role-score" data-role-id="${rs.role_id}" style="padding: 4px 8px; font-size: 11px;">Переопределить</button>
+                    <input type="number" class="input input-sm input--score role-score-override-input" data-role-id="${rs.role_id}" min="0" step="1" placeholder="чд">
+                    <button class="btn btn-primary btn-sm btn-override-role-score" data-role-id="${rs.role_id}">Переопределить</button>
                 </div>
             </td>` : ''}
         </tr>
@@ -950,8 +950,8 @@ function renderAdminScoresTableRows(epicOrStory, scoresData) {
         if (isEditing) {
             voteControlHtml = `
                 <div style="display: flex; align-items: center; justify-content: center;">
-                    <input type="number" class="input admin-score-input" data-user-id="${m.id}" data-is-story="${isStory}" min="0" max="500" placeholder="чд" value="${selectedVal !== null ? selectedVal : ''}" style="width: 70px; text-align: center; margin-right: 6px; padding: 4px 6px; font-size:12px;">
-                    <button class="btn btn-primary btn-save-admin-vote" data-user-id="${m.id}" data-is-story="${isStory}" style="padding:4px 8px; font-size:11px;">Ок</button>
+                    <input type="number" class="input input-sm input--score admin-score-input" data-user-id="${m.id}" data-is-story="${isStory}" min="0" max="500" placeholder="чд" value="${selectedVal !== null ? selectedVal : ''}" style="text-align: center; margin-right: 6px;">
+                    <button class="btn btn-primary btn-sm btn-save-admin-vote" data-user-id="${m.id}" data-is-story="${isStory}">Ок</button>
                 </div>
             `;
         } else {
@@ -962,11 +962,11 @@ function renderAdminScoresTableRows(epicOrStory, scoresData) {
         if (isEditing) {
             actionsHtml = `
                 <div style="display:flex; gap:4px;">
-                    ${hasVoted ? `<button class="btn btn-secondary btn-cancel-admin-vote" data-user-id="${m.id}" data-is-story="${isStory}" style="padding:4px 8px; font-size:11px;">Отмена</button>` : ''}
+                    ${hasVoted ? `<button class="btn btn-secondary btn-sm btn-cancel-admin-vote" data-user-id="${m.id}" data-is-story="${isStory}">Отмена</button>` : ''}
                 </div>
             `;
         } else {
-            actionsHtml = `<button class="btn btn-secondary btn-edit-admin-vote" data-user-id="${m.id}" data-is-story="${isStory}" style="padding:4px 8px; font-size:11px;">Изменить</button>`;
+            actionsHtml = `<button class="btn btn-secondary btn-sm btn-edit-admin-vote" data-user-id="${m.id}" data-is-story="${isStory}">Изменить</button>`;
         }
 
         // telegram_id может храниться как с ведущим "@" (например, при CSV-импорте),
@@ -1041,7 +1041,7 @@ function renderRisksHtml(epicOrStory, scoresData, risks) {
                             <option value="4">4 - Катастрофическое</option>
                         </select>
                     </div>
-                    <button class="btn btn-secondary btn-vote-risk" data-is-story="${isStory}" style="align-self: flex-end; padding: 4px 8px; font-size: 12px;">Оценить</button>
+                    <button class="btn btn-secondary btn-sm btn-vote-risk" data-is-story="${isStory}" style="align-self: flex-end;">Оценить</button>
                 </div>
             `;
         }
@@ -1075,7 +1075,7 @@ function renderRisksHtml(epicOrStory, scoresData, risks) {
                             <option value="4">4</option>
                         </select>
                     </div>
-                    <button class="btn btn-primary btn-vote-risk-admin" data-is-story="${isStory}" style="align-self: flex-end; padding: 4px 8px; font-size: 11px;">Оценить за участника</button>
+                    <button class="btn btn-primary btn-sm btn-vote-risk-admin" data-is-story="${isStory}" style="align-self: flex-end;">Оценить за участника</button>
                 </div>
             `;
         }
@@ -1131,29 +1131,29 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
     }
 
     const finalScoreText = story.final_score !== null && story.final_score !== undefined
-        ? `<div class="badge" style="background: var(--color-success-bg); color: var(--color-success); font-size: 12px; padding: 4px 10px;">Финальная оценка: ${story.final_score} чд</div>`
-        : `<div class="badge" style="background: var(--bg-tertiary); font-size: 12px; padding: 4px 10px;">Статус: ${story.status === 'NEW' ? 'Новый' : 'Оценка'}</div>`;
+        ? `<div class="badge badge--sm" style="background: var(--color-success-bg); color: var(--color-success);">Финальная оценка: ${story.final_score} чд</div>`
+        : `<div class="badge badge--sm" style="background: var(--bg-tertiary);">Статус: ${story.status === 'NEW' ? 'Новый' : 'Оценка'}</div>`;
 
     // Прямой override итоговой оценки доступен админу только после завершения скоринга (SCORED)
     const overrideFinalScoreHtml = isAdmin && story.status === 'SCORED' ? `
         <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 2px;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-                <input type="number" id="input-override-final-score" class="input" min="0" step="1" value="${story.final_score}" style="width: 80px; padding: 4px 6px; font-size: 12px;">
-                <button id="btn-recalc-final-score" class="btn btn-secondary" title="Подставить в поле значение, рассчитанное по формуле (без сохранения)" style="padding: 4px 8px; font-size: 11px;">Пересчитать по формуле</button>
-                <button id="btn-override-final-score" class="btn btn-primary" style="padding: 4px 8px; font-size: 11px;">Переопределить</button>
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                <input type="number" id="input-override-final-score" class="input input-sm input--score" min="0" step="1" value="${story.final_score}">
+                <button id="btn-recalc-final-score" class="btn btn-secondary btn-sm" title="Подставить в поле значение, рассчитанное по формуле (без сохранения)">Пересчитать по формуле</button>
+                <button id="btn-override-final-score" class="btn btn-primary btn-sm">Переопределить</button>
             </div>
             <span style="font-size: 11px; color: var(--text-muted);">Переопределяет расчёт по формуле</span>
         </div>
     ` : '';
 
     return `
-        <div style="border-bottom: 1px solid var(--color-border); padding-bottom: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
-            <div style="min-width: 0;">
+        <div class="scoring-details-header">
+            <div class="scoring-story-title">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <h3 style="margin: 0; font-size: 15px; font-weight: 700; color: var(--color-text);">${escapeHtml(story.number)}: ${escapeHtml(story.name)}</h3>
-                    ${isAdmin ? `<button id="btn-edit-story" class="btn btn-secondary btn-sm" data-story-id="${story.id}" title="Редактировать историю" style="padding: 2px 6px; font-size: 11px;">✏️ Редактировать</button>` : ''}
+                    <h3>${escapeHtml(story.number)}: ${escapeHtml(story.name)}</h3>
+                    ${isAdmin ? `<button id="btn-edit-story" class="btn btn-secondary btn-sm" data-story-id="${story.id}" title="Редактировать историю">✏️ Редактировать</button>` : ''}
                 </div>
-                <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px; overflow-wrap: break-word;">${story.description ? escapeHtml(story.description) : 'Нет описания.'}</div>
+                <div class="scoring-story-desc">${story.description ? escapeHtml(story.description) : 'Нет описания.'}</div>
             </div>
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
                 ${finalScoreText}
@@ -1175,8 +1175,8 @@ function renderStoryDetailsHtml(story, scoresData, roleScores, risks) {
                         </select>
                     </div>
                     <div class="form-group" style="display: flex; align-items: center;">
-                        <input type="number" id="input-story-score" class="input" min="0" max="500" placeholder="0-500 чд" style="width: 100px; margin-right: 10px; padding: 6px 10px; font-size: 13px;">
-                        <button id="btn-submit-story-vote" class="btn btn-primary" style="padding: 6px 12px; font-size: 13px;">Сохранить</button>
+                        <input type="number" id="input-story-score" class="input input-sm" min="0" max="500" placeholder="0-500 чд" style="width: 100px; margin-right: 10px;">
+                        <button id="btn-submit-story-vote" class="btn btn-primary btn-sm">Сохранить</button>
                     </div>
                     ${renderProgressHtml(scoresData)}
                 ` : ''}

@@ -2,6 +2,16 @@ import { state } from './state.js';
 import { apiGet } from './api.js';
 import { handleApiError, renderTableState, escapeHtml } from './utils.js';
 
+// syncSelectTitle — выставляет нативный title равным тексту выбранной опции
+// (stabilize-control-widths, ux-brief.md раздел 2): #reports-team-select
+// усекает длинные названия команд многоточием (.select--team), полный текст
+// остаётся доступен по наведению.
+function syncSelectTitle(select) {
+    if (!select) return;
+    const selectedOption = select.options[select.selectedIndex];
+    select.title = selectedOption ? selectedOption.textContent : '';
+}
+
 const API_BASE = '/api/gantt';
 
 export function initReportsPanel() {
@@ -37,6 +47,7 @@ export function initReportsPanel() {
         const select = document.getElementById('reports-team-select');
         if (select && teamId && select.value !== teamId) {
             select.value = teamId;
+            syncSelectTitle(select);
             updateExportButtonsState();
             if (state.get('activeTab') === 'reports') {
                 loadCapacityReport();
@@ -52,6 +63,7 @@ export function initReportsPanel() {
             const select = document.getElementById('reports-team-select');
             if (select && globalTeamId && select.value !== globalTeamId) {
                 select.value = globalTeamId;
+                syncSelectTitle(select);
             }
             loadCapacityReport();
         }
@@ -59,6 +71,7 @@ export function initReportsPanel() {
 
     // Добавление слушателей на изменение фильтров
     document.getElementById('reports-team-select')?.addEventListener('change', (e) => {
+        syncSelectTitle(e.target);
         const teamId = e.target.value;
         if (teamId) {
             state.set('selectedTeamId', teamId);
@@ -135,6 +148,7 @@ function populateReportsTeamSelect(teams) {
     } else if (state.get('selectedTeamId') && teams.some(t => t.id === state.get('selectedTeamId'))) {
         select.value = state.get('selectedTeamId');
     }
+    syncSelectTitle(select);
 
     updateExportButtonsState();
 }

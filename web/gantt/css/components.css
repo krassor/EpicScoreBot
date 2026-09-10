@@ -108,9 +108,20 @@
     font-size: var(--font-size-sm);
 }
 
+/* max-width ограничивает имя пользователя и на десктопе/планшете — раньше
+   ограничение существовало только внутри мобильного медиа-блока
+   (responsive.css), и длинное имя раздвигало .user-profile, сдвигая бейдж
+   роли и кнопку «Выйти» (stabilize-control-widths, ux-brief.md раздел 4).
+   Мобильное правило ниже по каскаду продолжает переопределять max-width
+   своим значением 110px — здесь его не трогаем. */
 #user-name {
     font-weight: 600;
     color: var(--text-primary);
+    display: inline-block;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* ── Form Controls & Badges ─────────────────────────────────────────── */
@@ -133,6 +144,23 @@
     min-height: 38px;
 }
 
+/* Модификатор поля ввода для строк действий (fix-scoring-header-layout), парный
+   к .btn-sm: те же min-height и font-size, чтобы поле не было выше кнопок в
+   одной строке. Border/background/radius наследуются от базового .input выше —
+   его не переопределяем. */
+.input-sm {
+    padding: 6px 12px;
+    font-size: var(--font-size-xs);
+    min-height: 30px;
+}
+
+/* Фиксированная ширина числового поля оценки (человеко-дни) в строках действий
+   (fix-scoring-header-layout, design.md Decision 4): содержимое — целое число,
+   растянутое на всю ширину контейнера поле выглядит как поле для текста. */
+.input--score {
+    width: 72px;
+}
+
 .select {
     cursor: pointer;
     min-width: 180px;
@@ -141,6 +169,36 @@
     background-repeat: no-repeat;
     background-position: right 10px center;
     background-size: 16px;
+}
+
+/* ── Роли .select в строчных контейнерах (stabilize-control-widths) ─────────
+   Базовое правило .select выше не трогаем: девять из двенадцати списков
+   стоят в колоночных flex/grid-контейнерах (.admin-form, .modal-body,
+   .form-group, .form-grid-3col) с align-items: stretch и уже растягиваются
+   на ширину контейнера независимо от данных — им max-width не нужен и
+   вреден. Ограничение применяется точечно к шести спискам в строчных
+   контейнерах (.header-controls, .toolbar-row, .reports-toolbar-filters),
+   где нативный <select> меряется по самому длинному <option> и раздувает
+   ряд (ux-brief.md, design.md Решения 1–2). */
+.select--compact {
+    min-width: 88px;
+    max-width: 88px;
+}
+
+.select--team {
+    min-width: 180px;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.select--epic {
+    min-width: 220px;
+    max-width: 340px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .select:disabled,
@@ -186,6 +244,33 @@
     font-weight: 600;
     color: var(--text-secondary);
     white-space: nowrap;
+}
+
+/* Модификатор бейджа для строк действий (fix-scoring-header-layout): приводит высоту
+   к тем же значениям, что .btn-sm и .input-sm, чтобы бейдж «Финальная оценка» не был
+   выше или ниже соседних кнопки и поля. Базовый .badge не трогаем — он переиспользуется
+   как статусный бейдж в таблицах и списках, где высота 30px не нужна. */
+.badge--sm {
+    padding: 6px 12px;
+    font-size: var(--font-size-xs);
+    min-height: 30px;
+}
+
+/* Резервирование места под ожидаемый диапазон значений (stabilize-control-widths,
+   ux-brief.md раздел 3): единичные элементы шапки, не переиспользуемая роль,
+   поэтому правило по идентификатору здесь уместно. min-width, а не width —
+   значение за пределами диапазона раздвигает бейдж, а не обрезается. */
+#task-count {
+    display: inline-flex;
+    justify-content: center;
+    min-width: 84px;
+    font-variant-numeric: tabular-nums;
+}
+
+#user-role-badge {
+    display: inline-flex;
+    justify-content: center;
+    min-width: 118px;
 }
 
 /* Role badges for the current user profile (header) */
@@ -532,12 +617,31 @@
     font-size: var(--font-size-xl);
     font-weight: 700;
     margin-bottom: 6px;
+    overflow-wrap: break-word;
 }
 
 .scoring-epic-desc {
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
     line-height: 1.5;
+    overflow-wrap: break-word;
+}
+
+/* Масштаб уровня истории на шапке .scoring-details-header (fix-scoring-header-layout,
+   design.md Decision 1): раскладку задаёт сам .scoring-details-header, здесь только
+   уменьшенные относительно шапки эпика размеры заголовка и описания. */
+.scoring-story-title h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 700;
+    overflow-wrap: break-word;
+}
+
+.scoring-story-desc {
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    overflow-wrap: break-word;
 }
 
 .scoring-panel-grid {
