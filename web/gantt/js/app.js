@@ -2,7 +2,7 @@
 
 import { state } from './state.js';
 import { checkAuth, logout } from './auth.js';
-import { apiGet, apiPost } from './api.js';
+import { apiGet, apiPost, apiPut } from './api.js';
 import { showToast, handleApiError, withSubmitLock, openModal, closeModal } from './utils.js';
 
 // Import panel initializers
@@ -50,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
             populateYearSelect([]);
             renderEpicSelectForPeriod();
         }
+        await loadScheduleSettings(teamId);
         updateRegenerateQuarterButtonState();
     });
 
@@ -307,6 +308,104 @@ async function loadTasks(teamId) {
     }
 }
 
+// ── Настройка команды «не начинать задачи раньше сегодня» (backfill-idle-gaps-in-schedule,
+// ux-brief.md) ─────────────────────────────────────────────────────────────────────────
+// Настройка команды, а не состояние тулбара: читается для любой выбранной команды и любой
+// роли (GET доступен всем аутентифицированным), меняет её только админ этой команды.
+// DOM-узлы статичны (index.html) — innerHTML не перестраивается, состояния переключаются
+// через classList/атрибуты, обработчик change навешивается один раз в setupGlobalEventListeners.
+
+// loadScheduleSettings — читает текущее значение настройки для teamId и переключает блок
+// между состояниями «команда не выбрана» / «загрузка» / «ошибка» / «значение загружено».
+// При ошибке GET handleApiError не вызывается (ux-brief.md раздел 5): это фоновая подгрузка
+// состояния тулбара, а не пользовательское действие — вместо тоста показывается кнопка «Повторить».
+async function loadScheduleSettings(teamId) {
+    const row = document.getElementById('toolbar-row-settings');
+    const checkbox = document.getElementById('backfill-block-past-toggle');
+    const label = document.getElementById('backfill-checkbox-label');
+    const hint = document.getElementById('backfill-setting-hint');
+    const memberHint = document.getElementById('backfill-setting-member-hint');
+    const errorHint = document.getElementById('backfill-setting-error-hint');
+    const retryBtn = document.getElementById('btn-backfill-setting-retry');
+    if (!row || !checkbox || !label || !hint || !memberHint || !errorHint || !retryBtn) return;
+
+    if (!teamId) {
+        row.classList.add('hidden');
+        return;
+    }
+    row.classList.remove('hidden');
+
+    // Состояние «загрузка»: чекбокс disabled и подпись «Загрузка настройки…» — значение
+    // ещё неизвестно. indeterminate — DOM-свойство, а не атрибут (setAttribute его не
+    // выставляет): вместе со scoped-правилом .team-setting input:indeterminate
+    // (components.css) это не даёт чекбоксу выглядеть ни включённым, ни выключенным,
+    // пока ответ сервера не получен (ux-brief.md раздел 5, критерий приёмки 3).
+    label.classList.remove('hidden');
+    checkbox.disabled = true;
+    checkbox.checked = false;
+    checkbox.indeterminate = true;
+    hint.textContent = 'Загрузка настройки…';
+    hint.classList.remove('hidden');
+    memberHint.classList.add('hidden');
+    errorHint.classList.add('hidden');
+    retryBtn.classList.add('hidden');
+
+    try {
+        const data = await apiGet(`/teams/${teamId}/schedule-settings`);
+        // Пока запрос летел, могла быть выбрана другая команда — тогда этот ответ устарел.
+        if (state.get('selectedTeamId') !== teamId) return;
+
+        const role = state.get('userProfile')?.role;
+        const isMember = role === 'member';
+
+        checkbox.indeterminate = false;
+        checkbox.checked = !!data.backfill_block_past;
+        checkbox.disabled = isMember;
+        hint.textContent = 'Настройка команды: действует на всё расписание и пересчитывает даты всех задач.';
+        memberHint.classList.toggle('hidden', !isMember);
+    } catch (err) {
+        if (state.get('selectedTeamId') !== teamId) return;
+        // Ошибка загрузки — чекбокс скрывается целиком, вместо него текст с кнопкой
+        // повтора: показывать чекбокс в невыясненном состоянии нельзя (ux-brief.md раздел 5).
+        checkbox.indeterminate = false;
+        label.classList.add('hidden');
+        hint.classList.add('hidden');
+        errorHint.classList.remove('hidden');
+        retryBtn.classList.remove('hidden');
+    }
+}
+
+// onBackfillSettingToggle — обработчик клика по чекбоксу настройки. Читает teamId из state
+// в момент клика (а не из замыкания на момент загрузки), т.к. слушатель навешивается один раз.
+async function onBackfillSettingToggle(e) {
+    const checkbox = e.target;
+    const teamId = state.get('selectedTeamId');
+    const hintEl = document.getElementById('backfill-setting-hint');
+    const next = checkbox.checked;
+    const prevChecked = !next;
+
+    if (!teamId) {
+        checkbox.checked = prevChecked;
+        return;
+    }
+
+    await withSubmitLock(checkbox, async () => {
+        if (hintEl) hintEl.textContent = 'Пересчитываем расписание…';
+        try {
+            const result = await apiPut(`/teams/${teamId}/schedule-settings`, { backfill_block_past: next });
+            if (hintEl) hintEl.textContent = 'Настройка команды: действует на всё расписание и пересчитывает даты всех задач.';
+            showToast(`Расписание пересчитано: обновлено задач — ${result.count}`, result.count > 0 ? 'success' : 'info');
+            await loadTasks(teamId);
+        } catch (err) {
+            // При ошибке чекбокс возвращается в состояние до клика, а не остаётся
+            // в промежуточном положении (ux-brief.md раздел 6, критерий приёмки 8).
+            checkbox.checked = prevChecked;
+            if (hintEl) hintEl.textContent = 'Настройка команды: действует на всё расписание и пересчитывает даты всех задач.';
+            handleApiError(err, { title: 'Не удалось изменить настройку' });
+        }
+    });
+}
+
 async function generateTasks() {
     const epicId = document.getElementById('epic-select').value;
     const startDate = document.getElementById('start-date').value;
@@ -534,6 +633,12 @@ function setupGlobalEventListeners() {
 
     // Массовая перегенерация задач квартала
     document.getElementById('btn-regenerate-quarter')?.addEventListener('click', onRegenerateQuarterClick);
+
+    // Настройка команды «не начинать задачи раньше сегодня» (backfill-idle-gaps-in-schedule)
+    document.getElementById('backfill-block-past-toggle')?.addEventListener('change', onBackfillSettingToggle);
+    document.getElementById('btn-backfill-setting-retry')?.addEventListener('click', () => {
+        loadScheduleSettings(state.get('selectedTeamId'));
+    });
 }
 
 async function loadRoles() {

@@ -153,6 +153,22 @@
                                 🔀 Порядок историй
                             </button>
                         </div>
+                        <!-- 3-й ряд: настройка команды «не начинать задачи раньше сегодня»
+                             (backfill-idle-gaps-in-schedule, ux-brief.md). Настройка команды,
+                             а не состояние тулбара — скрыт целиком, пока команда не выбрана;
+                             значение видно всем ролям, менять может только админ команды. -->
+                        <div class="toolbar-row toolbar-row-settings hidden" id="toolbar-row-settings">
+                            <div class="team-setting" id="backfill-setting">
+                                <label class="checkbox-item" id="backfill-checkbox-label" for="backfill-block-past-toggle">
+                                    <input type="checkbox" id="backfill-block-past-toggle" disabled>
+                                    <span>Не начинать задачи раньше сегодняшней даты</span>
+                                </label>
+                                <span class="team-setting-hint" id="backfill-setting-hint">Загрузка настройки…</span>
+                                <span class="team-setting-hint hidden" id="backfill-setting-member-hint">Менять может только администратор команды.</span>
+                                <span class="team-setting-hint hidden" id="backfill-setting-error-hint">Не удалось загрузить настройку.</span>
+                                <button type="button" class="btn btn-secondary btn-sm hidden" id="btn-backfill-setting-retry">Повторить</button>
+                            </div>
+                        </div>
                     </div>
                     <div class="toolbar-right">
                         <div class="view-modes">

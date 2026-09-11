@@ -145,6 +145,14 @@ type mockGanttSvc struct {
 	}
 	getTeamMembersFunc              func(ctx context.Context, teamID uuid.UUID) ([]domain.TeamMember, error)
 	getTeamTasksWithAssignmentsFunc func(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, error)
+
+	// Метод backend §3.2 (backfill-idle-gaps-in-schedule).
+	setTeamBackfillBlockPastFunc   func(ctx context.Context, teamID uuid.UUID, blocked bool) ([]domain.GanttTask, error)
+	setTeamBackfillBlockPastCalled bool
+	setTeamBackfillBlockPastArgs   struct {
+		teamID  uuid.UUID
+		blocked bool
+	}
 }
 
 func (m *mockGanttSvc) SetTaskAssignee(ctx context.Context, taskID uuid.UUID, userID *uuid.UUID) ([]domain.GanttTask, error) {
@@ -169,6 +177,16 @@ func (m *mockGanttSvc) GetTeamTasksWithAssignments(ctx context.Context, teamID u
 		return m.getTeamTasksWithAssignmentsFunc(ctx, teamID)
 	}
 	return nil, nil, nil
+}
+
+func (m *mockGanttSvc) SetTeamBackfillBlockPast(ctx context.Context, teamID uuid.UUID, blocked bool) ([]domain.GanttTask, error) {
+	m.setTeamBackfillBlockPastCalled = true
+	m.setTeamBackfillBlockPastArgs.teamID = teamID
+	m.setTeamBackfillBlockPastArgs.blocked = blocked
+	if m.setTeamBackfillBlockPastFunc != nil {
+		return m.setTeamBackfillBlockPastFunc(ctx, teamID, blocked)
+	}
+	return nil, nil
 }
 
 func (m *mockGanttSvc) GenerateTasksForQuarter(ctx context.Context, teamID uuid.UUID, year, quarter int, startDate time.Time) (gantt.QuarterGenerationResult, error) {

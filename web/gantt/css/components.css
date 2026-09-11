@@ -1123,6 +1123,52 @@
     left: 6px;
 }
 
+/* ── Настройка команды на панели Ганта (backfill-idle-gaps-in-schedule) ──────────────
+   Переиспользует .checkbox-item как есть (выше), но не читается как ещё один
+   переключатель масштаба (.view-modes) — отдельный блок с рамкой и своим фоном
+   (ux-brief.md, раздел 1). min-height поднимает тач-цель всей обёртки до 44px:
+   у .checkbox-item тач-цель всего 24px, для тач-устройств мало; .checkbox-item
+   в формах при этом не трогаем. */
+.team-setting {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    min-height: var(--tap-target-min);
+}
+.team-setting-hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+}
+
+/* Состояние «загрузка» (ux-brief.md раздел 5, критерий приёмки 3): чекбокс не должен
+   выглядеть ни включённым, ни выключенным, пока значение не получено с сервера. Базовый
+   .checkbox-item использует appearance: none, поэтому нативная отрисовка :indeterminate
+   не работает без собственного правила — добавляем его строго в области .team-setting,
+   не трогая .checkbox-item, чтобы чекбоксы в формах админки и модалках не изменились.
+   Токены те же, что у :checked (components.css:1108-1124) — горизонтальная черта вместо
+   галочки. */
+.team-setting input[type="checkbox"]:indeterminate {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.team-setting input[type="checkbox"]:indeterminate::after {
+    content: '';
+    width: 10px;
+    height: 2px;
+    border-radius: 1px;
+    background: #ffffff;
+    position: absolute;
+    top: 8px;
+    left: 4px;
+}
+
 /* ── Admin Table Styles ─────────────────────────────────────────────── */
 .table-responsive {
     overflow-x: auto;

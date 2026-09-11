@@ -874,9 +874,18 @@ func TestSetTaskStartOffset_PositiveDelaysStart(t *testing.T) {
 
 // TestSetTaskStartOffset_NegativeClampedByRoleContinuity проверяет, что
 // отрицательный офсет позволяет роли стартовать раньше конца предыдущей
-// группы внутри стори, но не раньше, чем освободится сама роль в конвейере
-// команды — roleNextAvailable (непрерывность роли) остаётся жёсткой нижней
-// границей и в этом кейсе строже, чем groupPrevEnd+offset.
+// группы внутри стори, но не раньше, чем допускает сам календарь роли в
+// конвейере команды (роль без кандидатов в команде планируется как единый
+// ресурс — roleFreeAt). С заполнением простоев (задача 2.6,
+// openspec/changes/backfill-idle-gaps-in-schedule/design.md Решение 5)
+// календарь роли — это уже не жёсткая ватерлиния, а такой же интервальный
+// календарь, как у исполнителя: умеренный офсет, для которого в очереди
+// роли нет подходящего простоя, по-прежнему прижимается к концу последней
+// брони (как и раньше); достаточно большой офсет, открывающий существующий
+// простой ПЕРЕД задачей более приоритетной стори той же роли (dev story1
+// не начинает работу сразу, пока идёт анализ), занимает этот простой —
+// ровно то же свойство, что и для календаря исполнителя (design.md,
+// Решение 2), просто без исполнителя.
 func TestSetTaskStartOffset_NegativeClampedByRoleContinuity(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeRepo()
@@ -923,23 +932,45 @@ func TestSetTaskStartOffset_NegativeClampedByRoleContinuity(t *testing.T) {
 		t.Fatalf("precondition failed: dev story2 start = %v, want Jul20", devStory2.StartDate)
 	}
 
-	// Ставим большой отрицательный офсет — попытка начать намного раньше
-	// конца предыдущей группы (аналитика story2) внутри стори.
+	// Небольшой отрицательный офсет (-1): target = Jul16-1 = Jul15 — этой
+	// датой начинается уже занятый интервал dev story1 (Jul15-Jul17), так
+	// что подходящего простоя перед ним нет (задача не помещается: 2
+	// рабочих дня с Jul15 упёрлись бы в саму бронь). Старт по-прежнему
+	// прижимается к концу последней брони роли — поведение не изменилось.
+	if _, err := svc.SetTaskStartOffset(ctx, devStory2.ID, -1); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := f.tasks[devStory2.ID]
+	wantNoGap := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	if !got.StartDate.Equal(wantNoGap) {
+		t.Errorf("dev story2 start with offset=-1 = %v, want %v (no fitting gap, clamped to end of last booking)",
+			got.StartDate, wantNoGap)
+	}
+
+	// Большой отрицательный офсет (-10): target = Jul16-10 = Jul6, ниже
+	// epicFloor (Jul13). earliest = Jul13 — ровно начало простоя Jul13-14
+	// перед dev story1 (пока идёт анализ story1, роль dev ещё не занята).
+	// Задача целиком помещается в этот простой (2 рабочих дня) и занимает
+	// его, не трогая dev story1 (design.md Решение 2, 5).
 	if _, err := svc.SetTaskStartOffset(ctx, devStory2.ID, -10); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	got := f.tasks[devStory2.ID]
-	// roleNextAvailable (непрерывность роли dev, Jul20) строже, чем
-	// groupPrevEnd + offset (глубоко в прошлом) — старт должен быть прижат
-	// именно к непрерывности роли, а не к смещённой дате.
-	want := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	if !got.StartDate.Equal(want) {
-		t.Errorf("dev story2 start with offset=-10 = %v, want %v (clamped by role continuity, not the offset)",
-			got.StartDate, want)
+	got = f.tasks[devStory2.ID]
+	wantGap := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
+	if !got.StartDate.Equal(wantGap) {
+		t.Errorf("dev story2 start with offset=-10 = %v, want %v (fills the idle gap before dev story1)",
+			got.StartDate, wantGap)
 	}
 	if offset := assignmentStartOffset(f, story2ID, devID); offset != -10 {
 		t.Errorf("task_assignments start offset = %d, want -10", offset)
+	}
+	// dev story1 остаётся на прежнем месте — заполнение простоя не сдвигает
+	// более приоритетную задачу (design.md Решение 1, "не двигает уже
+	// размещённые задачи").
+	devStory1Got := f.tasks[devStory1.ID]
+	if !devStory1Got.StartDate.Equal(devStory1.StartDate) || !devStory1Got.EndDate.Equal(devStory1.EndDate) {
+		t.Errorf("dev story1 dates changed: got [%v, %v], want [%v, %v]",
+			devStory1Got.StartDate, devStory1Got.EndDate, devStory1.StartDate, devStory1.EndDate)
 	}
 }
 

@@ -56,18 +56,26 @@ type scheduleState struct {
 	// assignments — пользовательский ввод команды (закрепления
 	// исполнителя, смещения старта), прочитанный пачкой одним запросом.
 	assignments map[assignmentKey]domain.TaskAssignment
-	// assigneeFreeAt — эффективное окончание последней обработанной задачи
-	// конкретного исполнителя (design.md Решение 1 — единица занятости).
-	assigneeFreeAt map[uuid.UUID]time.Time
+	// assigneeFreeAt — календарь занятых интервалов конкретного исполнителя:
+	// непересекающиеся промежутки уже размещённых задач, отсортированные по
+	// возрастанию start (design.md Решение 1 — единица занятости). Раньше
+	// (до openspec/changes/backfill-idle-gaps-in-schedule) хранил одну дату
+	// "занят до"; теперь резервируется через reserveInterval, а промежуток
+	// под новую задачу ищется через findEarliestSlot (заполнение простоев,
+	// см. openspec/changes/backfill-idle-gaps-in-schedule/design.md,
+	// Решение 1—2).
+	assigneeFreeAt map[uuid.UUID][]interval
 	// rrCursor — курсор кругового (round-robin) тай-брейка при выборе
 	// исполнителя, per role.
 	rrCursor map[uuid.UUID]int
-	// roleFreeAt — то же самое, что и раньше (до этого изменения),
+	// roleFreeAt — то же самое, что и assigneeFreeAt (календарь интервалов),
 	// но используется ТОЛЬКО для ролей с пустым пулом кандидатов в
 	// команде — тогда роль по-прежнему планируется как единый
-	// последовательный ресурс (design.md Решение 1, "Роль без кандидатов
-	// планируется как единый ресурс").
-	roleFreeAt map[uuid.UUID]time.Time
+	// последовательный ресурс, на который тоже распространяется заполнение
+	// простоев (design.md Решение 1 "Роль без кандидатов планируется как
+	// единый ресурс", openspec/changes/backfill-idle-gaps-in-schedule/
+	// design.md Решение 5).
+	roleFreeAt map[uuid.UUID][]interval
 }
 
 // Service provides Gantt chart business logic.
@@ -575,6 +583,34 @@ func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID)
 		assignments[assignmentKey{epicID: a.EpicID, roleID: a.RoleID}] = a
 	}
 
+	// Настройка команды «не занимать промежутки расписания, оставшиеся в
+	// прошлом» читается пачкой на команду — там же, где уже читаются пулы
+	// исполнителей и закрепления, а не приходит параметром: пересчёт
+	// вызывается из девяти мест, и состояние интерфейса до большинства из
+	// них не доходит (design.md, openspec/changes/backfill-idle-gaps-in-schedule,
+	// Решение 3).
+	team, err := s.repo.GetTeamByID(ctx, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get team: %w", op, err)
+	}
+
+	// floor — нижняя граница всего размещения (earliest = max(target,
+	// floor) в recalculateEpicSchedule), а не только поиска промежутка
+	// (design.md Решение 3): при выключенной настройке совпадает с
+	// teamFloor (поведение не меняется), при включённой не может быть
+	// раньше текущей даты — тогда ни одна задача команды не планируется
+	// раньше сегодня, не только засыпаемая. Разница между «только поиск
+	// промежутка» и «всё размещение» проявляется исключительно в ветке
+	// «подходящего промежутка нет»: хвост после последней брони — это не
+	// промежуток, а открытый интервал, и отдельная граница для него
+	// потребовала бы двух разных пределов внутри одного поиска ради
+	// поведения, которое пользователю сложнее объяснить, чем простое
+	// «раньше сегодня при включённой настройке ничего не планируется».
+	floor := teamFloor
+	if team.BackfillBlockPast {
+		floor = maxTime(teamFloor, toMidnight(time.Now()))
+	}
+
 	// state пересоздаётся с нуля на каждый вызов (в т.ч. rrCursor и
 	// roleFreeAt) — без этого повторный пересчёт без изменения входных
 	// данных мог бы дать другое распределение исполнителей (design.md
@@ -582,13 +618,13 @@ func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID)
 	state := &scheduleState{
 		pools:          pools,
 		assignments:    assignments,
-		assigneeFreeAt: make(map[uuid.UUID]time.Time),
+		assigneeFreeAt: make(map[uuid.UUID][]interval),
 		rrCursor:       make(map[uuid.UUID]int),
-		roleFreeAt:     make(map[uuid.UUID]time.Time),
+		roleFreeAt:     make(map[uuid.UUID][]interval),
 	}
 
 	for _, ewt := range inScope {
-		if err := s.recalculateEpicSchedule(ctx, ewt.epic, ewt.tasks, teamFloor, state); err != nil {
+		if err := s.recalculateEpicSchedule(ctx, ewt.epic, ewt.tasks, floor, state); err != nil {
 			return nil, fmt.Errorf("%s: epic %s: %w", op, ewt.epic.ID, err)
 		}
 	}
@@ -598,13 +634,16 @@ func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID)
 
 // recalculateEpicSchedule recalculates dates, assignees and aggregated
 // progress for a single epic's tasks (its stories/legacy role tasks),
-// advancing state's calendars as it goes. teamFloor is the team-wide lower
-// bound (see RecalculateTeamSchedule).
+// advancing state's calendars as it goes. floor is the team-wide lower
+// bound (see RecalculateTeamSchedule), already resolved against the team's
+// "не занимать промежутки в прошлом" setting (design.md Решение 3) — the
+// caller passes teamFloor unchanged when the setting is off, or
+// max(teamFloor, today) when it's on.
 func (s *Service) recalculateEpicSchedule(
 	ctx context.Context,
 	epic domain.Epic,
 	epicTasks []domain.GanttTask,
-	teamFloor time.Time,
+	floor time.Time,
 	state *scheduleState,
 ) error {
 	op := "gantt.recalculateEpicSchedule"
@@ -630,11 +669,11 @@ func (s *Service) recalculateEpicSchedule(
 		return nil
 	}
 
-	// epicFloor is the team-wide lower bound (see RecalculateTeamSchedule):
-	// no task of any epic is scheduled earlier than this, regardless of
-	// queue position, so reordering epics/stories can always move a unit's
-	// tasks earlier, not just later.
-	epicFloor := teamFloor
+	// epicFloor is the resolved team-wide lower bound (see the floor
+	// parameter's doc comment above): no task of any epic is scheduled
+	// earlier than this, regardless of queue position, so reordering
+	// epics/stories can always move a unit's tasks earlier, not just later.
+	epicFloor := floor
 
 	stories, err := s.repo.GetStoriesByEpicID(ctx, epic.ID)
 	if err != nil {
@@ -714,8 +753,13 @@ func (s *Service) recalculateEpicSchedule(
 				if frozen {
 					// Замороженная задача сохраняет исполнителя, назначенного
 					// ранее — читаем его как факт, не пересчитываем
-					// (design.md Решение 6). Её занятость двигает календарь
-					// именно этого исполнителя; если исполнитель неизвестен
+					// (design.md Решение 6). Она резервирует в календаре свой
+					// ФАКТИЧЕСКИЙ интервал [StartDate, effectiveEnd] целиком
+					// (а не просто двигает границу "занят до" вперёд), что
+					// открывает засыпке простой перед ней — намеренное
+					// следствие интервальной модели (см.
+					// openspec/changes/backfill-idle-gaps-in-schedule/
+					// design.md, Решение 4). Если исполнитель неизвестен
 					// (например, строка создана до введения assignee_id),
 					// используем прежний ролевой календарь, чтобы не
 					// потерять непрерывность роли для остальных её задач.
@@ -724,21 +768,28 @@ func (s *Service) recalculateEpicSchedule(
 						effectiveEnd = *task.ActualEndDate
 					}
 					if task.AssigneeID != nil {
-						advanceFreeAt(state.assigneeFreeAt, *task.AssigneeID, effectiveEnd)
+						reserveInterval(state.assigneeFreeAt, *task.AssigneeID, task.StartDate, effectiveEnd)
 					} else {
-						advanceFreeAt(state.roleFreeAt, roleID, effectiveEnd)
+						reserveInterval(state.roleFreeAt, roleID, task.StartDate, effectiveEnd)
 					}
 				} else {
 					pool := state.pools[roleID]
+					// earliest — нижняя граница поиска промежутка для этой
+					// задачи: не раньше её FS-зависимости внутри стори
+					// (target) и не раньше epicFloor, уже учитывающего
+					// настройку команды «не занимать промежутки в прошлом»
+					// (design.md Решение 2—3).
+					earliest := maxTime(target, epicFloor)
 
 					var chosen *uuid.UUID
 					var newStart time.Time
 					switch {
 					case len(pool) == 0:
 						// Роль без кандидатов в команде планируется как
-						// единый последовательный ресурс — прежнее
-						// поведение (design.md Решение 1).
-						newStart = moveToWorkDay(maxTime(target, nextAvailable(state.roleFreeAt[roleID]), epicFloor))
+						// единый последовательный ресурс, на который тоже
+						// распространяется заполнение простоев (design.md
+						// Решение 1, 5).
+						newStart = findEarliestSlot(state.roleFreeAt[roleID], workDays, earliest)
 					case hasAssignment && assignment.UserID != nil && poolContains(pool, *assignment.UserID):
 						// Действующее закрепление — приоритет над автоматом
 						// на выбор человека, но не на дату (design.md
@@ -746,16 +797,18 @@ func (s *Service) recalculateEpicSchedule(
 						// человека, даже если свободный кандидат дал бы
 						// более ранний старт.
 						pinned := *assignment.UserID
-						newStart = moveToWorkDay(maxTime(target, nextAvailable(state.assigneeFreeAt[pinned]), epicFloor))
+						newStart = findEarliestSlot(state.assigneeFreeAt[pinned], workDays, earliest)
 						chosen = &pinned
 					default:
 						// Нет действующего закрепления (не закреплено вовсе,
 						// либо закреплённый человек выбыл из пула роли —
 						// design.md Решение 7) — автоматический выбор:
-						// argmin по фактической дате старта, round-robin как
-						// тай-брейк (design.md Решение 2).
+						// argmin по фактической дате старта (теперь ищущей
+						// промежуток, а не сравнивающей с ватерлинией —
+						// openspec/changes/backfill-idle-gaps-in-schedule/
+						// design.md Решение 2), round-robin как тай-брейк.
 						candidate, start, nextCursor := pickAssignee(pool, state.rrCursor[roleID], func(userID uuid.UUID) time.Time {
-							return moveToWorkDay(maxTime(target, nextAvailable(state.assigneeFreeAt[userID]), epicFloor))
+							return findEarliestSlot(state.assigneeFreeAt[userID], workDays, earliest)
 						})
 						state.rrCursor[roleID] = nextCursor
 						chosen = &candidate
@@ -780,9 +833,9 @@ func (s *Service) recalculateEpicSchedule(
 					}
 
 					if chosen != nil {
-						advanceFreeAt(state.assigneeFreeAt, *chosen, effectiveEnd)
+						reserveInterval(state.assigneeFreeAt, *chosen, newStart, effectiveEnd)
 					} else {
-						advanceFreeAt(state.roleFreeAt, roleID, effectiveEnd)
+						reserveInterval(state.roleFreeAt, roleID, newStart, effectiveEnd)
 					}
 				}
 
@@ -1002,6 +1055,35 @@ func (s *Service) SetTaskAssignee(
 	}
 
 	result, err := s.RecalculateTeamSchedule(ctx, epic.TeamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: recalc schedule: %w", op, err)
+	}
+	return result, nil
+}
+
+// SetTeamBackfillBlockPast переключает настройку команды «не занимать
+// промежутки расписания, оставшиеся в прошлом» (backend §3.2,
+// openspec/changes/backfill-idle-gaps-in-schedule) и сразу пересчитывает
+// расписание команды по новому правилу — того же требует спека
+// (Requirement "Команда может запретить занимать промежутки в прошлом",
+// Scenario "Администратор переключает настройку": "значение сохраняется и
+// расписание команды пересчитывается по новому правилу"). Team-scoped
+// проверка прав (admin именно этой команды либо superadmin) выполняется на
+// уровне хендлера (design.md Решение 3 — то же место, что и остальной
+// пользовательский ввод, транспортный слой не знает о бизнес-правилах
+// планировщика).
+func (s *Service) SetTeamBackfillBlockPast(
+	ctx context.Context,
+	teamID uuid.UUID,
+	blocked bool,
+) ([]domain.GanttTask, error) {
+	op := "gantt.SetTeamBackfillBlockPast"
+
+	if err := s.repo.UpdateTeamBackfillBlockPast(ctx, teamID, blocked); err != nil {
+		return nil, fmt.Errorf("%s: update setting: %w", op, err)
+	}
+
+	result, err := s.RecalculateTeamSchedule(ctx, teamID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: recalc schedule: %w", op, err)
 	}
@@ -1514,11 +1596,14 @@ func maxTime(times ...time.Time) time.Time {
 }
 
 // nextAvailable converts a calendar's raw "busy until" timestamp (the
-// effective end of the last task assigned to a person/role) into the
+// effective end of a task already reserved for a person/role) into the
 // earliest work day a new task for that same person/role could start —
 // advanced by one work day, matching groupPrevEnd's own "+1 work day"
-// semantics. A zero time.Time (nothing assigned yet) is returned unchanged:
-// maxTime treats zero as always earliest, so it never constrains selection.
+// semantics. A zero time.Time (nothing reserved yet, or no reservation
+// before the gap in question) is returned unchanged: maxTime treats zero as
+// always earliest, so it never constrains selection. Used by
+// findEarliestSlot to turn each interval's end into the start of the gap
+// that follows it.
 func nextAvailable(freeAt time.Time) time.Time {
 	if freeAt.IsZero() {
 		return freeAt
@@ -1526,14 +1611,79 @@ func nextAvailable(freeAt time.Time) time.Time {
 	return moveToWorkDay(freeAt.AddDate(0, 0, 1))
 }
 
-// advanceFreeAt records effectiveEnd as the calendar's new "busy until" mark
-// for key, but only if it's later than what's already recorded — a
-// calendar can only move forward, never backward, within one
-// RecalculateTeamSchedule call.
-func advanceFreeAt(freeAt map[uuid.UUID]time.Time, key uuid.UUID, effectiveEnd time.Time) {
-	if cur, ok := freeAt[key]; !ok || effectiveEnd.After(cur) {
-		freeAt[key] = effectiveEnd
+// prevWorkDay returns the working day immediately preceding t — the mirror
+// of moveToWorkDay/nextAvailable, used by findEarliestSlot to turn an
+// interval's start into the inclusive upper bound of the gap right before
+// it (t is assumed to already be a work day, as are all calendar interval
+// boundaries, produced by moveToWorkDay/addWorkDays).
+func prevWorkDay(t time.Time) time.Time {
+	prev := t.AddDate(0, 0, -1)
+	switch prev.Weekday() {
+	case time.Sunday:
+		return prev.AddDate(0, 0, -2)
+	case time.Saturday:
+		return prev.AddDate(0, 0, -1)
+	default:
+		return prev
 	}
+}
+
+// interval — занятый промежуток календаря исполнителя/роли: [start, end]
+// включительно, границы — результат moveToWorkDay/addWorkDays. Основа
+// интервального календаря (openspec/changes/backfill-idle-gaps-in-schedule/
+// design.md, Решение 1), заменяющего прежнюю ватерлинию "занят до одной
+// датой" (scheduleState.assigneeFreeAt/roleFreeAt).
+type interval struct {
+	start time.Time
+	end   time.Time
+}
+
+// reserveInterval резервирует занятый промежуток [start, end] в календаре
+// key, сохраняя список интервалов отсортированным по возрастанию start —
+// порядок, в котором findEarliestSlot ищет промежутки. Заменяет прежнюю
+// advanceFreeAt: та двигала только границу "занят до" вперёд и не оставляла
+// заполнению простоев ничего видимого перед собой; теперь каждый интервал
+// хранится отдельно, и промежутки перед ним остаются доступны для менее
+// приоритетных задач (design.md Решение 1).
+//
+// Резервируемый интервал не должен пересекаться с уже имеющимися в
+// календаре — это гарантируется тем, что start всегда получен через
+// findEarliestSlot того же календаря (либо это фактический интервал
+// замороженной задачи, обрабатываемой в приоритетном порядке раньше любых
+// последующих резерваций).
+func reserveInterval(calendar map[uuid.UUID][]interval, key uuid.UUID, start, end time.Time) {
+	ivs := calendar[key]
+	idx, _ := slices.BinarySearchFunc(ivs, start, func(iv interval, t time.Time) int {
+		return iv.start.Compare(t)
+	})
+	calendar[key] = slices.Insert(ivs, idx, interval{start: start, end: end})
+}
+
+// findEarliestSlot ищет минимальный старт t ≥ earliest задачи длительностью
+// workDays рабочих дней, при котором интервал [t, t+workDays рабочих дней)
+// целиком помещается в свободный промежуток отсортированного по start,
+// непересекающегося календаря ivs — first-fit, а не best-fit
+// (openspec/changes/backfill-idle-gaps-in-schedule/design.md, Решение 2):
+// промежутки перебираются в порядке возрастания даты, и побеждает первый, в
+// который задача помещается целиком, а не самый тесный из подходящих.
+// Если такого промежутка нет, возвращает прежнее поведение — старт сразу
+// после последней брони календаря (вырождение в поведение до появления
+// заполнения простоев).
+func findEarliestSlot(ivs []interval, workDays int, earliest time.Time) time.Time {
+	var prevEnd time.Time // zero-value = брони ещё не было
+	for _, iv := range ivs {
+		candidate := moveToWorkDay(maxTime(earliest, nextAvailable(prevEnd)))
+		gapEnd := prevWorkDay(iv.start)
+		if !addWorkDays(candidate, workDays).After(gapEnd) {
+			// Задача умещается целиком до начала следующей брони — первый
+			// подходящий промежуток, дальше не ищем (first-fit).
+			return candidate
+		}
+		prevEnd = iv.end
+	}
+	// Открытый промежуток после последней брони (либо календарь пуст) —
+	// прежнее поведение при отсутствии подходящего простоя.
+	return moveToWorkDay(maxTime(earliest, nextAvailable(prevEnd)))
 }
 
 // poolContains reports whether userID is among the role's current

@@ -151,6 +151,21 @@ func (r *Router) Mount(mux *chi.Mux) {
 				// аутентифицированному пользователю, как и остальные GET
 				// в этой группе (сам выбор исполнителя гейтится выше).
 				mux.Get("/teams/{id}/members", r.ganttHandler.GetTeamMembers)
+
+				// Настройка команды «не занимать промежутки расписания,
+				// оставшиеся в прошлом» (backend §3,
+				// openspec/changes/backfill-idle-gaps-in-schedule). Чтение
+				// доступно любому аутентифицированному пользователю команды,
+				// как и GetTeamMembers выше; переключение — только
+				// admin/superadmin, тем же приёмом, что и PUT
+				// /tasks/{id}/assignee: RoleAuth("admin") здесь — грубый гейт
+				// "admin хотя бы одной команды", точечная team-scoped
+				// проверка (IsTeamAdminOf) — внутри SetTeamScheduleSettings.
+				mux.Get("/teams/{id}/schedule-settings", r.ganttHandler.GetTeamScheduleSettings)
+				mux.Group(func(mux chi.Router) {
+					mux.Use(myMiddleware.RoleAuth(r.ganttHandler.Repo(), r.ganttHandler.Repo(), r.ganttHandler.Config(), "admin"))
+					mux.Put("/teams/{id}/schedule-settings", r.ganttHandler.SetTeamScheduleSettings)
+				})
 			})
 		})
 	})

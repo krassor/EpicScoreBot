@@ -60,6 +60,10 @@ export const KNOWN_ERROR_MESSAGES = {
     'epic must have at least one story': 'У эпика нет ни одной истории — оценку запустить нельзя.',
     'cannot start scoring of a story directly, start parent epic scoring': 'Запустить оценку истории напрямую нельзя — оценка запускается для родительского эпика.',
     'cannot delete story of an epic that is already in progress or scored': 'Нельзя удалить историю эпика, который уже находится на оценке или оценён.',
+    // internal/transport/httpServer/handlers/schedule_settings.go — настройка
+    // расписания команды (backfill-idle-gaps-in-schedule, ux-brief.md раздел 6)
+    'team not found': 'Команда не найдена. Возможно, её удалили. Обновите страницу.',
+    'failed to update schedule settings': 'Не удалось сохранить настройку. Попробуйте ещё раз.',
 };
 
 // Причины ошибок, которые требуют осознанного действия пользователя (не просто
@@ -77,6 +81,12 @@ const ACTION_REQUIRED_ERRORS = new Set([
     'epic must have at least one story',
     'cannot start scoring of a story directly, start parent epic scoring',
     'cannot delete story of an epic that is already in progress or scored',
+    // internal/transport/httpServer/handlers/schedule_settings.go — отказ по team-scoped
+    // проверке администратора настройки расписания (ux-brief.md раздел 6): сервер уже
+    // отдаёт эти строки по-русски, KNOWN_ERROR_MESSAGES для них не нужен, но без включения
+    // сюда handleApiError показал бы их тостом, а не блокирующей модалкой.
+    'только администратор команды может изменять настройки расписания',
+    'вы не администратор этой команды',
 ]);
 
 // showErrorModal открывается программно из catch-блоков асинхронных операций

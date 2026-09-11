@@ -31,6 +31,11 @@ type fakeRepo struct {
 	userRoles   map[uuid.UUID]map[uuid.UUID]bool // userID -> set of roleID
 	assignments map[assignmentKey]domain.TaskAssignment
 
+	// backfillBlockPast — настройка команды «не занимать промежутки
+	// расписания в прошлом» (задача 1.3), по умолчанию (нулевое значение
+	// map) выключена для каждой команды — см. setTeamBackfillBlockPast.
+	backfillBlockPast map[uuid.UUID]bool
+
 	// Инструментарий только для тестов блокировки (см. locking_test.go):
 	// GetTeamEpicsOrdered — первый repo-вызов внутри RecalculateTeamSchedule,
 	// GetGanttTasksByTeamID (через GetTeamTasks) — последний. Используются как
@@ -201,7 +206,26 @@ func (f *fakeRepo) GetRoleByID(ctx context.Context, roleID uuid.UUID) (*domain.R
 func (f *fakeRepo) GetAllTeams(ctx context.Context) ([]domain.Team, error) { return nil, nil }
 
 func (f *fakeRepo) GetTeamByID(ctx context.Context, teamID uuid.UUID) (*domain.Team, error) {
-	return &domain.Team{ID: teamID}, nil
+	return &domain.Team{ID: teamID, BackfillBlockPast: f.backfillBlockPast[teamID]}, nil
+}
+
+// UpdateTeamBackfillBlockPast реализует gantt.Repository (задача 3.2,
+// openspec/changes/backfill-idle-gaps-in-schedule) — запись значения
+// настройки, которое затем видит GetTeamByID. Переиспользует
+// setTeamBackfillBlockPast, которым тесты уже готовят состояние напрямую.
+func (f *fakeRepo) UpdateTeamBackfillBlockPast(ctx context.Context, teamID uuid.UUID, blocked bool) error {
+	f.setTeamBackfillBlockPast(teamID, blocked)
+	return nil
+}
+
+// setTeamBackfillBlockPast задаёт для теста значение настройки команды «не
+// занимать промежутки расписания в прошлом», которое затем видит
+// RecalculateTeamSchedule через GetTeamByID (задача 1.3).
+func (f *fakeRepo) setTeamBackfillBlockPast(teamID uuid.UUID, blocked bool) {
+	if f.backfillBlockPast == nil {
+		f.backfillBlockPast = make(map[uuid.UUID]bool)
+	}
+	f.backfillBlockPast[teamID] = blocked
 }
 
 func (f *fakeRepo) GetEpicRoleScoresByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.EpicRoleScore, error) {

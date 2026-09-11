@@ -45,6 +45,11 @@ type GanttService interface {
 	// каждого участника (в отличие от Repository.GetRoleByUserID —
 	// одна роль на пользователя, тогда как user_roles — M:N).
 	GetTeamMembers(ctx context.Context, teamID uuid.UUID) ([]domain.TeamMember, error)
+	// SetTeamBackfillBlockPast переключает настройку команды «не занимать
+	// промежутки расписания, оставшиеся в прошлом» и пересчитывает
+	// расписание команды по новому правилу (backend §3.2,
+	// openspec/changes/backfill-idle-gaps-in-schedule).
+	SetTeamBackfillBlockPast(ctx context.Context, teamID uuid.UUID, blocked bool) ([]domain.GanttTask, error)
 }
 
 // Repository defines the data-access contract used by handlers.

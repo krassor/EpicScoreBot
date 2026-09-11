@@ -39,3 +39,6 @@ CLAUDE.md
 coverage.out
 # Отчёты покрытия тестами (go tool cover)
 coverage*.out
+
+# Резервные копии, оставляемые инструментами
+*.bak

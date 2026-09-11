@@ -20,8 +20,18 @@ type Team struct {
 	ID          uuid.UUID
 	Name        string
 	Description string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// BackfillBlockPast — настройка команды «не занимать промежутки
+	// расписания, оставшиеся в прошлом»: запрещает планировщику
+	// (RecalculateTeamSchedule) подбирать под задачу свободный промежуток
+	// в календаре исполнителя/роли, если он целиком или частично лежит
+	// раньше текущей даты. Выключена по умолчанию — тогда граница поиска
+	// промежутка совпадает с датой начала планирования квартала команды
+	// (teamFloor), как было до появления заполнения простоев. См.
+	// openspec/changes/backfill-idle-gaps-in-schedule/design.md,
+	// Решение 3.
+	BackfillBlockPast bool `db:"backfill_block_past"`
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // Role represents a team role (e.g. IT-leader, analyst, BE developer, etc.).

@@ -26,6 +26,12 @@ type Repository interface {
 	// Teams
 	GetAllTeams(ctx context.Context) ([]domain.Team, error)
 	GetTeamByID(ctx context.Context, teamID uuid.UUID) (*domain.Team, error)
+	// UpdateTeamBackfillBlockPast задаёт значение настройки команды «не
+	// занимать промежутки расписания, оставшиеся в прошлом» (задача 1.2,
+	// openspec/changes/backfill-idle-gaps-in-schedule, design.md
+	// Решение 3). Читается внутри RecalculateTeamSchedule пачкой на
+	// команду, пишется через SetTeamBackfillBlockPast.
+	UpdateTeamBackfillBlockPast(ctx context.Context, teamID uuid.UUID, blocked bool) error
 
 	// Users: пул кандидатов на роль исполнителя (design.md Решение 1) и
 	// состав команды с ролями (design.md Решение 9).

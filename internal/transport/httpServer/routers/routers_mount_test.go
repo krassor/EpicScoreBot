@@ -31,14 +31,15 @@ func TestMount_NoPanic(t *testing.T) {
 }
 
 // TestMount_TaskAssigneeAndTeamMembersAreProtected проверяет (backend §3.4,
-// openspec/changes/add-gantt-task-assignees), что новые маршруты
-// PUT /api/gantt/tasks/{id}/assignee и GET /api/gantt/teams/{id}/members
-// смонтированы и закрыты аутентификацией: запрос без cookie сессии
-// TelegramAuth возвращает 401, а не 404 (маршрут не существует) — ни
-// middleware.TelegramAuth, ни (для PUT) следующий за ним middleware.RoleAuth
-// не обращаются к handler/service/repo зависимостям хендлера при отсутствии
-// валидной сессии, поэтому nil-зависимости из TestMount_NoPanic безопасны и
-// здесь.
+// openspec/changes/add-gantt-task-assignees, и backend §3.3,
+// openspec/changes/backfill-idle-gaps-in-schedule), что маршруты
+// PUT /api/gantt/tasks/{id}/assignee, GET /api/gantt/teams/{id}/members и
+// GET|PUT /api/gantt/teams/{id}/schedule-settings смонтированы и закрыты
+// аутентификацией: запрос без cookie сессии TelegramAuth возвращает 401, а
+// не 404 (маршрут не существует) — ни middleware.TelegramAuth, ни (для PUT)
+// следующий за ним middleware.RoleAuth не обращаются к handler/service/repo
+// зависимостям хендлера при отсутствии валидной сессии, поэтому
+// nil-зависимости из TestMount_NoPanic безопасны и здесь.
 func TestMount_TaskAssigneeAndTeamMembersAreProtected(t *testing.T) {
 	h := handlers.NewGanttHandler(slog.Default(), nil, nil, nil, nil, config.BotConfig{}, nil)
 	router := NewRouter(h, "test-token")
@@ -56,6 +57,8 @@ func TestMount_TaskAssigneeAndTeamMembersAreProtected(t *testing.T) {
 	}{
 		{"PUT /tasks/{id}/assignee without session", http.MethodPut, "/api/gantt/tasks/00000000-0000-0000-0000-000000000000/assignee"},
 		{"GET /teams/{id}/members without session", http.MethodGet, "/api/gantt/teams/00000000-0000-0000-0000-000000000000/members"},
+		{"GET /teams/{id}/schedule-settings without session", http.MethodGet, "/api/gantt/teams/00000000-0000-0000-0000-000000000000/schedule-settings"},
+		{"PUT /teams/{id}/schedule-settings without session", http.MethodPut, "/api/gantt/teams/00000000-0000-0000-0000-000000000000/schedule-settings"},
 	}
 
 	for _, tc := range cases {
