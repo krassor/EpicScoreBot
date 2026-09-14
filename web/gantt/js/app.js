@@ -115,6 +115,11 @@ function handleProfileLoaded(profile) {
         btn.style.display = profile.role === 'member' ? 'none' : 'inline-flex';
     });
 
+    // Кнопки экспорта картинки (btn-export-gantt-png/svg) сюда сознательно не входят:
+    // сохранение картинки не меняет ни данные, ни расписание, в отличие от генерации/
+    // перегенерации/переупорядочивания выше — ограничивать его по роли нет причины
+    // (export-gantt-chart-image, «Сохранение доступно всем, кто видит диаграмму»).
+
     // Переупорядочивание эпиков/историй — тот же уровень доступа, что и генерация Ганта.
     const btnReorderEpics = document.getElementById('btn-reorder-epics');
     const btnReorderStories = document.getElementById('btn-reorder-stories');

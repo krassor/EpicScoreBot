@@ -3,6 +3,7 @@
 import { state } from './state.js';
 import { apiPut, apiGet } from './api.js';
 import { showToast, handleApiError, withSubmitLock, openModal, closeModal } from './utils.js';
+import { initGanttImageExport } from './gantt-image-export.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -113,6 +114,7 @@ export function initGanttRenderer() {
     setupGanttEvents();
     setupParentDragReorder();
     setupGanttResizeHandler();
+    initGanttImageExport();
 }
 
 // ── Вычисление и применение ширины колонки под доступную ширину ─────
@@ -291,10 +293,18 @@ function renderGantt(tasks) {
     const container = document.getElementById('gantt-chart');
     const emptyState = document.getElementById('gantt-empty');
     const taskCount = document.getElementById('task-count');
+    const btnExportPng = document.getElementById('btn-export-gantt-png');
+    const btnExportSvg = document.getElementById('btn-export-gantt-svg');
 
     if (!container || !emptyState || !taskCount) return;
 
     taskCount.textContent = `${tasks.length} задач`;
+    // Единая точка истины «диаграмма есть/нет» для доступности сохранения
+    // картинкой (export-gantt-chart-image, ux-brief.md раздел 5) — тот же
+    // сигнал, что переключает #gantt-empty/#gantt-chart, покрывает оба
+    // случая спеки: команда не выбрана и команда без задач.
+    if (btnExportPng) btnExportPng.disabled = tasks.length === 0;
+    if (btnExportSvg) btnExportSvg.disabled = tasks.length === 0;
 
     if (tasks.length === 0) {
         container.innerHTML = '';

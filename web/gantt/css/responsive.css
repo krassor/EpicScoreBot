@@ -376,6 +376,14 @@
         text-align: center;
     }
 
+    /* Кнопки экспорта картинки диаграммы (export-gantt-chart-image,
+       ux-brief.md раздел 7) — уходят на отдельную строку внутри
+       .toolbar-right вместо того, чтобы ужимать .view-modes выше. */
+    .gantt-export-actions {
+        flex-basis: 100%;
+        justify-content: flex-end;
+    }
+
     .nav-tab-label {
         font-size: 9px;
     }
