@@ -125,27 +125,30 @@
 }
 
 /* Text Label Contrast Styles */
-/* fit-gantt-chart-width (ux-brief.md п.2): растягивание колонок увеличивает
-   долю подписей, остающихся внутри цветного бара (вместо ухода в
-   `.bar-label.big` на тёмный фон страницы), а drop-shadow в контраст по
-   WCAG не засчитывается — ниже 4.5:1 почти для всех шести ролевых цветов.
-   Заменено на SVG-обводку текста токеном фона (`stroke` вместо `filter`) —
-   она разрывает силуэт глифа с заливкой при любом ролевом цвете. */
+/* fix-gantt-telegram-rendering (ux-brief.md): прежний приём держал контраст
+   на SVG-обводке текста (`stroke` + `paint-order: stroke`, см. историю в
+   fit-gantt-chart-width) — обводка укладывалась под заливку, только пока
+   клиент поддерживал `paint-order`. В Telegram WebApp свойство не
+   поддержано: обводка красится поверх глифа и съедает его, подпись
+   выглядит тёмным пятном цвета фона. Обводка и `paint-order` убраны
+   полностью, читаемость теперь держит непрозрачная подложка `.bar-label-bg`
+   (см. applyPostRenderEnhancements в gantt-renderer.js) фиксированного
+   цвета `--bg-primary`, одинаковая для всех ролей и уровней, плюс
+   дублирование fill инлайн-стилем на самом узле — оба канала не зависят от
+   `paint-order`. */
 .gantt .bar-label {
     fill: #ffffff !important;
     font-weight: 600;
-    paint-order: stroke;
-    stroke: var(--bg-primary);
-    stroke-width: 3px;
-    stroke-linejoin: round;
 }
 
 .gantt .bar-label.big {
     fill: var(--text-primary) !important;
-    paint-order: stroke;
-    stroke: var(--bg-primary);
-    stroke-width: 3px;
-    stroke-linejoin: round;
+    font-weight: 600;
+}
+
+.gantt .bar-label-bg {
+    fill: var(--bg-primary);
+    pointer-events: none;
 }
 
 /* Custom Task Colors based on Role.

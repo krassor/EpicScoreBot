@@ -22,6 +22,29 @@ const RESIZE_DEBOUNCE_MS = 150;
 
 let ganttChart = null;
 
+// ── Токены цвета подписи (задача 3.1, fix-gantt-telegram-rendering) ──────
+//
+// Резолвятся один раз через getComputedStyle, тем же способом, что и
+// resolveExportTokens() в gantt-image-export.js, — чтобы значения не
+// разъехались с variables.css/gantt.css при правке палитры и не были
+// захардкожены литералом в JS (ux-brief.md, раздел 2, шаг 2).
+let labelColorTokens = null;
+function resolveLabelColorTokens() {
+    if (!labelColorTokens) {
+        const computed = getComputedStyle(document.documentElement);
+        labelColorTokens = {
+            // Белый — тот же цвет, что и `#ffffff !important` в gantt.css
+            // `.bar-label`, но резолвится из токена `--g-text-light`
+            // (объявлен в блоке Frappe Gantt Dark Theme Overrides), а не
+            // хардкодится строкой заново.
+            textLight: computed.getPropertyValue('--g-text-light').trim(),
+            textPrimary: computed.getPropertyValue('--text-primary').trim(),
+            bg: computed.getPropertyValue('--bg-primary').trim(),
+        };
+    }
+    return labelColorTokens;
+}
+
 // Хэндл текущего отложенного пересчёта ширины после resize — используется
 // для гашения дребезга (см. scheduleFitColumnWidthRecalc).
 let resizeDebounceHandle = null;
@@ -708,6 +731,62 @@ function applyPostRenderEnhancements(tasks) {
             );
             wrapper.appendChild(diamond);
         }
+    });
+
+    // Подложка и инлайн-цвет подписи (задача 3.1, fix-gantt-telegram-rendering,
+    // ux-brief.md, раздел 2) — отдельным отложенным проходом, а не в цикле выше.
+    // Frappe Gantt 1.2.2 решает класс `big` (подпись не влезает в бар → текст
+    // выносится за его пределы) не синхронно при отрисовке бара, а в
+    // requestAnimationFrame(() => this.update_label_position()) внутри
+    // draw_label() (сверено по факту в UMD-бандле frappe-gantt@1.2.2 и через
+    // Playwright: на момент возврата из `new Gantt(...)`/`refresh()` этот rAF
+    // ещё не выполнился). Если решать `big`/цвет и снимать geometry подписи
+    // здесь же синхронно, для части подписей код увидит промежуточное
+    // состояние — не тот цвет и подложка, смещённая относительно того места,
+    // куда библиотека передвинет текст мгновением позже. Поэтому собственный
+    // requestAnimationFrame планируется здесь: он гарантированно выполняется
+    // позже — все rAF библиотеки для этого набора баров уже поставлены в
+    // очередь синхронно, раньше нашего (draw_label() вызывается внутри
+    // make_bars(), которая отрабатывает синхронно до возврата из
+    // renderGantt()), а колбэки одного кадра выполняются в порядке
+    // регистрации.
+    requestAnimationFrame(() => {
+        tasks.forEach(t => {
+            const wrapper = container.querySelector(`.bar-wrapper[data-id="${t.id}"]`);
+            if (!wrapper) return;
+            const label = wrapper.querySelector('.bar-label');
+            if (!label) return;
+
+            // applyPostRenderEnhancements за один рендер может отработать больше
+            // одного раза на одном и том же, ещё не пересобранном библиотекой DOM
+            // (on_view_change стреляет синхронно ещё ВНУТРИ конструктора Gantt —
+            // до explicit-вызова этой функции сразу после applyFitColumnWidth,
+            // сверено по факту в UMD-бандле). Без удаления прежней подложки
+            // каждый повторный проход добавлял бы ещё один .bar-label-bg поверх
+            // уже существующего — тот же класс дублирования, что уже допустим
+            // для gantt-completed-icon/gantt-pin-invalid-icon рядом (они просто
+            // рисуются друг на друге незаметно), но для подложки лишние узлы
+            // бессмысленно раздувают экспортируемый SVG (задача 3.1a).
+            wrapper.querySelectorAll('.bar-label-bg').forEach(el => el.remove());
+
+            const tokens = resolveLabelColorTokens();
+            const isBig = label.classList.contains('big');
+            label.style.fill = isBig ? tokens.textPrimary : tokens.textLight;
+
+            const box = label.getBBox();
+            const paddingX = 3.5;
+            const paddingY = 1.5;
+            const labelBg = document.createElementNS(SVG_NS, 'rect');
+            labelBg.setAttribute('class', 'bar-label-bg');
+            labelBg.setAttribute('x', String(box.x - paddingX));
+            labelBg.setAttribute('y', String(box.y - paddingY));
+            labelBg.setAttribute('width', String(box.width + paddingX * 2));
+            labelBg.setAttribute('height', String(box.height + paddingY * 2));
+            labelBg.setAttribute('rx', '3');
+            labelBg.style.fill = tokens.bg;
+            labelBg.style.pointerEvents = 'none';
+            label.parentNode.insertBefore(labelBg, label);
+        });
     });
 }
 

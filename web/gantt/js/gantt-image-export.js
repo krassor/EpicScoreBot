@@ -317,8 +317,14 @@ ${rootVars}
 .gantt .handle { fill: var(--g-handle-color); opacity: 0; }
 
 /* ── gantt.css: Text Label Contrast Styles ── */
-.gantt .bar-label { fill: #ffffff !important; font-weight: 600; paint-order: stroke; stroke: var(--bg-primary); stroke-width: 3px; stroke-linejoin: round; }
-.gantt .bar-label.big { fill: var(--text-primary) !important; paint-order: stroke; stroke: var(--bg-primary); stroke-width: 3px; stroke-linejoin: round; }
+/* fix-gantt-telegram-rendering: stroke/paint-order убраны вслед за
+   gantt.css — читаемость в экспорте теперь тоже держат непрозрачная
+   подложка .bar-label-bg и инлайн fill на самом узле подписи
+   (applyPostRenderEnhancements в gantt-renderer.js), которые cloneNode(true)
+   копирует из живого DOM вместе с остальным SVG, а не это CSS-правило. */
+.gantt .bar-label { fill: #ffffff !important; font-weight: 600; }
+.gantt .bar-label.big { fill: var(--text-primary) !important; font-weight: 600; }
+.gantt .bar-label-bg { fill: var(--bg-primary); pointer-events: none; }
 
 /* ── gantt.css: Handles for dragging dates ── */
 .gantt .handle-group .handle { fill: rgba(255, 255, 255, 0.35); }
