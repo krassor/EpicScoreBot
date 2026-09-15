@@ -121,32 +121,21 @@ func TestSetTaskStartConstraint_ClearingDateReturnsToComputedStart(t *testing.T)
 	svc := New(newTestLogger(), f)
 
 	teamID := uuid.New()
-	anchorEpicID := uuid.New()
 	epicID := uuid.New()
-	analystID := uuid.New()
 	feID := uuid.New()
 
-	// anchorEpicID — вспомогательный эпик, единственная роль в котором
-	// ничем не ограничена и остаётся на Jul13 весь тест: он анкерует
-	// teamFloor команды на Jul13 независимо от того, куда временно уедет
-	// epicID из-за проверяемого ограничения. Без анкера teamFloor команды
-	// с ЕДИНСТВЕННЫМ эпиком считается по его же собственной (уже
-	// сдвинутой ограничением) дате родителя — самоссылающееся поведение,
-	// существовавшее до этой заявки (design.md, "teamFloor... самокоррек-
-	// тируется" относится к переупорядочиванию эпиков, а не к отмене
-	// пользовательского ввода на эпике-одиночке) и не входящее в объём
-	// этой заявки.
-	f.addEpic(&domain.Epic{ID: anchorEpicID, Number: "E-0", Name: "Anchor", TeamID: teamID})
+	// Команда с ЕДИНСТВЕННЫМ эпиком, без якорного второго эпика: до
+	// openspec/changes/fix-team-floor-ratchet teamFloor такой команды
+	// считался по дате родителя этого же эпика, уже сдвинутой проверяемым
+	// ограничением, — самоссылающееся поведение («храповик»), из-за
+	// которого снятие ограничения не возвращало старт назад без якоря. С
+	// границей, читающей GanttTask.PlanningStartDate (design.md Решение 1),
+	// якорь для этого сценария больше не нужен.
 	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic", TeamID: teamID})
-	f.addRole(&domain.Role{ID: analystID, Name: "Аналитик"})
 	f.addRole(&domain.Role{ID: feID, Name: "FE разработчик"})
-	f.roleScores[anchorEpicID] = []domain.EpicRoleScore{{EpicID: anchorEpicID, RoleID: analystID, WeightedAvg: 1.0}}
 	f.roleScores[epicID] = []domain.EpicRoleScore{{EpicID: epicID, RoleID: feID, WeightedAvg: 2.0}}
 
 	start := date(2026, 7, 13)
-	if _, err := svc.GenerateTasksForEpic(ctx, anchorEpicID, start); err != nil {
-		t.Fatalf("unexpected error (anchor): %v", err)
-	}
 	if _, err := svc.GenerateTasksForEpic(ctx, epicID, start); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -483,29 +472,22 @@ func TestRecalculateTeamSchedule_StartConstraint_OffsetStillApplies(t *testing.T
 	svc := New(newTestLogger(), f)
 
 	teamID := uuid.New()
-	anchorEpicID := uuid.New()
 	epicID := uuid.New()
-	analystID := uuid.New()
 	feID := uuid.New()
 
-	// anchorEpicID анкерует teamFloor команды на Jul13 весь тест — иначе,
-	// в команде с ОДНИМ эпиком, teamFloor считается по его же собственной
-	// (уже сдвинутой предыдущим вызовом) дате родителя, и каждый следующий
+	// Команда с ЕДИНСТВЕННЫМ эпиком, без якорного второго эпика: до
+	// openspec/changes/fix-team-floor-ratchet, в команде с одним эпиком,
+	// teamFloor считался по его же собственной (уже сдвинутой предыдущим
+	// вызовом) дате родителя, и каждый следующий
 	// SetTaskStartOffset/SetTaskStartConstraint компаундил бы смещение на
-	// уже сдвинутый floor. Тот же пре-экзистинг эффект и то же обоснование,
-	// что и в TestSetTaskStartConstraint_ClearingDateReturnsToComputedStart —
-	// вне объёма этой заявки.
-	f.addEpic(&domain.Epic{ID: anchorEpicID, Number: "E-0", Name: "Anchor", TeamID: teamID})
+	// уже сдвинутый floor. С границей, читающей
+	// GanttTask.PlanningStartDate (design.md Решение 1), якорь для этого
+	// сценария больше не нужен.
 	f.addEpic(&domain.Epic{ID: epicID, Number: "E-1", Name: "Epic", TeamID: teamID})
-	f.addRole(&domain.Role{ID: analystID, Name: "Аналитик"})
 	f.addRole(&domain.Role{ID: feID, Name: "FE разработчик"})
-	f.roleScores[anchorEpicID] = []domain.EpicRoleScore{{EpicID: anchorEpicID, RoleID: analystID, WeightedAvg: 1.0}}
 	f.roleScores[epicID] = []domain.EpicRoleScore{{EpicID: epicID, RoleID: feID, WeightedAvg: 1.0}}
 
 	start := date(2026, 7, 13) // Monday
-	if _, err := svc.GenerateTasksForEpic(ctx, anchorEpicID, start); err != nil {
-		t.Fatalf("unexpected error (anchor): %v", err)
-	}
 	if _, err := svc.GenerateTasksForEpic(ctx, epicID, start); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

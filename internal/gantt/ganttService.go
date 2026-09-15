@@ -265,13 +265,20 @@ func (s *Service) generateTaskRowsForEpic(
 	adjustedStartDate := moveToWorkDay(startDate)
 
 	// Create parent task (epic). Dates are placeholders, recalculated below.
+	// PlanningStartDate is seeded with the SAME value as StartDate here and
+	// then never touched again by any recalculation (see the field's
+	// comment in domain.GanttTask and design.md Решение 1,
+	// openspec/changes/fix-team-floor-ratchet) — it's what
+	// RecalculateTeamSchedule reads as this epic's contribution to
+	// teamFloor, instead of the (repeatedly overwritten) StartDate below.
 	parentTask := &domain.GanttTask{
-		EpicID:    epicID,
-		Name:      fmt.Sprintf("%s: %s", epic.Number, epic.Name),
-		StartDate: adjustedStartDate,
-		EndDate:   adjustedStartDate,
-		SortOrder: 0,
-		IsParent:  true,
+		EpicID:            epicID,
+		Name:              fmt.Sprintf("%s: %s", epic.Number, epic.Name),
+		StartDate:         adjustedStartDate,
+		EndDate:           adjustedStartDate,
+		SortOrder:         0,
+		IsParent:          true,
+		PlanningStartDate: &adjustedStartDate,
 	}
 	parentTask, err = s.repo.CreateGanttTask(ctx, parentTask)
 	if err != nil {
@@ -544,13 +551,31 @@ func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID)
 
 	// First pass: collect the Gantt rows of every in-scope epic (those that
 	// already have a generated chart) and derive a single team-wide floor —
-	// the earliest currently recorded epic parent StartDate. A *per-epic*
-	// floor read from that same (mutable) field would drift upward every
-	// time an epic happens to be scheduled later due to its position in the
-	// queue, and that drift would then persist even after the epic is
-	// reordered back to the front — defeating ReorderEpic/ReorderStory.
-	// A single team floor, recomputed fresh at the start of every call from
-	// whichever epic currently holds the earliest date, self-corrects instead.
+	// the earliest PlanningStartDate among the team's epic parent rows
+	// (openspec/changes/fix-team-floor-ratchet/design.md, Решение 1).
+	// PlanningStartDate is seeded once at generation and never rewritten by
+	// a recalculation, unlike StartDate below it: reading StartDate here
+	// (the pre-fix behaviour) made the floor a function of the scheduler's
+	// OWN previous output — a self-reference ("храповик") that could drift
+	// forward but never back, even after the cause of the drift (a manual
+	// start offset, a reordered epic, a since-removed constraint) was
+	// undone. See floor_ratchet_test.go for the reproduction.
+	//
+	// Epics whose parent row predates the fix (PlanningStartDate is nil —
+	// created before migration 014_gantt_planning_start_date and not yet
+	// regenerated) fall back to the old formula, reading StartDate for that
+	// ONE epic only (design.md Решение 2) — deterministic per epic, not
+	// dependent on which other epics happen to be in scope.
+	//
+	// The floor as a whole is still a single TEAM-WIDE minimum, recomputed
+	// fresh at the start of every call from whichever epic currently holds
+	// the earliest date — a *per-epic* floor cached anywhere else would
+	// drift upward whenever an epic is temporarily scheduled later due to
+	// its position in the queue, and that drift would persist even after
+	// the epic is reordered back to the front, defeating
+	// ReorderEpic/ReorderStory. Recomputing the minimum fresh every call
+	// avoids that; it's PlanningStartDate (not StartDate) that additionally
+	// makes each epic's own contribution to that minimum reversible.
 	type epicWithTasks struct {
 		epic  domain.Epic
 		tasks []domain.GanttTask
@@ -573,7 +598,15 @@ func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID)
 
 		for _, t := range epicTasks {
 			if t.IsParent && t.ParentTaskID == nil {
-				floor := moveToWorkDay(t.StartDate)
+				// source — PlanningStartDate, если оно сохранено (обычный
+				// случай для строк, созданных/перегенерированных после
+				// миграции 014), иначе StartDate по прежней формуле для
+				// ЭТОГО эпика (design.md Решение 2).
+				source := t.StartDate
+				if t.PlanningStartDate != nil {
+					source = *t.PlanningStartDate
+				}
+				floor := moveToWorkDay(source)
 				if teamFloor.IsZero() || floor.Before(teamFloor) {
 					teamFloor = floor
 				}
