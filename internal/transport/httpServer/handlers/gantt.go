@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"EpicScoreBot/internal/config"
+	"EpicScoreBot/internal/gantt"
 	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/transport/httpServer/middleware"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -295,6 +297,23 @@ type ganttTaskResp struct {
 	// закреплённого (design.md Решение 7). Позволяет фронтенду отличить
 	// «закреплён и работает» от «закрепление есть, но не действует».
 	AssigneePinInvalid bool `json:"assignee_pin_invalid"`
+	// NotBeforeDate — календарная дата ограничения "Начать не ранее"
+	// (openspec/changes/add-task-start-constraints, backend §3.1), формат
+	// YYYY-MM-DD. Отсутствует, если ограничение по дате не задано.
+	NotBeforeDate *string `json:"not_before_date,omitempty"`
+	// WaitForStoryID/WaitForRoleID — ссылка на другую задачу команды,
+	// раньше завершения которой эта не может начаться, парой "стори (или
+	// эпик без сторей) + роль" — тот же ключ, которым уже адресуется
+	// пользовательский ввод (design.md Решение 1). Отсутствуют, если
+	// ссылка не задана.
+	WaitForStoryID *string `json:"wait_for_story_id,omitempty"`
+	WaitForRoleID  *string `json:"wait_for_role_id,omitempty"`
+	// StartConstraintRefInvalid — true, если WaitForStoryID/WaitForRoleID
+	// заданы, но сейчас не указывают ни на одну существующую листовую
+	// задачу (стори удалена, роль перестала оцениваться, эпик вне
+	// периода) — design.md Решение 4. Ограничение по дате (если задано)
+	// при этом продолжает действовать независимо от этого признака.
+	StartConstraintRefInvalid bool `json:"start_constraint_ref_invalid"`
 }
 
 // roleToCSS maps role names to CSS class names.
@@ -316,7 +335,7 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, assignments, err := h.svc.GetTeamTasksWithAssignments(r.Context(), teamID)
+	tasks, assignments, validRefs, err := h.svc.GetTeamTasksWithAssignments(r.Context(), teamID)
 	if err != nil {
 		h.log.Error("failed to get tasks", slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "failed to get tasks")
@@ -448,6 +467,25 @@ func (h *GanttHandler) GetTasks(w http.ResponseWriter, r *http.Request) {
 		if hasAssignment && assignment.UserID != nil {
 			item.AssigneeIsManual = t.AssigneeID != nil && *t.AssigneeID == *assignment.UserID
 			item.AssigneePinInvalid = !item.AssigneeIsManual
+		}
+
+		// Ограничение "Начать не ранее" (backend §3.1,
+		// openspec/changes/add-task-start-constraints) — тот же
+		// hasAssignment/assignment, что уже читались выше для
+		// закрепления/смещения.
+		if hasAssignment {
+			if assignment.NotBeforeDate != nil {
+				s := assignment.NotBeforeDate.Format("2006-01-02")
+				item.NotBeforeDate = &s
+			}
+			if assignment.WaitForStoryID != nil && assignment.WaitForRoleID != nil {
+				storyIDStr := assignment.WaitForStoryID.String()
+				roleIDStr := assignment.WaitForRoleID.String()
+				item.WaitForStoryID = &storyIDStr
+				item.WaitForRoleID = &roleIDStr
+				ref := gantt.TaskRef{StoryID: *assignment.WaitForStoryID, RoleID: *assignment.WaitForRoleID}
+				item.StartConstraintRefInvalid = !validRefs[ref]
+			}
 		}
 		resp = append(resp, item)
 	}
@@ -777,6 +815,209 @@ func (h *GanttHandler) SetTaskAssignee(w http.ResponseWriter, r *http.Request) {
 		"message": "assignee updated",
 		"count":   len(tasks),
 	})
+}
+
+// SetTaskStartConstraint задаёт (либо снимает, через null) ограничение
+// «Начать не ранее» листовой (ролевой) задачи: дату и/или ссылку на другую
+// задачу той же команды парой "стори + роль" (backend §3.2,
+// openspec/changes/add-task-start-constraints). Оба поля пишутся вместе,
+// как единый блок формы (design.md Решение 6) — null в любом из трёх полей
+// тела запроса снимает соответствующую часть ограничения, отсутствующее
+// поле трактуется так же (см. domain.TaskAssignment.NotBeforeDate/
+// WaitForStoryID/WaitForRoleID).
+//
+// Доступ — та же двухуровневая проверка, что и SetTaskAssignee: грубый
+// гейт RoleAuth("admin") на группе маршрутов (routers.go) плюс точечная
+// team-scoped IsTeamAdminOf здесь. Отклоняет все виды цикла (прямой, через
+// цепочку, ссылку на саму задачу) и ссылку на задачу другой команды —
+// проверки выполняет gantt.Service.SetTaskStartConstraint, хендлер только
+// сопоставляет сентинел-ошибки с кодами ответа.
+func (h *GanttHandler) SetTaskStartConstraint(w http.ResponseWriter, r *http.Request) {
+	taskIDStr := chi.URLParam(r, "id")
+	taskID, err := uuid.Parse(taskIDStr)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_TASK_ID", "invalid task id")
+		return
+	}
+
+	session, role, ok := h.sessionRole(w, r)
+	if !ok {
+		return
+	}
+	if role == "member" {
+		writeErrorCode(w, http.StatusForbidden, "FORBIDDEN",
+			"только администратор команды может изменять ограничение «Начать не ранее»")
+		return
+	}
+
+	var req struct {
+		NotBeforeDate  *string `json:"not_before_date"`
+		WaitForStoryID *string `json:"wait_for_story_id"`
+		WaitForRoleID  *string `json:"wait_for_role_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_REQUEST_BODY", "invalid request body")
+		return
+	}
+
+	var notBeforeDate *time.Time
+	if req.NotBeforeDate != nil {
+		parsed, err := time.Parse("2006-01-02", *req.NotBeforeDate)
+		if err != nil {
+			writeErrorCode(w, http.StatusBadRequest, "INVALID_NOT_BEFORE_DATE",
+				"invalid not_before_date, expected YYYY-MM-DD")
+			return
+		}
+		notBeforeDate = &parsed
+	}
+
+	var waitForStoryID *uuid.UUID
+	if req.WaitForStoryID != nil {
+		parsed, err := uuid.Parse(*req.WaitForStoryID)
+		if err != nil {
+			writeErrorCode(w, http.StatusBadRequest, "INVALID_WAIT_FOR_STORY_ID", "invalid wait_for_story_id")
+			return
+		}
+		waitForStoryID = &parsed
+	}
+	var waitForRoleID *uuid.UUID
+	if req.WaitForRoleID != nil {
+		parsed, err := uuid.Parse(*req.WaitForRoleID)
+		if err != nil {
+			writeErrorCode(w, http.StatusBadRequest, "INVALID_WAIT_FOR_ROLE_ID", "invalid wait_for_role_id")
+			return
+		}
+		waitForRoleID = &parsed
+	}
+
+	task, err := h.repo.GetGanttTaskByID(r.Context(), taskID)
+	if err != nil {
+		writeErrorCode(w, http.StatusNotFound, "TASK_NOT_FOUND", "task not found")
+		return
+	}
+	if task.IsParent {
+		writeErrorCode(w, http.StatusBadRequest, "START_CONSTRAINT_NOT_ALLOWED_ON_PARENT",
+			"ограничение «Начать не ранее» можно задать только листовой (ролевой) задаче")
+		return
+	}
+
+	epic, err := h.repo.GetEpicByID(r.Context(), task.EpicID)
+	if err != nil {
+		h.log.Error("failed to resolve task's epic", slog.String("error", err.Error()))
+		writeErrorCode(w, http.StatusInternalServerError, "EPIC_LOOKUP_FAILED",
+			"failed to resolve task's team")
+		return
+	}
+
+	// Точечная team-scoped проверка — см. комментарий у SetTaskAssignee:
+	// RoleAuth("admin") на уровне группы маршрутов пропускает admin ЛЮБОЙ
+	// команды, эта проверка не даёт admin-у команды A менять ограничение
+	// задачи команды B.
+	if role != "superadmin" {
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epic.TeamID)
+		if err != nil || !isAdminOf {
+			writeErrorCode(w, http.StatusForbidden, "FORBIDDEN",
+				"вы не администратор команды, которой принадлежит эта задача")
+			return
+		}
+	}
+
+	tasks, err := h.svc.SetTaskStartConstraint(r.Context(), taskID, notBeforeDate, waitForStoryID, waitForRoleID)
+	if err != nil {
+		switch {
+		case errors.Is(err, gantt.ErrStartConstraintIncompleteRef):
+			writeErrorCode(w, http.StatusBadRequest, "INCOMPLETE_TASK_REFERENCE",
+				"нужно указать и стори, и роль выбранной задачи, либо не указывать ни одно из полей")
+		case errors.Is(err, gantt.ErrStartConstraintCrossTeam):
+			writeErrorCode(w, http.StatusBadRequest, "TASK_REFERENCE_CROSS_TEAM",
+				"выбранная задача принадлежит другой команде")
+		case errors.Is(err, gantt.ErrStartConstraintCycle):
+			writeErrorCode(w, http.StatusBadRequest, "START_CONSTRAINT_CYCLE",
+				"выбранная задача уже (прямо или через цепочку) ожидает текущую — это замкнуло бы цикл")
+		case errors.Is(err, gantt.ErrStartConstraintOnParent):
+			// Защитный случай — уже отсечён проверкой task.IsParent выше,
+			// но сопоставляем на случай расхождения с сервисом.
+			writeErrorCode(w, http.StatusBadRequest, "START_CONSTRAINT_NOT_ALLOWED_ON_PARENT",
+				"ограничение «Начать не ранее» можно задать только листовой (ролевой) задаче")
+		default:
+			h.log.Error("failed to set task start constraint", slog.String("error", err.Error()))
+			writeErrorCode(w, http.StatusInternalServerError, "RESCHEDULE_FAILED",
+				"failed to set task start constraint")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "start constraint updated",
+		"count":   len(tasks),
+	})
+}
+
+// GetTaskStartConstraintOptions отдаёт состав задач команды для
+// двухшагового выбора цели ограничения «Начать не ранее» (backend §3.3,
+// design.md Решение 6): стори, внутри каждой — роли. Недоступные для выбора
+// варианты (сама задача и всё, что замкнуло бы цикл ожидания) ПОМЕЧЕНЫ, а
+// не исключены из выдачи — иначе пользователь искал бы пропавшую строку.
+// Доступен любому аутентифицированному пользователю, как и GetTeamMembers —
+// само чтение ничего не меняет, редактирование гейтится в
+// SetTaskStartConstraint.
+func (h *GanttHandler) GetTaskStartConstraintOptions(w http.ResponseWriter, r *http.Request) {
+	taskIDStr := chi.URLParam(r, "id")
+	taskID, err := uuid.Parse(taskIDStr)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_TASK_ID", "invalid task id")
+		return
+	}
+
+	options, err := h.svc.GetTeamTaskOptionsFor(r.Context(), taskID)
+	if err != nil {
+		if errors.Is(err, gantt.ErrStartConstraintOnParent) {
+			writeErrorCode(w, http.StatusBadRequest, "START_CONSTRAINT_NOT_ALLOWED_ON_PARENT",
+				"ограничение «Начать не ранее» можно задать только листовой (ролевой) задаче")
+			return
+		}
+		h.log.Error("failed to get task start constraint options", slog.String("error", err.Error()))
+		writeErrorCode(w, http.StatusInternalServerError, "TASK_OPTIONS_LOOKUP_FAILED",
+			"failed to get task options")
+		return
+	}
+
+	type roleOptionResp struct {
+		RoleID            string `json:"role_id"`
+		RoleName          string `json:"role_name"`
+		Unavailable       bool   `json:"unavailable"`
+		UnavailableReason string `json:"unavailable_reason,omitempty"`
+	}
+	type storyOptionResp struct {
+		StoryID   string           `json:"story_id"`
+		StoryName string           `json:"story_name"`
+		Roles     []roleOptionResp `json:"roles"`
+	}
+
+	// Группировка по стори с сохранением порядка первого появления —
+	// GetTeamTaskOptionsFor уже отдаёт список, отсортированный по
+	// (StoryName, RoleName), поэтому первое появление StoryID и есть
+	// правильный порядок стори (design.md Решение 6: та же иерархия,
+	// что на диаграмме).
+	var stories []storyOptionResp
+	indexByStoryID := make(map[string]int)
+	for _, o := range options {
+		storyIDStr := o.StoryID.String()
+		idx, ok := indexByStoryID[storyIDStr]
+		if !ok {
+			idx = len(stories)
+			indexByStoryID[storyIDStr] = idx
+			stories = append(stories, storyOptionResp{StoryID: storyIDStr, StoryName: o.StoryName})
+		}
+		stories[idx].Roles = append(stories[idx].Roles, roleOptionResp{
+			RoleID:            o.RoleID.String(),
+			RoleName:          o.RoleName,
+			Unavailable:       o.Unavailable,
+			UnavailableReason: o.UnavailableReason,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"stories": stories})
 }
 
 // GetTeamMembers returns a team's roster with each member's full set of

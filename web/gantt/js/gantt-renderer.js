@@ -575,6 +575,32 @@ function assigneeStatusText(t) {
     return 'Нет исполнителя — нет участников с этой ролью в команде';
 }
 
+// constraintStatusText — условная строка о действующем ограничении «Начать
+// не ранее» (задача 5.4, ux-brief.md раздел 5): в отличие от
+// assigneeStatusText выше, которая выводится всегда, эта строка выводится,
+// только если ограничение реально задано (как факт-маркер, а не как строка
+// исполнителя) — null означает «ничего не добавлять». Дата и ссылка на
+// задачу независимы и оба могут быть заданы одновременно (design.md,
+// «Оба ограничения действуют одновременно»). Имя выбранной задачи здесь не
+// резолвится — единственный источник имён (GET .../start-constraint/
+// options) отдельный сетевой запрос, а попап открывается по наведению на
+// каждый бар и не должен дёргать сеть; полное название стори/роли видно в
+// модалке деталей (populateStartConstraintBlock).
+function constraintStatusText(t) {
+    const hasDate = !!t.not_before_date;
+    const hasRef = !!(t.wait_for_story_id && t.wait_for_role_id);
+    if (!hasDate && !hasRef) return null;
+
+    const parts = [];
+    if (hasDate) parts.push(`не раньше ${formatDisplayDate(t.not_before_date)}`);
+    if (hasRef) {
+        parts.push(t.start_constraint_ref_invalid
+            ? '⚠ ссылка на выбранную задачу недействительна'
+            : 'не раньше завершения выбранной задачи');
+    }
+    return `⏳ Начать ${parts.join(' и ')}`;
+}
+
 function buildGanttPopup({ task, chart, set_title, set_subtitle, set_details }) {
     set_title(task.name);
     set_subtitle(task.description ? task.description : '');
@@ -593,6 +619,8 @@ function buildGanttPopup({ task, chart, set_title, set_subtitle, set_details }) 
         const rawTask = rawTasks.find(x => x.id === task.id);
         if (rawTask) {
             details += `<br/>${assigneeStatusText(rawTask)}`;
+            const constraintText = constraintStatusText(rawTask);
+            if (constraintText) details += `<br/>${constraintText}`;
         }
     }
 
@@ -700,6 +728,29 @@ function applyPostRenderEnhancements(tasks) {
             pinIcon.setAttribute('text-anchor', 'start');
             pinIcon.textContent = '⚠';
             wrapper.appendChild(pinIcon);
+        }
+
+        // Ограничение «Начать не ранее» (задача 5.4, add-task-start-
+        // constraints, ux-brief.md раздел 5) — четвёртая иконка, верхний
+        // левый угол бара (x+6, y-6), отдельным SVG-элементом, а не
+        // модификация обводки — свободно комбинируется с иконками выше.
+        // Условие показа включает wait_for_story_id даже при недействующей
+        // ссылке (start_constraint_ref_invalid) — ограничение сохраняется и
+        // может вернуться в силу, пользователю важно видеть, что оно
+        // задано. Не показывается на завершённых — тот же принцип, что и у
+        // индикации отсутствия исполнителя: у закрытой задачи вопрос
+        // «почему сдвинулся старт» неактуален, галочка важнее.
+        const hasConstraint = !t.is_parent && (t.not_before_date || (t.wait_for_story_id && t.wait_for_role_id));
+        if (hasConstraint && !isTaskCompleted(t)) {
+            wrapper.classList.add('gantt-start-constrained');
+
+            const constraintIcon = document.createElementNS(SVG_NS, 'text');
+            constraintIcon.setAttribute('class', 'gantt-start-constraint-icon');
+            constraintIcon.setAttribute('x', String(x + 6));
+            constraintIcon.setAttribute('y', String(y - 6));
+            constraintIcon.setAttribute('text-anchor', 'start');
+            constraintIcon.textContent = '⏳';
+            wrapper.appendChild(constraintIcon);
         }
 
         // Факт-маркер — только для листовых задач с зафиксированным фактом,
@@ -838,6 +889,25 @@ let currentDetailsOriginal = null;
 // намерением.
 let currentDetailsAssigneeOriginal = null;
 
+// Ограничение «Начать не ранее» (задачи 5.1–5.6, add-task-start-constraints,
+// ux-brief.md разделы 1–2, 8) — три переменные вместо одной, тем же
+// принципом разделения, что и у исполнителя выше:
+//   currentConstraintOptions   — сырой ответ GET .../start-constraint/options
+//                                 ({ stories: [...] }.stories) текущей открытой
+//                                 задачи, без кеша между открытиями; null —
+//                                 ещё не загружен либо загрузка не удалась.
+//   currentConstraintSelection — рабочее значение пары "стори + роль" (или
+//                                 { storyId: null, roleId: null }), которое
+//                                 уйдёт в PUT при сохранении; меняется кликом
+//                                 по пункту роли пикера или кнопкой «Убрать
+//                                 ожидание задачи», независимо от даты.
+//   currentConstraintOriginal  — снимок обоих полей на момент открытия
+//                                 модалки (сырые id, не имена) — для diff при
+//                                 сохранении, тем же приёмом, что и currentDetailsOriginal.
+let currentConstraintOptions = null;
+let currentConstraintSelection = null;
+let currentConstraintOriginal = null;
+
 function formatDisplayDate(isoDate) {
     if (!isoDate) return '';
     const d = new Date(isoDate);
@@ -884,6 +954,15 @@ function openTaskDetailsModal(feTask) {
     currentDetailsAssigneeOriginal = null;
     populateAssigneeSelect(t);
 
+    // Ограничение «Начать не ранее» (задача 5.1) — тот же приём защиты от
+    // гонки: сбрасываем ДО запуска populateStartConstraintBlock, у которой
+    // синхронная часть (дата, доступность управления) выполняется сразу же
+    // при вызове, а асинхронная (список для пикера) — уже после возврата.
+    currentConstraintOptions = null;
+    currentConstraintSelection = null;
+    currentConstraintOriginal = null;
+    populateStartConstraintBlock(t);
+
     openModal(document.getElementById('task-details-modal'));
 }
 
@@ -892,6 +971,9 @@ function closeTaskDetailsModal() {
     currentDetailsTaskId = null;
     currentDetailsOriginal = null;
     currentDetailsAssigneeOriginal = null;
+    currentConstraintOptions = null;
+    currentConstraintSelection = null;
+    currentConstraintOriginal = null;
 }
 
 // resolveRoleName — отображаемое имя роли по её id из уже загруженного
@@ -1018,6 +1100,280 @@ async function populateAssigneeSelect(t) {
     currentDetailsAssigneeOriginal = '';
 }
 
+// ── Ограничение «Начать не ранее» (задачи 5.1–5.6, ux-brief.md) ──────────
+//
+// syncConstraintSelectTitle — тот же приём, что syncSelectTitle в app.js
+// (не переиспользуется напрямую — та функция не экспортирована, а заводить
+// экспорт в app.js ради одного места на другой модуль означало бы
+// циклическую зависимость app.js → gantt-renderer.js уже есть в обратную
+// сторону). Полное название видно по наведению — на тач-устройствах не
+// единственный канал: полный текст доступен при раскрытии самого списка,
+// где ширину ограничивает уже ОС (ux-brief.md раздел 2).
+function syncConstraintSelectTitle(select) {
+    if (!select) return;
+    const opt = select.options[select.selectedIndex];
+    select.title = opt ? opt.textContent : '';
+}
+
+// findConstraintRoleOption — ищет пару "стори + роль" текущего рабочего
+// выбора (currentConstraintSelection) в уже загруженном списке вариантов.
+// null — либо список ещё не загружен/не загрузился, либо пара в нём не
+// нашлась (сервер прислал start_constraint_ref_invalid, либо задача исчезла
+// из выдачи по иной причине — раздел 4 постановки трактует оба случая
+// одинаково: ссылка есть, но не работает).
+function findConstraintRoleOption() {
+    if (!currentConstraintOptions || !currentConstraintSelection) return null;
+    const { storyId, roleId } = currentConstraintSelection;
+    if (!storyId || !roleId) return null;
+    for (const story of currentConstraintOptions) {
+        if (story.story_id !== storyId) continue;
+        const role = (story.roles || []).find(r => r.role_id === roleId);
+        if (role) return { story, role };
+    }
+    return null;
+}
+
+// updateConstraintSummaryDisplay — перерисовывает свёрнутую сводку и текст
+// пояснения по currentConstraintSelection/currentConstraintOptions, без
+// сетевого запроса (ux-brief.md раздел 2, шаг 6: выбор роли сворачивает
+// пикер обратно в сводку без перезагрузки). Дата — независимый подблок,
+// эта функция её не трогает (раздел 4 постановки).
+function updateConstraintSummaryDisplay() {
+    const summary = document.getElementById('task-details-constraint-task-summary');
+    const help = document.getElementById('task-details-constraint-help');
+    if (!summary || !help) return;
+
+    summary.style.color = '';
+    help.textContent = '';
+    help.style.color = '';
+
+    const hasRef = !!(currentConstraintSelection?.storyId && currentConstraintSelection?.roleId);
+    if (!hasRef) {
+        // Пустой список из уже загруженного ответа — отдельная формулировка
+        // (раздел 8 постановки, состояние «Пусто»), не путать с «ссылка не
+        // задана» (большинство задач).
+        summary.textContent = (currentConstraintOptions && currentConstraintOptions.length === 0)
+            ? 'В команде нет других задач для выбора'
+            : 'Ожидание задачи не задано';
+        return;
+    }
+
+    const found = findConstraintRoleOption();
+    if (found) {
+        summary.textContent = `Ожидает: ${found.story.story_name} — ${found.role.role_name}`;
+        return;
+    }
+
+    // Пара не нашлась в списке вариантов — то же состояние, что сервер
+    // помечает start_constraint_ref_invalid (design.md Решение 4, ux-brief.md
+    // раздел 4): дата (если задана) продолжает действовать, поле не
+    // блокируется и не сбрасывается, кнопка выбора остаётся доступной.
+    summary.textContent = '⚠ Ссылка на задачу недействительна — стори или роль больше не существуют';
+    summary.style.color = 'var(--color-warning)';
+    help.textContent = 'Дата (если указана) продолжает действовать. Ограничение по задаче вернётся в силу, если стори или роль появятся снова, либо замените его здесь.';
+}
+
+// renderConstraintLoadError — состояние «Ошибка» списка задач для выбора
+// (ux-brief.md раздел 8): текст + кнопка «Повторить», тем же словарём, что
+// renderTableState даёт для таблиц. Поле даты эта ошибка не трогает —
+// независимый подблок, кнопка выбора временно недоступна (список, из
+// которого можно выбирать, не загружен).
+function renderConstraintLoadError(t) {
+    const summary = document.getElementById('task-details-constraint-task-summary');
+    const taskEditBtn = document.getElementById('task-details-constraint-task-edit');
+    if (!summary || !taskEditBtn) return;
+
+    summary.style.color = '';
+    summary.textContent = '';
+    const text = document.createElement('span');
+    text.textContent = 'Не удалось загрузить список задач для выбора';
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'btn btn-secondary btn-sm';
+    retryBtn.textContent = 'Повторить';
+    retryBtn.addEventListener('click', () => loadConstraintOptions(t));
+    summary.appendChild(text);
+    summary.appendChild(document.createElement('br'));
+    summary.appendChild(retryBtn);
+
+    taskEditBtn.disabled = true;
+}
+
+// loadConstraintOptions — запрашивает GET .../start-constraint/options и
+// обновляет сводку/доступность кнопки выбора. Отдельно от
+// populateStartConstraintBlock, чтобы кнопка «Повторить» (и обработчик
+// гонки при сохранении, см. saveTaskDetails) могли перезагрузить список, не
+// затирая дату и текущий рабочий выбор пользователя.
+async function loadConstraintOptions(t) {
+    const summary = document.getElementById('task-details-constraint-task-summary');
+    const taskEditBtn = document.getElementById('task-details-constraint-task-edit');
+    if (!summary || !taskEditBtn) return;
+
+    summary.style.color = '';
+    if (currentConstraintSelection?.storyId && currentConstraintSelection?.roleId) {
+        summary.textContent = 'Загрузка…';
+    }
+    taskEditBtn.disabled = true;
+
+    let data;
+    try {
+        data = await apiGet(`/tasks/${t.id}/start-constraint/options`);
+    } catch (err) {
+        // Модалку могли успеть закрыть/переоткрыть на другую задачу, пока
+        // шёл запрос — тот же приём, что и в populateAssigneeSelect
+        // (gantt-renderer.js, ux-brief.md раздел 8, «Гонка»).
+        if (currentDetailsTaskId !== t.id) return;
+        renderConstraintLoadError(t);
+        handleApiError(err, { title: 'Не удалось загрузить список задач для выбора' });
+        return;
+    }
+    if (currentDetailsTaskId !== t.id) return;
+
+    currentConstraintOptions = data.stories || [];
+    taskEditBtn.disabled = currentConstraintOptions.length === 0;
+    updateConstraintSummaryDisplay();
+}
+
+// populateConstraintRoleSelect — заполняет список ролей выбранной в пикере
+// стори данными из уже загруженного currentConstraintOptions, без
+// повторного запроса (ux-brief.md раздел 2, шаг 5). Недоступные роли
+// остаются в списке — задача 5.3/design.md Решение 6 — но disabled, и
+// причина написана в видимый текст пункта (не только title): на тач-
+// устройствах наведения нет, а неактивный пункт без причины выглядит
+// сломанным.
+function populateConstraintRoleSelect() {
+    const storySelect = document.getElementById('task-details-constraint-story');
+    const roleSelect = document.getElementById('task-details-constraint-role');
+    if (!storySelect || !roleSelect) return;
+
+    syncConstraintSelectTitle(storySelect);
+
+    const story = (currentConstraintOptions || []).find(s => s.story_id === storySelect.value);
+    roleSelect.innerHTML = '';
+    if (!story) {
+        roleSelect.disabled = true;
+        roleSelect.title = '';
+        return;
+    }
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Выберите роль…';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    roleSelect.appendChild(placeholder);
+
+    (story.roles || []).forEach(role => {
+        const opt = document.createElement('option');
+        opt.value = role.role_id;
+        if (role.unavailable) {
+            opt.disabled = true;
+            opt.textContent = `${role.role_name} — ${role.unavailable_reason}`;
+            opt.title = role.unavailable_reason;
+        } else {
+            opt.textContent = role.role_name;
+        }
+        roleSelect.appendChild(opt);
+    });
+
+    roleSelect.disabled = false;
+    syncConstraintSelectTitle(roleSelect);
+}
+
+// openConstraintPicker — разворачивает пикер по клику на «Выбрать
+// задачу…» (ux-brief.md раздел 2, шаг 4): список стори заполняется заново
+// из уже загруженного currentConstraintOptions, список ролей пуст и
+// заблокирован до выбора стори. Порядок стори — как прислал сервер
+// (алфавитный), не пересортировывается (ux-brief.md, «Порядок стори брать
+// как есть»).
+function openConstraintPicker() {
+    const picker = document.getElementById('task-details-constraint-picker');
+    const storySelect = document.getElementById('task-details-constraint-story');
+    const roleSelect = document.getElementById('task-details-constraint-role');
+    if (!picker || !storySelect || !roleSelect || !currentConstraintOptions) return;
+
+    storySelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Выберите стори…';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    storySelect.appendChild(placeholder);
+
+    currentConstraintOptions.forEach(story => {
+        const opt = document.createElement('option');
+        opt.value = story.story_id;
+        opt.textContent = story.story_name;
+        storySelect.appendChild(opt);
+    });
+    storySelect.value = '';
+    syncConstraintSelectTitle(storySelect);
+
+    roleSelect.innerHTML = '';
+    roleSelect.disabled = true;
+    roleSelect.title = '';
+
+    picker.classList.remove('hidden');
+}
+
+// populateStartConstraintBlock — заполняет блок «Начать не ранее» модалки
+// деталей задачи по аналогии с populateAssigneeSelect (ux-brief.md раздел
+// 2): без кеша, грузит список заново при каждом открытии. Дата и признак
+// «редактирование недоступно» выставляются синхронно ДО запуска сетевого
+// запроса — обрыв сети или медленный ответ не должны блокировать поле даты
+// (раздел 8 постановки).
+function populateStartConstraintBlock(t) {
+    const dateInput = document.getElementById('task-details-constraint-date');
+    const dateClearBtn = document.getElementById('task-details-constraint-date-clear');
+    const summary = document.getElementById('task-details-constraint-task-summary');
+    const taskEditBtn = document.getElementById('task-details-constraint-task-edit');
+    const picker = document.getElementById('task-details-constraint-picker');
+    const storySelect = document.getElementById('task-details-constraint-story');
+    const roleSelect = document.getElementById('task-details-constraint-role');
+    const help = document.getElementById('task-details-constraint-help');
+    if (!dateInput || !summary || !taskEditBtn || !picker || !storySelect || !roleSelect || !help) return;
+
+    // 1. Дата — синхронно из t.not_before_date.
+    dateInput.value = t.not_before_date || '';
+
+    // Доступность управления — единый признак isGanttReadOnly() (задача
+    // 5.5): роль member видит и дату, и сводку, но не может их менять — в
+    // отличие от блока исполнителя, который для member скрывается целиком.
+    const editable = !isGanttReadOnly();
+    dateInput.disabled = !editable;
+    dateClearBtn?.classList.toggle('hidden', !editable);
+    taskEditBtn.classList.toggle('hidden', !editable);
+
+    // Пикер сворачивается при каждом открытии модалки — состояние
+    // предыдущей задачи не должно просачиваться в новую.
+    picker.classList.add('hidden');
+    storySelect.innerHTML = '';
+    roleSelect.innerHTML = '';
+    roleSelect.disabled = true;
+
+    currentConstraintSelection = {
+        storyId: t.wait_for_story_id || null,
+        roleId: t.wait_for_role_id || null,
+    };
+    currentConstraintOriginal = {
+        date: t.not_before_date || null,
+        storyId: t.wait_for_story_id || null,
+        roleId: t.wait_for_role_id || null,
+    };
+    currentConstraintOptions = null;
+
+    // 2. Синхронно «Загрузка…» в сводке — либо сразу «Ожидание задачи не
+    // задано», если ссылки нет (эта формулировка не зависит от сетевого
+    // ответа).
+    summary.style.color = '';
+    help.textContent = '';
+    help.style.color = '';
+    summary.textContent = (t.wait_for_story_id && t.wait_for_role_id) ? 'Загрузка…' : 'Ожидание задачи не задано';
+    taskEditBtn.disabled = true;
+
+    loadConstraintOptions(t);
+}
+
 async function saveTaskDetails() {
     if (!currentDetailsTaskId) {
         closeTaskDetailsModal();
@@ -1064,7 +1420,23 @@ async function saveTaskDetails() {
         && assigneeSelect
         && assigneeSelect.value !== currentDetailsAssigneeOriginal;
 
-    if (Object.keys(payload).length === 0 && !assigneeChanged) {
+    // Ограничение «Начать не ранее» (задача 5.1) — отдельный PUT на
+    // выделенный эндпоинт, тело всегда содержит все три поля целиком, а не
+    // diff: сервер трактует отсутствующее в теле поле так же, как явный
+    // null (SetTaskStartConstraint), поэтому «отправить только дату» молча
+    // снял бы уже сохранённую ссылку на задачу. currentConstraintOriginal
+    // может быть null, только если модалка ещё не успела открыться штатно —
+    // в этом случае, как и у прогресса/смещения выше, ничего не отправляем.
+    const constraintDateInput = document.getElementById('task-details-constraint-date');
+    const constraintDateValue = constraintDateInput ? (constraintDateInput.value || null) : null;
+    const constraintSelection = currentConstraintSelection || { storyId: null, roleId: null };
+    const constraintChanged = !!currentConstraintOriginal && (
+        constraintDateValue !== currentConstraintOriginal.date
+        || (constraintSelection.storyId || null) !== currentConstraintOriginal.storyId
+        || (constraintSelection.roleId || null) !== currentConstraintOriginal.roleId
+    );
+
+    if (Object.keys(payload).length === 0 && !assigneeChanged && !constraintChanged) {
         closeTaskDetailsModal();
         return;
     }
@@ -1078,26 +1450,44 @@ async function saveTaskDetails() {
     const taskId = currentDetailsTaskId;
     await withSubmitLock([saveBtn, cancelBtn], async () => {
         try {
-            // Порядок: сначала исполнитель, затем прогресс/смещение — оба в
-            // одном try/catch.
+            // Порядок: сначала исполнитель, затем прогресс/смещение, затем
+            // ограничение «Начать не ранее» — все в одном try/catch.
             if (assigneeChanged) {
                 await apiPut(`/tasks/${taskId}/assignee`, { user_id: assigneeSelect.value || null });
             }
             if (Object.keys(payload).length > 0) {
                 await apiPut(`/tasks/${taskId}`, payload);
             }
+            if (constraintChanged) {
+                await apiPut(`/tasks/${taskId}/start-constraint`, {
+                    not_before_date: constraintDateValue,
+                    wait_for_story_id: constraintSelection.storyId || null,
+                    wait_for_role_id: constraintSelection.roleId || null,
+                });
+            }
             showToast('Задача обновлена', 'success');
             closeTaskDetailsModal();
-            // Любое из изменений (прогресс/смещение/исполнитель) может сдвинуть
-            // расписание всей команды (конвейер) — тянем полный список заново.
+            // Любое из изменений (прогресс/смещение/исполнитель/ограничение
+            // старта) может сдвинуть расписание всей команды (конвейер) —
+            // тянем полный список заново.
             await reloadCurrentTeamTasks();
         } catch (err) {
             handleApiError(err, { title: 'Не удалось сохранить' });
-            // Один из двух PUT выше мог уже примениться на бэкенде, пока второй
+            // Один из PUT выше мог уже примениться на бэкенде, пока другой
             // упал — перезагружаем задачи, чтобы диаграмма не разошлась с
             // фактическим состоянием (модалку при этом не закрываем, как и
             // раньше).
             await reloadCurrentTeamTasks();
+            // Пять кодов отказа ограничения (START_CONSTRAINT_CYCLE и
+            // остальные, ux-brief.md раздел 7) — защита от гонки: список
+            // вариантов пикера мог устареть за время, пока пользователь
+            // держал модалку открытой (например, кто-то другой успел
+            // задать конфликтующее ограничение). Перезагружаем список, не
+            // трогая дату и рабочий выбор, — модалка остаётся открытой.
+            if (constraintChanged && currentDetailsTaskId === taskId) {
+                const refreshedTask = (state.get('tasks') || []).find(x => x.id === taskId);
+                if (refreshedTask) loadConstraintOptions(refreshedTask);
+            }
         }
     });
 }
@@ -1499,6 +1889,43 @@ function setupGanttEvents() {
     document.getElementById('task-details-save')?.addEventListener('click', saveTaskDetails);
     document.getElementById('task-details-modal')?.addEventListener('click', (e) => {
         if (!e.target.closest('.modal-content')) closeTaskDetailsModal();
+    });
+
+    // Блок «Начать не ранее» (задачи 5.1–5.6, ux-brief.md разделы 1–2) —
+    // дата и двухшаговый выбор задачи независимы друг от друга.
+    document.getElementById('task-details-constraint-date-clear')?.addEventListener('click', () => {
+        const dateInput = document.getElementById('task-details-constraint-date');
+        if (dateInput) dateInput.value = '';
+    });
+
+    document.getElementById('task-details-constraint-task-edit')?.addEventListener('click', () => {
+        const picker = document.getElementById('task-details-constraint-picker');
+        if (!picker) return;
+        if (picker.classList.contains('hidden')) {
+            openConstraintPicker();
+        } else {
+            picker.classList.add('hidden');
+        }
+    });
+
+    document.getElementById('task-details-constraint-story')?.addEventListener('change', populateConstraintRoleSelect);
+
+    document.getElementById('task-details-constraint-role')?.addEventListener('change', () => {
+        const storySelect = document.getElementById('task-details-constraint-story');
+        const roleSelect = document.getElementById('task-details-constraint-role');
+        if (!storySelect?.value || !roleSelect?.value) return;
+        syncConstraintSelectTitle(roleSelect);
+        // Выбор роли и есть завершение шага (ux-brief.md раздел 2, шаг 6) —
+        // отдельной кнопки «Готово» не нужно, пикер сворачивается сразу.
+        currentConstraintSelection = { storyId: storySelect.value, roleId: roleSelect.value };
+        document.getElementById('task-details-constraint-picker')?.classList.add('hidden');
+        updateConstraintSummaryDisplay();
+    });
+
+    document.getElementById('task-details-constraint-task-clear')?.addEventListener('click', () => {
+        currentConstraintSelection = { storyId: null, roleId: null };
+        document.getElementById('task-details-constraint-picker')?.classList.add('hidden');
+        updateConstraintSummaryDisplay();
     });
 
     // View modes

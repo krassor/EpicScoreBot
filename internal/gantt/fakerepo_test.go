@@ -56,6 +56,12 @@ type fakeRepo struct {
 	// (см. quarter_test.go) как надёжный счётчик числа вызовов
 	// RecalculateTeamSchedule за операцию.
 	getGanttTasksByTeamIDCalls int
+
+	// getGanttTasksByEpicIDCalls считает вызовы GetGanttTasksByEpicID —
+	// используется тестами повторного прохода (start_constraint_test.go,
+	// задача 2.2) как счётчик, сколько раз RecalculateTeamSchedule
+	// перечитывало эпики команды между внутренними проходами.
+	getGanttTasksByEpicIDCalls int
 }
 
 func newFakeRepo() *fakeRepo {
@@ -282,6 +288,16 @@ func (f *fakeRepo) GetGanttTasksByTeamID(ctx context.Context, teamID uuid.UUID) 
 }
 
 func (f *fakeRepo) GetGanttTasksByEpicID(ctx context.Context, epicID uuid.UUID) ([]domain.GanttTask, error) {
+	// getGanttTasksByEpicIDCalls считает вызовы этого метода — задача 2.2
+	// (add-task-start-constraints) перечитывает даты эпиков команды перед
+	// КАЖДЫМ повторным проходом RecalculateTeamSchedule, кроме первого;
+	// тесты используют счётчик, чтобы убедиться, что типичный случай (без
+	// ссылок "не ранее задачи") останавливается после проверочного второго
+	// прохода, а не крутится дальше.
+	f.concurrencyMu.Lock()
+	f.getGanttTasksByEpicIDCalls++
+	f.concurrencyMu.Unlock()
+
 	var res []*domain.GanttTask
 	for _, t := range f.tasks {
 		if t.EpicID == epicID {
@@ -497,6 +513,26 @@ func (f *fakeRepo) UpsertTaskAssignmentStartOffset(ctx context.Context, epicID, 
 	a := f.assignments[key]
 	a.EpicID, a.RoleID = epicID, roleID
 	a.StartOffsetDays = offsetDays
+	f.assignments[key] = a
+	return nil
+}
+
+// UpsertTaskAssignmentStartConstraint implements gantt.Repository (задача
+// 2.7, add-task-start-constraints) — зеркалит
+// Repository.UpsertTaskAssignmentStartConstraint: пишет все три поля
+// ограничения "Начать не ранее" вместе, не трогая UserID/StartOffsetDays.
+func (f *fakeRepo) UpsertTaskAssignmentStartConstraint(
+	ctx context.Context,
+	epicID, roleID uuid.UUID,
+	notBeforeDate *time.Time,
+	waitForStoryID, waitForRoleID *uuid.UUID,
+) error {
+	key := assignmentKey{epicID: epicID, roleID: roleID}
+	a := f.assignments[key]
+	a.EpicID, a.RoleID = epicID, roleID
+	a.NotBeforeDate = notBeforeDate
+	a.WaitForStoryID = waitForStoryID
+	a.WaitForRoleID = waitForRoleID
 	f.assignments[key] = a
 	return nil
 }

@@ -399,6 +399,15 @@
         flex-direction: column-reverse;
     }
 
+    /* Блок «Начать не ранее» (add-task-start-constraints, ux-brief.md раздел
+       8) — кнопки лежат внутри тела модалки, а не футера, и правило выше их
+       не затрагивает. На узких экранах поле даты и кнопка «Очистить» рядом
+       сжимают дату до нечитаемого — переносим в колонку. */
+    .constraint-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
     /* Модификатор класса (не :has(), design.md Decision 4 — :has() не
        гарантированно поддержан системными WebView Telegram) для футеров
        с деструктивным действием: отменяет column-reverse, чтобы кнопка

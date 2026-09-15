@@ -64,6 +64,11 @@ export const KNOWN_ERROR_MESSAGES = {
     // расписания команды (backfill-idle-gaps-in-schedule, ux-brief.md раздел 6)
     'team not found': 'Команда не найдена. Возможно, её удалили. Обновите страницу.',
     'failed to update schedule settings': 'Не удалось сохранить настройку. Попробуйте ещё раз.',
+    // internal/transport/httpServer/handlers/gantt.go — SetTaskStartConstraint
+    // (add-task-start-constraints, ux-brief.md раздел 7). Остальные пять кодов
+    // ошибок этого эндпоинта сервер уже отдаёт по-русски, сюда добавлять не надо.
+    'invalid not_before_date, expected YYYY-MM-DD': 'Дата указана в неверном формате.',
+    'failed to set task start constraint': 'Не удалось сохранить ограничение. Попробуйте ещё раз.',
 };
 
 // Причины ошибок, которые требуют осознанного действия пользователя (не просто

@@ -35,8 +35,13 @@ type GanttService interface {
 	// task_assignments (закрепление и/или смещение старта), её значение —
 	// с ключом по ID самой задачи. Единый источник данных для полей
 	// assignee_* и актуального start_offset_days в ganttTaskResp (см.
-	// openspec/changes/add-gantt-task-assignees).
-	GetTeamTasksWithAssignments(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, error)
+	// openspec/changes/add-gantt-task-assignees). Третье возвращаемое
+	// значение — множество пар "стори + роль", которым СЕЙЧАС
+	// соответствует сгенерированная листовая задача (backend §3.1,
+	// add-task-start-constraints): побочный продукт того же прохода, без
+	// отдельного запроса, используется, чтобы отметить ссылку "не ранее
+	// задачи" недействующей, если её цель в этот набор не входит.
+	GetTeamTasksWithAssignments(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, map[gantt.TaskRef]bool, error)
 	// SetTaskAssignee закрепляет (userID != nil) либо снимает закрепление
 	// (userID == nil — возврат к автоматическому распределению)
 	// исполнителя ролевой задачи и пересчитывает расписание команды.
@@ -50,6 +55,23 @@ type GanttService interface {
 	// расписание команды по новому правилу (backend §3.2,
 	// openspec/changes/backfill-idle-gaps-in-schedule).
 	SetTeamBackfillBlockPast(ctx context.Context, teamID uuid.UUID, blocked bool) ([]domain.GanttTask, error)
+	// SetTaskStartConstraint задаёт (либо снимает, через nil) ограничение
+	// "Начать не ранее" листовой (ролевой) задачи: дату и/или ссылку на
+	// другую задачу той же команды, парой "стори + роль" — и
+	// пересчитывает расписание команды (backend §3.2,
+	// openspec/changes/add-task-start-constraints).
+	SetTaskStartConstraint(
+		ctx context.Context,
+		taskID uuid.UUID,
+		notBeforeDate *time.Time,
+		waitForStoryID, waitForRoleID *uuid.UUID,
+	) ([]domain.GanttTask, error)
+	// GetTeamTaskOptionsFor возвращает состав задач команды для
+	// двухшагового выбора цели ограничения "Начать не ранее" (стори,
+	// затем роль внутри неё) — задачи, недоступные для выбора (сама
+	// задача и всё, что замкнуло бы цикл), помечены, а не исключены
+	// (backend §3.3, design.md Решение 6).
+	GetTeamTaskOptionsFor(ctx context.Context, taskID uuid.UUID) ([]gantt.TeamTaskOption, error)
 }
 
 // Repository defines the data-access contract used by handlers.

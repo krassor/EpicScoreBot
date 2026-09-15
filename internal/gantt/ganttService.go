@@ -4,6 +4,7 @@ import (
 	"EpicScoreBot/internal/models/domain"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -12,6 +13,30 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+)
+
+// Сентинел-ошибки ограничения "Начать не ранее" (openspec/changes/
+// add-task-start-constraints) — HTTP-слой (backend §3, отдельная задача)
+// сможет различать их через errors.Is и отдавать соответствующий код в
+// стандартном формате { "error": { "code": "...", "message": "..." } }.
+var (
+	// ErrStartConstraintOnParent — ограничение можно задать только для
+	// листовой (ролевой) задачи, не для стори/эпика (как и StartOffsetDays,
+	// AssigneeID).
+	ErrStartConstraintOnParent = errors.New("start constraint can only be set on a leaf (role) task, not a story/epic")
+	// ErrStartConstraintIncompleteRef — задан только один из компонентов
+	// ссылки на задачу (стори без роли или наоборот) — ссылка адресуется
+	// ТОЛЬКО парой целиком (design.md Решение 1).
+	ErrStartConstraintIncompleteRef = errors.New("both story and role must be set to reference a task, or neither")
+	// ErrStartConstraintCrossTeam — выбранная задача принадлежит другой
+	// команде: выбирать можно только задачи своей команды (design.md,
+	// требование "Задача не начинается раньше завершения выбранной
+	// задачи").
+	ErrStartConstraintCrossTeam = errors.New("selected task belongs to a different team")
+	// ErrStartConstraintCycle — выбор замкнул бы цикл ожидания: задача не
+	// может ждать саму себя, прямо ждущую её задачу, или задачу, которая
+	// ждёт её через цепочку (design.md Решение 3).
+	ErrStartConstraintCycle = errors.New("selected task would create a start-constraint cycle")
 )
 
 // defaultRoleOrder maps role names to their default sort order.
@@ -76,6 +101,19 @@ type scheduleState struct {
 	// единый ресурс", openspec/changes/backfill-idle-gaps-in-schedule/
 	// design.md Решение 5).
 	roleFreeAt map[uuid.UUID][]interval
+	// resolvedEnd — конец (EndDate либо ActualEndDate) каждой уже
+	// обработанной листовой задачи на данный момент расчёта, по ключу
+	// assignmentKey (openspec/changes/add-task-start-constraints/design.md,
+	// Решение 2). В отличие от остальных полей scheduleState, НЕ
+	// пересоздаётся на каждый повторный проход RecalculateTeamSchedule —
+	// переживает все повторы и служит источником для разрешения ссылок
+	// "не ранее задачи X", когда X обрабатывается ПОЗЖЕ текущей задачи (в
+	// менее приоритетном эпике) и ещё не получила дат в текущем проходе:
+	// тогда используется значение, оставшееся с предыдущего прохода. Даты
+	// только растут от прохода к проходу (design.md, "Почему это
+	// сходится"), поэтому чуть устаревшее (на один проход) значение —
+	// всегда корректная нижняя граница, а не ложное ограничение.
+	resolvedEnd map[assignmentKey]time.Time
 }
 
 // Service provides Gantt chart business logic.
@@ -574,13 +612,9 @@ func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID)
 		pools[roleID] = candidates
 	}
 
-	assignmentRows, err := s.repo.GetTaskAssignmentsByTeamID(ctx, teamID)
+	assignments, err := s.loadTeamAssignments(ctx, teamID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: get task assignments: %w", op, err)
-	}
-	assignments := make(map[assignmentKey]domain.TaskAssignment, len(assignmentRows))
-	for _, a := range assignmentRows {
-		assignments[assignmentKey{epicID: a.EpicID, roleID: a.RoleID}] = a
+		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
 	// Настройка команды «не занимать промежутки расписания, оставшиеся в
@@ -611,25 +645,89 @@ func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID)
 		floor = maxTime(teamFloor, toMidnight(time.Now()))
 	}
 
-	// state пересоздаётся с нуля на каждый вызов (в т.ч. rrCursor и
-	// roleFreeAt) — без этого повторный пересчёт без изменения входных
-	// данных мог бы дать другое распределение исполнителей (design.md
-	// Risks: "мигающие" исполнители).
-	state := &scheduleState{
-		pools:          pools,
-		assignments:    assignments,
-		assigneeFreeAt: make(map[uuid.UUID][]interval),
-		rrCursor:       make(map[uuid.UUID]int),
-		roleFreeAt:     make(map[uuid.UUID][]interval),
-	}
+	// resolvedEnd переживает все повторы прохода ниже (design.md Решение 2 в
+	// add-task-start-constraints) — в отличие от остальных полей
+	// scheduleState, которые пересоздаются на каждый проход.
+	resolvedEnd := make(map[assignmentKey]time.Time)
 
-	for _, ewt := range inScope {
-		if err := s.recalculateEpicSchedule(ctx, ewt.epic, ewt.tasks, floor, state); err != nil {
-			return nil, fmt.Errorf("%s: epic %s: %w", op, ewt.epic.ID, err)
+	// hasWaitForEdges решает, каким сигналом сходимости пользоваться ниже
+	// (design.md Решение 2, Risks "Повторный проход удорожает пересчёт").
+	// Без единой ссылки "не ранее задачи" в команде "была ли запись в БД"
+	// (changed, возвращаемый recalculateEpicSchedule) — надёжный сигнал:
+	// ничто ни для одной задачи не зависит от ещё не обработанной в этом
+	// проходе задачи, значит совпадение с уже стабильным состоянием не
+	// может быть ложным, и цикл останавливается сразу же, как только
+	// проход не внёс ни одной правки — НОЛЬ дополнительной стоимости
+	// пересчёта для подавляющего большинства команд, которые этой фичей не
+	// пользуются (backend §2, отчёт по замеру стоимости).
+	//
+	// При наличии хотя бы одной ссылки changed уже не надёжен: задача,
+	// ожидающая ещё не разрешённую (в текущем проходе) ссылку, может
+	// посчитать ТО ЖЕ (незаконстрейненное) значение, что уже лежит в БД —
+	// ложное "ничего не изменилось" остановило бы пересчёт, так и не
+	// применив ограничение. Тогда используется более дорогой, но надёжный
+	// сигнал — совпадение snapshot'ов resolvedEnd целиком (см. ниже).
+	hasWaitForEdges := countWaitForEdges(assignments) > 0
+
+	// maxPasses ограничивает число повторов прохода (design.md Решения 2—3
+	// add-task-start-constraints): каждая действующая ссылка "не ранее
+	// задачи X" — ребро графа "кто кого ждёт" среди команды, и корректному
+	// (без цикла) графу не может потребоваться больше повторов, чем в нём
+	// таких рёбер, чтобы дата долетела от начала цепочки до конца. Цикл,
+	// попавший в БД в обход проверки при сохранении (design.md Решение 3),
+	// с этим пределом расчёт всё равно не подвешивает — он просто
+	// останавливается с тем, что успел посчитать за maxPasses проходов.
+	maxPasses := max(2, countWaitForEdges(assignments)+2)
+
+	for pass := 0; pass < maxPasses; pass++ {
+		before := cloneResolvedEnd(resolvedEnd)
+
+		// state (кроме resolvedEnd) пересоздаётся с нуля на каждый
+		// проход (в т.ч. rrCursor и roleFreeAt) — без этого повторный
+		// пересчёт без изменения входных данных мог бы дать другое
+		// распределение исполнителей (design.md Risks: "мигающие"
+		// исполнители).
+		state := &scheduleState{
+			pools:          pools,
+			assignments:    assignments,
+			assigneeFreeAt: make(map[uuid.UUID][]interval),
+			rrCursor:       make(map[uuid.UUID]int),
+			roleFreeAt:     make(map[uuid.UUID][]interval),
+			resolvedEnd:    resolvedEnd,
 		}
+
+		wroteAnyChange := false
+		for _, ewt := range inScope {
+			changed, err := s.recalculateEpicSchedule(ctx, ewt.epic, ewt.tasks, floor, state)
+			if err != nil {
+				return nil, fmt.Errorf("%s: epic %s: %w", op, ewt.epic.ID, err)
+			}
+			wroteAnyChange = wroteAnyChange || changed
+		}
+
+		converged := !wroteAnyChange
+		if hasWaitForEdges {
+			converged = resolvedEndEqual(before, resolvedEnd)
+		}
+		if converged {
+			break
+		}
+
+		// Никакого перечитывания эпиков из репозитория между проходами не
+		// требуется: recalculateEpicSchedule пишет новые даты обратно через
+		// ПОИНТЕРЫ на элементы inScope[i].tasks (см. комментарий у
+		// groupGanttTasksBySortOrder), поэтому следующий проход уже видит
+		// результат этого — из БД читаются только фактически изменившиеся
+		// строки (через UpdateGanttTaskDates внутри), а не весь набор задач
+		// эпика заново. Данные эпиков читаются один раз, повторяется
+		// только вычисление (design.md Решение 2, замер стоимости).
 	}
 
-	return s.GetTeamTasks(ctx, teamID)
+	tasks, err := s.GetTeamTasks(ctx, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	return tasks, nil
 }
 
 // recalculateEpicSchedule recalculates dates, assignees and aggregated
@@ -639,34 +737,58 @@ func (s *Service) RecalculateTeamSchedule(ctx context.Context, teamID uuid.UUID)
 // "не занимать промежутки в прошлом" setting (design.md Решение 3) — the
 // caller passes teamFloor unchanged when the setting is off, or
 // max(teamFloor, today) when it's on.
+//
+// Also writes each processed leaf task's resolved end into
+// state.resolvedEnd as it goes (openspec/changes/add-task-start-constraints/
+// design.md, Решение 2), and returns changed=true if it wrote any task's
+// StartDate/EndDate to the repository (leaf, story or epic level).
+//
+// RecalculateTeamSchedule uses changed as its convergence signal ONLY when
+// the team has no "wait for task" edges at all — in that case it's fully
+// reliable (nothing here depends on data another, not-yet-processed task
+// might still produce). When at least one such edge exists, changed is NOT
+// enough: a task waiting on a not-yet-resolved reference can legitimately
+// compute the SAME (unconstrained) value on two consecutive calls to this
+// function even though the schedule is not yet stable — "did I write
+// anything" can be a false negative. RecalculateTeamSchedule then falls
+// back to comparing resolvedEnd snapshots before/after the whole pass
+// instead, which doesn't have that blind spot.
 func (s *Service) recalculateEpicSchedule(
 	ctx context.Context,
 	epic domain.Epic,
 	epicTasks []domain.GanttTask,
 	floor time.Time,
 	state *scheduleState,
-) error {
+) (changed bool, err error) {
 	op := "gantt.recalculateEpicSchedule"
 
+	// epicParent/storyTasksByName/roleTasksByParent индексируют epicTasks
+	// ПОИНТЕРАМИ на его собственные элементы, а не копиями: правки ниже
+	// (task.StartDate = newStart и т.п.) через эти указатели сразу видны
+	// вызывающей стороне через тот же epicTasks — без этого повторный
+	// проход (design.md Решение 2) был бы вынужден перечитывать задачи
+	// эпика из репозитория между каждой парой проходов, что и было
+	// первой (более дорогой) редакцией этого места. Теперь из
+	// репозитория читаются только ИЗМЕНИВШИЕСЯ даты (через
+	// UpdateGanttTaskDates, как и раньше) — сами проходы работают целиком
+	// в памяти.
 	var epicParent *domain.GanttTask
 	storyTasksByName := make(map[string]*domain.GanttTask)
-	roleTasksByParent := make(map[uuid.UUID][]domain.GanttTask)
+	roleTasksByParent := make(map[uuid.UUID][]*domain.GanttTask)
 
 	for i := range epicTasks {
-		t := epicTasks[i]
+		t := &epicTasks[i]
 		switch {
 		case t.IsParent && t.ParentTaskID == nil:
-			cp := t
-			epicParent = &cp
+			epicParent = t
 		case t.IsParent && t.ParentTaskID != nil:
-			cp := t
-			storyTasksByName[t.Name] = &cp
+			storyTasksByName[t.Name] = t
 		case !t.IsParent && t.ParentTaskID != nil:
 			roleTasksByParent[*t.ParentTaskID] = append(roleTasksByParent[*t.ParentTaskID], t)
 		}
 	}
 	if epicParent == nil {
-		return nil
+		return false, nil
 	}
 
 	// epicFloor is the resolved team-wide lower bound (see the floor
@@ -677,12 +799,12 @@ func (s *Service) recalculateEpicSchedule(
 
 	stories, err := s.repo.GetStoriesByEpicID(ctx, epic.ID)
 	if err != nil {
-		return fmt.Errorf("%s: get stories: %w", op, err)
+		return false, fmt.Errorf("%s: get stories: %w", op, err)
 	}
 
 	type unit struct {
 		task  *domain.GanttTask
-		roles []domain.GanttTask
+		roles []*domain.GanttTask
 		// storyOrEpicID — ключ для task_assignments (assignmentKey.epicID):
 		// ID стори, либо ID самого эпика для legacy-эпиков без сторей.
 		// НЕ равен gantt_tasks.epic_id для стори (тот всегда указывает на
@@ -774,12 +896,53 @@ func (s *Service) recalculateEpicSchedule(
 					}
 				} else {
 					pool := state.pools[roleID]
+
+					// notBeforeDate/waitForStart — нижние границы старта
+					// ограничения "Начать не ранее" (openspec/changes/
+					// add-task-start-constraints/design.md, Решения 1, 5;
+					// spec gantt-task-start-constraints). Обе действуют
+					// ТОЛЬКО как нижняя граница (никогда не сдвигают
+					// старт назад) и только для НЕ замороженных задач —
+					// замороженная задача уже разместилась раньше, и
+					// ограничение к ней задним числом не применяется.
+					//
+					// notBeforeDate — сама указанная дата, без сдвига: это
+					// не конец другой задачи, а фиксированная точка во
+					// времени (design.md Решение 5).
+					var notBeforeDate time.Time
+					if hasAssignment && assignment.NotBeforeDate != nil {
+						notBeforeDate = *assignment.NotBeforeDate
+					}
+					// waitForStart — первый рабочий день ПОСЛЕ конца задачи,
+					// на которую указывает ссылка — переиспользует
+					// nextAvailable, ту же семантику "+1 рабочий день", что
+					// и groupPrevEnd/сам nextAvailable для календарных
+					// интервалов (design.md Решение 2 "Почему это
+					// сходится"). Остаётся нулевым, если ссылка не задана,
+					// либо задача, на которую она указывает, ещё не имеет
+					// даты ни в этом, ни в предыдущих проходах, либо
+					// перестала существовать: ограничение просто не
+					// применяется, генерация не падает (design.md Решение 4,
+					// задача 2.4).
+					var waitForStart time.Time
+					if hasAssignment && assignment.WaitForStoryID != nil && assignment.WaitForRoleID != nil {
+						waitKey := assignmentKey{epicID: *assignment.WaitForStoryID, roleID: *assignment.WaitForRoleID}
+						if end, ok := state.resolvedEnd[waitKey]; ok {
+							waitForStart = nextAvailable(end)
+						}
+					}
+
 					// earliest — нижняя граница поиска промежутка для этой
 					// задачи: не раньше её FS-зависимости внутри стори
-					// (target) и не раньше epicFloor, уже учитывающего
+					// (target), не раньше epicFloor, уже учитывающего
 					// настройку команды «не занимать промежутки в прошлом»
-					// (design.md Решение 2—3).
-					earliest := maxTime(target, epicFloor)
+					// (design.md Решение 2—3 backfill-idle-gaps-in-schedule),
+					// и не раньше обоих ограничений "Начать не ранее" выше.
+					// Заполнение простоев (findEarliestSlot) автоматически
+					// учитывает это: оно ищет первый подходящий промежуток
+					// НЕ РАНЬШЕ earliest, поэтому промежуток раньше
+					// разрешённой даты никогда не занимается (задача 2.3).
+					earliest := maxTime(target, epicFloor, notBeforeDate, waitForStart)
 
 					var chosen *uuid.UUID
 					var newStart time.Time
@@ -818,8 +981,9 @@ func (s *Service) recalculateEpicSchedule(
 					newEnd := addWorkDays(newStart, workDays)
 					if !newStart.Equal(task.StartDate) || !newEnd.Equal(task.EndDate) {
 						if err := s.repo.UpdateGanttTaskDates(ctx, task.ID, newStart, newEnd); err != nil {
-							return fmt.Errorf("%s: update role task: %w", op, err)
+							return false, fmt.Errorf("%s: update role task: %w", op, err)
 						}
+						changed = true
 					}
 					task.StartDate = newStart
 					task.EndDate = newEnd
@@ -827,7 +991,7 @@ func (s *Service) recalculateEpicSchedule(
 
 					if !assigneeIDEqual(task.AssigneeID, chosen) {
 						if err := s.repo.UpdateGanttTaskAssignee(ctx, task.ID, chosen); err != nil {
-							return fmt.Errorf("%s: update assignee: %w", op, err)
+							return false, fmt.Errorf("%s: update assignee: %w", op, err)
 						}
 						task.AssigneeID = chosen
 					}
@@ -838,6 +1002,15 @@ func (s *Service) recalculateEpicSchedule(
 						reserveInterval(state.roleFreeAt, roleID, newStart, effectiveEnd)
 					}
 				}
+
+				// resolvedEnd публикует конец этой задачи для разрешения
+				// ссылок "не ранее задачи X" других задач — как обработанных
+				// позже в ЭТОМ ЖЕ проходе (тогда X лежит раньше в очереди),
+				// так и для forward-ссылок, разрешаемых на СЛЕДУЮЩЕМ проходе
+				// (openspec/changes/add-task-start-constraints/design.md,
+				// Решение 2). Пишется для ЛЮБОЙ задачи (замороженной или
+				// нет) — замороженная тоже может быть целью чужой ссылки.
+				state.resolvedEnd[assignmentKey{epicID: u.storyOrEpicID, roleID: roleID}] = effectiveEnd
 
 				if groupEnd.IsZero() || effectiveEnd.After(groupEnd) {
 					groupEnd = effectiveEnd
@@ -872,11 +1045,12 @@ func (s *Service) recalculateEpicSchedule(
 		if u.task.ID != epicParent.ID {
 			if !u.task.StartDate.Equal(storyStart) || !u.task.EndDate.Equal(storyEnd) {
 				if err := s.repo.UpdateGanttTaskDates(ctx, u.task.ID, storyStart, storyEnd); err != nil {
-					return fmt.Errorf("%s: update story task dates: %w", op, err)
+					return false, fmt.Errorf("%s: update story task dates: %w", op, err)
 				}
+				changed = true
 			}
 			if err := s.repo.UpdateGanttTaskProgress(ctx, u.task.ID, storyProgress); err != nil {
-				return fmt.Errorf("%s: update story task progress: %w", op, err)
+				return false, fmt.Errorf("%s: update story task progress: %w", op, err)
 			}
 		}
 
@@ -893,7 +1067,7 @@ func (s *Service) recalculateEpicSchedule(
 	}
 
 	if !epicHasBounds {
-		return nil
+		return changed, nil
 	}
 
 	epicProgress := 0.0
@@ -902,14 +1076,15 @@ func (s *Service) recalculateEpicSchedule(
 	}
 	if !epicParent.StartDate.Equal(epicStart) || !epicParent.EndDate.Equal(epicEnd) {
 		if err := s.repo.UpdateGanttTaskDates(ctx, epicParent.ID, epicStart, epicEnd); err != nil {
-			return fmt.Errorf("%s: update epic dates: %w", op, err)
+			return false, fmt.Errorf("%s: update epic dates: %w", op, err)
 		}
+		changed = true
 	}
 	if err := s.repo.UpdateGanttTaskProgress(ctx, epicParent.ID, epicProgress); err != nil {
-		return fmt.Errorf("%s: update epic progress: %w", op, err)
+		return false, fmt.Errorf("%s: update epic progress: %w", op, err)
 	}
 
-	return nil
+	return changed, nil
 }
 
 // SetTaskProgress sets the progress of a leaf (role) task and, when it
@@ -1061,6 +1236,348 @@ func (s *Service) SetTaskAssignee(
 	return result, nil
 }
 
+// SetTaskStartConstraint sets or clears the "Начать не ранее" lower bound of
+// a leaf (role) Gantt task: a calendar date and/or a reference to another
+// role task of the SAME team whose completion the task must wait for (see
+// domain.TaskAssignment.NotBeforeDate/WaitForStoryID/WaitForRoleID and
+// openspec/changes/add-task-start-constraints/design.md, Решения 1, 5, 6).
+// Both bounds act independently and simultaneously; nil clears the
+// respective one. waitForStoryID and waitForRoleID must be either both nil
+// (no task reference) or both set (a reference) — ErrStartConstraintIncompleteRef
+// otherwise.
+//
+// Rejects (design.md Решение 3, задача 2.5):
+//   - a reference to a task outside the caller's team (ErrStartConstraintCrossTeam);
+//   - a reference to the task itself, or one that would close a cycle
+//     through the existing chain of "wait for" edges of the team
+//     (ErrStartConstraintCycle) — checked by walking the team's current
+//     task_assignments graph (wouldCreateCycle), so a cycle can never be
+//     introduced through this entry point; RecalculateTeamSchedule's own
+//     pass cap (design.md Решение 2—3) is what protects against a cycle
+//     that reaches the data some other way (restore, manual edit).
+//
+// Recalculates the whole team's pipeline schedule afterwards, like the
+// other manual-input setters (SetTaskAssignee, SetTaskStartOffset).
+func (s *Service) SetTaskStartConstraint(
+	ctx context.Context,
+	taskID uuid.UUID,
+	notBeforeDate *time.Time,
+	waitForStoryID, waitForRoleID *uuid.UUID,
+) ([]domain.GanttTask, error) {
+	op := "gantt.SetTaskStartConstraint"
+
+	task, err := s.repo.GetGanttTaskByID(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get task: %w", op, err)
+	}
+	if task.IsParent {
+		return nil, fmt.Errorf("%s: %w", op, ErrStartConstraintOnParent)
+	}
+	if (waitForStoryID == nil) != (waitForRoleID == nil) {
+		return nil, fmt.Errorf("%s: %w", op, ErrStartConstraintIncompleteRef)
+	}
+
+	epic, err := s.repo.GetEpicByID(ctx, task.EpicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get epic: %w", op, err)
+	}
+
+	assignmentEpicID, err := s.resolveAssignmentKey(ctx, task)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	ownKey := assignmentKey{epicID: assignmentEpicID, roleID: *task.RoleID}
+
+	if waitForStoryID != nil {
+		// Команда цели должна совпадать с командой текущей задачи —
+		// выбирать можно только задачи своей команды (design.md, Non-Goals
+		// "Межкомандные зависимости"). waitForStoryID — это либо ID
+		// реальной стори, либо ID legacy-эпика без сторей: в обоих случаях
+		// TeamID лежит прямо в её собственной строке epics (CreateStory
+		// копирует team_id родителя при создании), поэтому идти к
+		// родительскому эпику за ним не нужно.
+		targetStoryOrEpic, err := s.repo.GetEpicByID(ctx, *waitForStoryID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: get referenced story: %w", op, err)
+		}
+		if targetStoryOrEpic.TeamID != epic.TeamID {
+			return nil, fmt.Errorf("%s: %w", op, ErrStartConstraintCrossTeam)
+		}
+
+		assignments, err := s.loadTeamAssignments(ctx, epic.TeamID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
+		}
+		waitForKey := assignmentKey{epicID: *waitForStoryID, roleID: *waitForRoleID}
+		if wouldCreateCycle(assignments, waitForKey, ownKey) {
+			return nil, fmt.Errorf("%s: %w", op, ErrStartConstraintCycle)
+		}
+	}
+
+	if err := s.repo.UpsertTaskAssignmentStartConstraint(
+		ctx, assignmentEpicID, *task.RoleID, notBeforeDate, waitForStoryID, waitForRoleID,
+	); err != nil {
+		return nil, fmt.Errorf("%s: update start constraint: %w", op, err)
+	}
+
+	result, err := s.RecalculateTeamSchedule(ctx, epic.TeamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: recalc schedule: %w", op, err)
+	}
+	return result, nil
+}
+
+// wouldCreateCycle reports whether target already waits for start — directly
+// or through the chain of existing "wait for" edges in assignments —
+// meaning adding the edge "target waits for start" the OTHER way around
+// (i.e. making start's owner wait for target, which is what the caller is
+// about to do) would close a cycle. start == target (a task referencing
+// itself) always reports true (design.md Решение 3, "Задача не может
+// ожидать саму себя"). visited guards against looping forever if the data
+// already contains a cycle that slipped in some other way (design.md
+// Решение 3) — that's not this call's problem to fix, just not to hang on.
+func wouldCreateCycle(assignments map[assignmentKey]domain.TaskAssignment, start, target assignmentKey) bool {
+	if start == target {
+		return true
+	}
+	visited := make(map[assignmentKey]bool)
+	current := start
+	for {
+		if visited[current] {
+			return false
+		}
+		visited[current] = true
+		a, ok := assignments[current]
+		if !ok || a.WaitForStoryID == nil || a.WaitForRoleID == nil {
+			return false
+		}
+		next := assignmentKey{epicID: *a.WaitForStoryID, roleID: *a.WaitForRoleID}
+		if next == target {
+			return true
+		}
+		current = next
+	}
+}
+
+// cloneResolvedEnd copies a scheduleState.resolvedEnd snapshot so
+// RecalculateTeamSchedule can compare "before this pass" against "after this
+// pass" — the map itself is mutated in place by recalculateEpicSchedule
+// across passes (it's the one field of scheduleState NOT recreated per
+// pass), so a plain assignment wouldn't capture a point-in-time snapshot.
+func cloneResolvedEnd(m map[assignmentKey]time.Time) map[assignmentKey]time.Time {
+	cp := make(map[assignmentKey]time.Time, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	return cp
+}
+
+// resolvedEndEqual reports whether two resolvedEnd snapshots carry the same
+// set of keys with the same values — RecalculateTeamSchedule's convergence
+// signal (design.md Решение 2): no leaf task's known end date, nor the set
+// of leaf tasks known at all, changed during the pass, so no "wait for"
+// lookup could possibly resolve differently on another pass.
+func resolvedEndEqual(a, b map[assignmentKey]time.Time) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		bv, ok := b[k]
+		if !ok || !bv.Equal(v) {
+			return false
+		}
+	}
+	return true
+}
+
+// countWaitForEdges counts task_assignments rows that reference another task
+// (i.e. have an effective "wait for" edge) — used by RecalculateTeamSchedule
+// to size maxPasses (openspec/changes/add-task-start-constraints/design.md,
+// Решение 2): a valid (acyclic) chain of constraints can't be longer than
+// the total number of such edges, so that's a safe upper bound on how many
+// repeated passes could ever be needed to let a date propagate end-to-end —
+// and, since it's still finite even for data containing an actual cycle
+// (design.md Решение 3), it doubles as the hard cap that guarantees
+// termination in that case too.
+func countWaitForEdges(assignments map[assignmentKey]domain.TaskAssignment) int {
+	n := 0
+	for _, a := range assignments {
+		if a.WaitForStoryID != nil && a.WaitForRoleID != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// TeamTaskOption describes a single selectable leaf (role) task for the
+// "Начать не ранее" two-step picker (design.md Решение 6): story, then role
+// within it. Built from the same generated Gantt rows the chart itself
+// uses — no separate data source. Which entries are unavailable (the task
+// itself, or one that would close a cycle) is for the caller (HTTP handler,
+// backend §3.3) to mark, not this method's concern.
+type TeamTaskOption struct {
+	// StoryID — assignmentKey.epicID этой задачи: ID стори либо
+	// legacy-эпика без сторей.
+	StoryID uuid.UUID
+	// StoryName — "<number>: <name>", как отображается на диаграмме.
+	StoryName string
+	RoleID    uuid.UUID
+	RoleName  string
+	// Unavailable — true, если выбрать эту задачу как цель ограничения
+	// "Начать не ранее" нельзя: это сама редактируемая задача, либо выбор
+	// замкнул бы цикл ожидания (design.md Решение 3, 6). Заполняется
+	// только GetTeamTaskOptionsFor (которой известна редактируемая
+	// задача) — GetTeamTaskOptions всегда возвращает false, у неё нет
+	// точки отсчёта "для какой задачи выбираем". Опция ОСТАЁТСЯ в списке,
+	// а не исключается из него — иначе пользователь искал бы пропавшую
+	// строку.
+	Unavailable bool
+	// UnavailableReason — объяснение причины (пусто, если Unavailable
+	// == false).
+	UnavailableReason string
+}
+
+// TaskRef identifies a leaf (role) Gantt task by the same "story (or epic
+// without stories) + role" pair task_assignments and start constraints are
+// keyed on (design.md Решение 1) — exported (unlike the package-private
+// assignmentKey it mirrors) for callers outside this package, e.g. the HTTP
+// layer testing whether a "wait for" reference currently resolves to a real
+// task (backend §3.1, §3.3).
+type TaskRef struct {
+	StoryID uuid.UUID
+	RoleID  uuid.UUID
+}
+
+// GetTeamTaskOptions returns every currently generated leaf (role) task of a
+// team as a flat list of (story, role) options for the two-step "wait for"
+// picker (design.md Решение 6), sorted by story then role name for a stable,
+// predictable order.
+func (s *Service) GetTeamTaskOptions(ctx context.Context, teamID uuid.UUID) ([]TeamTaskOption, error) {
+	op := "gantt.GetTeamTaskOptions"
+
+	// GetTeamTasks (orderTasksHierarchically) уже возвращает строки в
+	// порядке диаграммы: очередь эпиков (epics.sort_order) -> стори внутри
+	// эпика (по sort_order) -> ролевые задачи внутри стори (по sort_order)
+	// — design.md Решение 6, задача 3.5. Ниже этот порядок ТОЛЬКО
+	// сохраняется, а не переустанавливается алфавитной сортировкой: живёт
+	// он не в поле, а в относительном порядке среза tasks, поэтому важно
+	// ни разу не потерять его при группировке — в частности, группировка
+	// по верхнему эпику ниже не может идти через обычный обход map (её
+	// порядок ключей случаен), иначе строки одного эпика остались бы
+	// упорядоченными между собой, а порядок САМИХ эпиков — нет.
+	tasks, err := s.GetTeamTasks(ctx, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	// epicOrder — порядок первого появления верхнего эпика в tasks, то
+	// есть его место в очереди планировщика; tasksByEpic группирует
+	// строки по нему же (та же связка, что использует
+	// GetTeamTasksWithAssignments), сохраняя относительный порядок строк
+	// внутри каждой группы.
+	var epicOrder []uuid.UUID
+	seenEpic := make(map[uuid.UUID]bool)
+	tasksByEpic := make(map[uuid.UUID][]domain.GanttTask)
+	for _, t := range tasks {
+		if !seenEpic[t.EpicID] {
+			seenEpic[t.EpicID] = true
+			epicOrder = append(epicOrder, t.EpicID)
+		}
+		tasksByEpic[t.EpicID] = append(tasksByEpic[t.EpicID], t)
+	}
+
+	var options []TeamTaskOption
+	for _, epicID := range epicOrder {
+		epicTasks := tasksByEpic[epicID]
+		storyOrEpicIDByParent, err := s.storyOrEpicIDByParentTaskID(ctx, epicID, epicTasks)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
+		}
+		byID := make(map[uuid.UUID]domain.GanttTask, len(epicTasks))
+		for _, t := range epicTasks {
+			byID[t.ID] = t
+		}
+		for _, t := range epicTasks {
+			if t.IsParent || t.RoleID == nil || t.ParentTaskID == nil {
+				continue
+			}
+			storyOrEpicID, ok := storyOrEpicIDByParent[*t.ParentTaskID]
+			if !ok {
+				continue
+			}
+			parent := byID[*t.ParentTaskID]
+			role, err := s.repo.GetRoleByID(ctx, *t.RoleID)
+			if err != nil {
+				return nil, fmt.Errorf("%s: get role: %w", op, err)
+			}
+			options = append(options, TeamTaskOption{
+				StoryID:   storyOrEpicID,
+				StoryName: parent.Name,
+				RoleID:    *t.RoleID,
+				RoleName:  role.Name,
+			})
+		}
+	}
+
+	return options, nil
+}
+
+// GetTeamTaskOptionsFor returns the SAME two-step picker options as
+// GetTeamTaskOptions (backend §3.3, design.md Решение 6), for the team the
+// task identified by taskID belongs to, with entries marked Unavailable:
+// the task itself, and every task whose selection would close a cycle
+// through the team's current "wait for" graph (design.md Решение 3) —
+// reusing wouldCreateCycle, the exact same check SetTaskStartConstraint
+// performs before saving, so the picker and the save-time validation never
+// disagree. Options are never excluded, only flagged (design.md Решение 6:
+// "видимая, а не молча спрятанная" причина недоступности).
+func (s *Service) GetTeamTaskOptionsFor(ctx context.Context, taskID uuid.UUID) ([]TeamTaskOption, error) {
+	op := "gantt.GetTeamTaskOptionsFor"
+
+	task, err := s.repo.GetGanttTaskByID(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get task: %w", op, err)
+	}
+	if task.IsParent {
+		return nil, fmt.Errorf("%s: %w", op, ErrStartConstraintOnParent)
+	}
+
+	epic, err := s.repo.GetEpicByID(ctx, task.EpicID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get epic: %w", op, err)
+	}
+
+	assignmentEpicID, err := s.resolveAssignmentKey(ctx, task)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	ownKey := assignmentKey{epicID: assignmentEpicID, roleID: *task.RoleID}
+
+	options, err := s.GetTeamTaskOptions(ctx, epic.TeamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	assignments, err := s.loadTeamAssignments(ctx, epic.TeamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	for i := range options {
+		candidateKey := assignmentKey{epicID: options[i].StoryID, roleID: options[i].RoleID}
+		switch {
+		case candidateKey == ownKey:
+			options[i].Unavailable = true
+			options[i].UnavailableReason = "это и есть текущая задача"
+		case wouldCreateCycle(assignments, candidateKey, ownKey):
+			options[i].Unavailable = true
+			options[i].UnavailableReason = "выбор замкнёт цикл ожидания: эта задача уже (прямо или через цепочку) ожидает текущую"
+		}
+	}
+
+	return options, nil
+}
+
 // SetTeamBackfillBlockPast переключает настройку команды «не занимать
 // промежутки расписания, оставшиеся в прошлом» (backend §3.2,
 // openspec/changes/backfill-idle-gaps-in-schedule) и сразу пересчитывает
@@ -1138,6 +1655,24 @@ func (s *Service) resolveAssignmentKey(ctx context.Context, task *domain.GanttTa
 	return task.EpicID, nil
 }
 
+// loadTeamAssignments reads a team's task_assignments пачкой (design.md
+// Risks: "Рост числа запросов к БД") and indexes them by assignmentKey —
+// the single read path shared by RecalculateTeamSchedule,
+// GetTeamTasksWithAssignments and SetTaskStartConstraint's cycle check.
+func (s *Service) loadTeamAssignments(ctx context.Context, teamID uuid.UUID) (map[assignmentKey]domain.TaskAssignment, error) {
+	op := "gantt.loadTeamAssignments"
+
+	rows, err := s.repo.GetTaskAssignmentsByTeamID(ctx, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: get task assignments: %w", op, err)
+	}
+	m := make(map[assignmentKey]domain.TaskAssignment, len(rows))
+	for _, a := range rows {
+		m[assignmentKey{epicID: a.EpicID, roleID: a.RoleID}] = a
+	}
+	return m, nil
+}
+
 // GetTeamMembers returns a team's roster with the full set of roles per
 // member — unlike GetRoleByUserID (a single role per user), this correctly
 // reflects user_roles as an M:N relation, so a member with two roles is
@@ -1207,21 +1742,17 @@ func (s *Service) GetTeamTasks(ctx context.Context, teamID uuid.UUID) ([]domain.
 func (s *Service) GetTeamTasksWithAssignments(
 	ctx context.Context,
 	teamID uuid.UUID,
-) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, error) {
+) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, map[TaskRef]bool, error) {
 	op := "gantt.GetTeamTasksWithAssignments"
 
 	tasks, err := s.GetTeamTasks(ctx, teamID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", op, err)
+		return nil, nil, nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	assignmentRows, err := s.repo.GetTaskAssignmentsByTeamID(ctx, teamID)
+	byKey, err := s.loadTeamAssignments(ctx, teamID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%s: get task assignments: %w", op, err)
-	}
-	byKey := make(map[assignmentKey]domain.TaskAssignment, len(assignmentRows))
-	for _, a := range assignmentRows {
-		byKey[assignmentKey{epicID: a.EpicID, roleID: a.RoleID}] = a
+		return nil, nil, nil, fmt.Errorf("%s: %w", op, err)
 	}
 
 	// tasksByEpic группирует все строки (родительские и листовые) по
@@ -1233,10 +1764,17 @@ func (s *Service) GetTeamTasksWithAssignments(
 	}
 
 	result := make(map[uuid.UUID]domain.TaskAssignment)
+	// validRefs — множество пар "стори (или эпик без сторей) + роль",
+	// которым ПРЯМО СЕЙЧАС соответствует сгенерированная листовая задача —
+	// побочный продукт того же прохода (без дополнительных запросов к
+	// репозиторию), которым HTTP-слой (backend §3.1) отмечает ссылку
+	// "не ранее задачи" недействующей, если её цель в этот набор не входит
+	// (design.md Решение 4, задача 3.1).
+	validRefs := make(map[TaskRef]bool)
 	for epicID, epicTasks := range tasksByEpic {
 		storyOrEpicIDByParent, err := s.storyOrEpicIDByParentTaskID(ctx, epicID, epicTasks)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", op, err)
+			return nil, nil, nil, fmt.Errorf("%s: %w", op, err)
 		}
 		for _, t := range epicTasks {
 			if t.IsParent || t.RoleID == nil || t.ParentTaskID == nil {
@@ -1249,10 +1787,11 @@ func (s *Service) GetTeamTasksWithAssignments(
 			if a, ok := byKey[assignmentKey{epicID: storyOrEpicID, roleID: *t.RoleID}]; ok {
 				result[t.ID] = a
 			}
+			validRefs[TaskRef{StoryID: storyOrEpicID, RoleID: *t.RoleID}] = true
 		}
 	}
 
-	return tasks, result, nil
+	return tasks, result, validRefs, nil
 }
 
 // storyOrEpicIDByParentTaskID resolves, for every parent-level Gantt row of
@@ -1359,18 +1898,27 @@ func appendSubtree(
 // groupGanttTasksBySortOrder groups already-persisted role tasks by their
 // sort_order (roles meant to run in parallel share the same value),
 // preserving the relative order of groups and of tasks within a group.
-func groupGanttTasksBySortOrder(tasks []domain.GanttTask) [][]domain.GanttTask {
+//
+// Works on POINTERS into the caller's epicTasks slice, not copies
+// (openspec/changes/add-task-start-constraints/design.md, Решение 2 — cost
+// measurement): recalculateEpicSchedule writes new dates back through these
+// pointers, so repeated passes within one RecalculateTeamSchedule call see
+// each other's results without a round trip to the repository between
+// passes — only the initial read (and, since add-task-start-constraints,
+// pool/assignment reads) touches the DB; every additional pass is pure
+// in-memory recomputation.
+func groupGanttTasksBySortOrder(tasks []*domain.GanttTask) [][]*domain.GanttTask {
 	if len(tasks) == 0 {
 		return nil
 	}
-	sorted := make([]domain.GanttTask, len(tasks))
+	sorted := make([]*domain.GanttTask, len(tasks))
 	copy(sorted, tasks)
-	slices.SortStableFunc(sorted, func(a, b domain.GanttTask) int {
+	slices.SortStableFunc(sorted, func(a, b *domain.GanttTask) int {
 		return a.SortOrder - b.SortOrder
 	})
 
-	var groups [][]domain.GanttTask
-	var current []domain.GanttTask
+	var groups [][]*domain.GanttTask
+	var current []*domain.GanttTask
 	currentOrder := sorted[0].SortOrder
 	for _, t := range sorted {
 		if t.SortOrder != currentOrder {

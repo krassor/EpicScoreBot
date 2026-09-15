@@ -135,13 +135,23 @@ func (r *Router) Mount(mux *chi.Mux) {
 					mux.Put("/reorder", r.ganttHandler.ReorderTask)
 					mux.Delete("/", r.ganttHandler.DeleteTask)
 
-					// Закрепление исполнителя — редактирование, доступное
-					// только admin/superadmin (не "member"), как и остальные
-					// admin-эндпоинты выше; см. openspec/changes/
-					// add-gantt-task-assignees, backend §3.2.
+					// Состав задач команды для двухшагового выбора цели
+					// ограничения «Начать не ранее» (backend §3.3,
+					// openspec/changes/add-task-start-constraints) —
+					// доступен любому аутентифицированному пользователю, как
+					// и GetTeamMembers ниже: само чтение ничего не меняет,
+					// редактирование гейтится в группе с PUT ниже.
+					mux.Get("/start-constraint/options", r.ganttHandler.GetTaskStartConstraintOptions)
+
+					// Закрепление исполнителя и ограничение «Начать не ранее» —
+					// редактирование, доступное только admin/superadmin (не
+					// "member"), как и остальные admin-эндпоинты выше; см.
+					// openspec/changes/add-gantt-task-assignees, backend §3.2,
+					// и openspec/changes/add-task-start-constraints, backend §3.2.
 					mux.Group(func(mux chi.Router) {
 						mux.Use(myMiddleware.RoleAuth(r.ganttHandler.Repo(), r.ganttHandler.Repo(), r.ganttHandler.Config(), "admin"))
 						mux.Put("/assignee", r.ganttHandler.SetTaskAssignee)
+						mux.Put("/start-constraint", r.ganttHandler.SetTaskStartConstraint)
 					})
 				})
 

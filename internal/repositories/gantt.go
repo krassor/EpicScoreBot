@@ -289,7 +289,8 @@ func (r *Repository) UpdateGanttTaskAssignee(ctx context.Context, taskID uuid.UU
 // keys used by the scheduler.
 func (r *Repository) GetTaskAssignmentsByTeamID(ctx context.Context, teamID uuid.UUID) ([]domain.TaskAssignment, error) {
 	op := "Repository.GetTaskAssignmentsByTeamID"
-	query := `SELECT ta.epic_id, ta.role_id, ta.user_id, ta.start_offset_days
+	query := `SELECT ta.epic_id, ta.role_id, ta.user_id, ta.start_offset_days,
+		ta.not_before_date, ta.wait_for_story_id, ta.wait_for_role_id
 		FROM task_assignments ta
 		INNER JOIN epics e ON e.id = ta.epic_id
 		WHERE e.team_id = $1`
@@ -302,7 +303,10 @@ func (r *Repository) GetTaskAssignmentsByTeamID(ctx context.Context, teamID uuid
 	var assignments []domain.TaskAssignment
 	for rows.Next() {
 		var a domain.TaskAssignment
-		if err := rows.Scan(&a.EpicID, &a.RoleID, &a.UserID, &a.StartOffsetDays); err != nil {
+		if err := rows.Scan(
+			&a.EpicID, &a.RoleID, &a.UserID, &a.StartOffsetDays,
+			&a.NotBeforeDate, &a.WaitForStoryID, &a.WaitForRoleID,
+		); err != nil {
 			return nil, fmt.Errorf("%s: scan: %w", op, err)
 		}
 		assignments = append(assignments, a)
@@ -337,6 +341,40 @@ func (r *Repository) UpsertTaskAssignmentStartOffset(ctx context.Context, epicID
 		VALUES ($1, $2, $3)
 		ON CONFLICT (epic_id, role_id) DO UPDATE SET start_offset_days = EXCLUDED.start_offset_days`
 	_, err := r.DB.ExecContext(ctx, query, epicID, roleID, offsetDays)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return nil
+}
+
+// UpsertTaskAssignmentStartConstraint sets (or clears, via nil) the "Начать
+// не ранее" lower bound for a story/epic+role pair: a calendar date and/or a
+// reference to another role task of the same team, identified by the same
+// (story-or-epic, role) pair the row itself is keyed on — see
+// domain.TaskAssignment.NotBeforeDate/WaitForStoryID/WaitForRoleID and
+// openspec/changes/add-task-start-constraints/design.md, Решения 1 и 5.
+// Creates the task_assignments row on first use (user_id/start_offset_days
+// default to their zero values) and preserves an existing
+// user_id/start_offset_days on conflict — independent of
+// UpsertTaskAssignmentUser/UpsertTaskAssignmentStartOffset, the same way
+// those two are independent of each other. waitForStoryID and waitForRoleID
+// are written together (both nil clears the reference) — the caller
+// (gantt.Service.SetTaskStartConstraint) is responsible for ensuring they're
+// either both nil or both set.
+func (r *Repository) UpsertTaskAssignmentStartConstraint(
+	ctx context.Context,
+	epicID, roleID uuid.UUID,
+	notBeforeDate *time.Time,
+	waitForStoryID, waitForRoleID *uuid.UUID,
+) error {
+	op := "Repository.UpsertTaskAssignmentStartConstraint"
+	query := `INSERT INTO task_assignments (epic_id, role_id, not_before_date, wait_for_story_id, wait_for_role_id)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (epic_id, role_id) DO UPDATE SET
+			not_before_date = EXCLUDED.not_before_date,
+			wait_for_story_id = EXCLUDED.wait_for_story_id,
+			wait_for_role_id = EXCLUDED.wait_for_role_id`
+	_, err := r.DB.ExecContext(ctx, query, epicID, roleID, notBeforeDate, waitForStoryID, waitForRoleID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", op, err)
 	}

@@ -653,6 +653,29 @@
                             завершения предыдущей роли в этой стори. Не может быть раньше окончания
                             предыдущей задачи этой же роли в конвейере.</div>
                     </div>
+                    <!-- Ограничение «Начать не ранее» (add-task-start-constraints, задача
+                         5.1–5.6, ux-brief.md разделы 1–2). Последним полем модалки —
+                         продвинутое ограничение, а не основной ввод (тот же принцип, что
+                         и у смещения). Сворачиваемый пикер задачи: у большинства задач
+                         ограничения нет, два вечно открытых списка удлиняли бы модалку
+                         всем. Для роли member значение видно, управление скрывается
+                         точечно (populateStartConstraintBlock, isGanttReadOnly) — в
+                         отличие от блока исполнителя, который для member прячется целиком. -->
+                    <div class="form-group" id="task-details-constraint-group">
+                        <label id="task-details-constraint-label">Начать не ранее</label>
+                        <div class="constraint-row">
+                            <input type="date" id="task-details-constraint-date" class="input-date">
+                            <button type="button" id="task-details-constraint-date-clear" class="btn btn-secondary btn-sm">Очистить</button>
+                        </div>
+                        <div id="task-details-constraint-task-summary" class="form-help"></div>
+                        <button type="button" id="task-details-constraint-task-edit" class="btn btn-secondary btn-sm">Выбрать задачу…</button>
+                        <div id="task-details-constraint-picker" class="hidden">
+                            <select id="task-details-constraint-story" class="select select--truncate"></select>
+                            <select id="task-details-constraint-role" class="select" disabled></select>
+                            <button type="button" id="task-details-constraint-task-clear" class="btn btn-secondary btn-sm">Убрать ожидание задачи</button>
+                        </div>
+                        <div id="task-details-constraint-help" class="form-help"></div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button id="task-details-save" class="btn btn-primary">💾 Сохранить</button>

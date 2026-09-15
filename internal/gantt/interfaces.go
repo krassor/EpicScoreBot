@@ -94,4 +94,15 @@ type Repository interface {
 	// UpsertTaskAssignmentStartOffset задаёт ручное смещение старта для
 	// пары (epicID, roleID). Не трогает UserID.
 	UpsertTaskAssignmentStartOffset(ctx context.Context, epicID, roleID uuid.UUID, offsetDays int) error
+	// UpsertTaskAssignmentStartConstraint задаёт (либо снимает, через nil)
+	// ограничение "Начать не ранее" для пары (epicID, roleID): дату и/или
+	// ссылку на другую задачу команды той же парой "стори + роль" (см.
+	// domain.TaskAssignment и openspec/changes/add-task-start-constraints/
+	// design.md, Решения 1, 5). Не трогает UserID/StartOffsetDays.
+	UpsertTaskAssignmentStartConstraint(
+		ctx context.Context,
+		epicID, roleID uuid.UUID,
+		notBeforeDate *time.Time,
+		waitForStoryID, waitForRoleID *uuid.UUID,
+	) error
 }

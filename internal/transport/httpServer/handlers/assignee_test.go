@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"EpicScoreBot/internal/config"
+	"EpicScoreBot/internal/gantt"
 	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/transport/httpServer/middleware"
 	"context"
@@ -555,6 +556,11 @@ type taskRespDecode struct {
 	AssigneeName       *string `json:"assignee_name"`
 	AssigneeIsManual   bool    `json:"assignee_is_manual"`
 	AssigneePinInvalid bool    `json:"assignee_pin_invalid"`
+	// Поля ограничения "Начать не ранее" (backend §3.1, add-task-start-constraints).
+	NotBeforeDate             *string `json:"not_before_date"`
+	WaitForStoryID            *string `json:"wait_for_story_id"`
+	WaitForRoleID             *string `json:"wait_for_role_id"`
+	StartConstraintRefInvalid bool    `json:"start_constraint_ref_invalid"`
 }
 
 // TestGetTasks_AssigneeFieldsAndStartOffset — комплексный тест на четыре
@@ -603,8 +609,8 @@ func TestGetTasks_AssigneeFieldsAndStartOffset(t *testing.T) {
 		},
 	}
 	svc := &mockGanttSvc{
-		getTeamTasksWithAssignmentsFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, error) {
-			return tasks, assignments, nil
+		getTeamTasksWithAssignmentsFunc: func(ctx context.Context, tID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, map[gantt.TaskRef]bool, error) {
+			return tasks, assignments, nil, nil
 		},
 	}
 	handler := NewGanttHandler(slog.Default(), svc, repo, &mockScoringService{}, &mockAIClient{}, config.BotConfig{}, &mockNotifier{})

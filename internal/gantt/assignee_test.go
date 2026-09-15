@@ -732,12 +732,27 @@ func TestGetTeamTasksWithAssignments_ResolvesByLeafTaskID(t *testing.T) {
 		t.Fatalf("SetTaskStartOffset: %v", err)
 	}
 
-	tasks, assignments, err := svc.GetTeamTasksWithAssignments(ctx, teamID)
+	tasks, assignments, validRefs, err := svc.GetTeamTasksWithAssignments(ctx, teamID)
 	if err != nil {
 		t.Fatalf("GetTeamTasksWithAssignments: %v", err)
 	}
 	if len(tasks) == 0 {
 		t.Fatalf("expected non-empty task list")
+	}
+
+	// Задача 3.1 (add-task-start-constraints): третье возвращаемое
+	// значение — множество РЕАЛЬНО существующих сейчас пар "стори + роль",
+	// используемое HTTP-слоем, чтобы отметить ссылку "не ранее задачи"
+	// недействующей. Обе сгенерированные листовые задачи должны попасть в
+	// этот набор, а произвольная несуществующая пара — нет.
+	if !validRefs[TaskRef{StoryID: storyID, RoleID: devID}] {
+		t.Errorf("expected validRefs to contain the story dev task's ref")
+	}
+	if !validRefs[TaskRef{StoryID: legacyEpicID, RoleID: analystID}] {
+		t.Errorf("expected validRefs to contain the legacy analyst task's ref")
+	}
+	if validRefs[TaskRef{StoryID: uuid.New(), RoleID: uuid.New()}] {
+		t.Errorf("expected an unrelated random ref to be absent from validRefs")
 	}
 
 	devAssignment, ok := assignments[devTask.ID]

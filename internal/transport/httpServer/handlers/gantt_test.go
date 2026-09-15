@@ -144,7 +144,18 @@ type mockGanttSvc struct {
 		userID *uuid.UUID
 	}
 	getTeamMembersFunc              func(ctx context.Context, teamID uuid.UUID) ([]domain.TeamMember, error)
-	getTeamTasksWithAssignmentsFunc func(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, error)
+	getTeamTasksWithAssignmentsFunc func(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, map[gantt.TaskRef]bool, error)
+
+	// Методы backend §3.2/§3.3 (add-task-start-constraints).
+	setTaskStartConstraintFunc   func(ctx context.Context, taskID uuid.UUID, notBeforeDate *time.Time, waitForStoryID, waitForRoleID *uuid.UUID) ([]domain.GanttTask, error)
+	setTaskStartConstraintCalled bool
+	setTaskStartConstraintArgs   struct {
+		taskID         uuid.UUID
+		notBeforeDate  *time.Time
+		waitForStoryID *uuid.UUID
+		waitForRoleID  *uuid.UUID
+	}
+	getTeamTaskOptionsForFunc func(ctx context.Context, taskID uuid.UUID) ([]gantt.TeamTaskOption, error)
 
 	// Метод backend §3.2 (backfill-idle-gaps-in-schedule).
 	setTeamBackfillBlockPastFunc   func(ctx context.Context, teamID uuid.UUID, blocked bool) ([]domain.GanttTask, error)
@@ -172,11 +183,35 @@ func (m *mockGanttSvc) GetTeamMembers(ctx context.Context, teamID uuid.UUID) ([]
 	return nil, nil
 }
 
-func (m *mockGanttSvc) GetTeamTasksWithAssignments(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, error) {
+func (m *mockGanttSvc) GetTeamTasksWithAssignments(ctx context.Context, teamID uuid.UUID) ([]domain.GanttTask, map[uuid.UUID]domain.TaskAssignment, map[gantt.TaskRef]bool, error) {
 	if m.getTeamTasksWithAssignmentsFunc != nil {
 		return m.getTeamTasksWithAssignmentsFunc(ctx, teamID)
 	}
-	return nil, nil, nil
+	return nil, nil, nil, nil
+}
+
+func (m *mockGanttSvc) SetTaskStartConstraint(
+	ctx context.Context,
+	taskID uuid.UUID,
+	notBeforeDate *time.Time,
+	waitForStoryID, waitForRoleID *uuid.UUID,
+) ([]domain.GanttTask, error) {
+	m.setTaskStartConstraintCalled = true
+	m.setTaskStartConstraintArgs.taskID = taskID
+	m.setTaskStartConstraintArgs.notBeforeDate = notBeforeDate
+	m.setTaskStartConstraintArgs.waitForStoryID = waitForStoryID
+	m.setTaskStartConstraintArgs.waitForRoleID = waitForRoleID
+	if m.setTaskStartConstraintFunc != nil {
+		return m.setTaskStartConstraintFunc(ctx, taskID, notBeforeDate, waitForStoryID, waitForRoleID)
+	}
+	return nil, nil
+}
+
+func (m *mockGanttSvc) GetTeamTaskOptionsFor(ctx context.Context, taskID uuid.UUID) ([]gantt.TeamTaskOption, error) {
+	if m.getTeamTaskOptionsForFunc != nil {
+		return m.getTeamTaskOptionsForFunc(ctx, taskID)
+	}
+	return nil, nil
 }
 
 func (m *mockGanttSvc) SetTeamBackfillBlockPast(ctx context.Context, teamID uuid.UUID, blocked bool) ([]domain.GanttTask, error) {

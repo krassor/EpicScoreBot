@@ -201,6 +201,31 @@
     white-space: nowrap;
 }
 
+/* Список стори пикера «Начать не ранее» (add-task-start-constraints,
+   ux-brief.md раздел 2, пункт 9 чек-листа — названия стори не ограничены по
+   длине). В отличие от .select--team/.select--epic БЕЗ min-width/max-width:
+   ограничение диапазоном здесь не нужно и вредно (см. .form-group выше) —
+   нужно только усечение длинного текста многоточием вместо выхода за рамку.
+   width: 100% — ОТСТУПЛЕНИЕ от буквального текста ux-brief.md (там снят
+   только min-width/max-width, а на стретч колоночного флекса предлагалось
+   положиться полностью): проверено вживую (Playwright/Chromium) на опции
+   в 100+ символов — align-items: stretch НЕ ограничивает ширину нативного
+   <select> его контейнером, когда авто-ширина по самой длинной <option>
+   не задана явно (в column-flex ширина — это cross axis, растяжение не
+   учитывает content-based intrinsic size формы ввода): без width select
+   раздувается по содержимому (≈1400px), модалка и вся раскладка уезжают
+   вправо, overflow/text-overflow/white-space на такой ширине не успевают
+   сработать (им попросту нечего усекать). width: 100% — явная величина, а
+   не диапазон (min/max), поэтому не противоречит намерению правила (не
+   ограничивать данными, а держать шириной контейнера) и одновременно
+   реально работает в нативном рендере <select>. */
+.select--truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+}
+
 .select:disabled,
 .input:disabled,
 .input-date:disabled,
@@ -231,6 +256,14 @@
 .select option {
     background: var(--bg-secondary);
     color: var(--text-primary);
+}
+
+/* Недоступные варианты пикера «Начать не ранее» (add-task-start-constraints,
+   ux-brief.md раздел 3) — сама задача и всё, что замкнуло бы цикл, остаются
+   в списке, а не исключаются из него, но без этого правила визуально не
+   отличались бы от обычных пунктов. */
+.select option:disabled {
+    color: var(--text-muted);
 }
 
 .badge {
@@ -493,6 +526,15 @@
 .form-help {
     font-size: var(--font-size-xs);
     color: var(--text-muted);
+}
+
+/* Строка «дата + кнопка Очистить» блока «Начать не ранее»
+   (add-task-start-constraints, ux-brief.md раздел 1). На ≤480px переходит
+   в колонку — см. responsive.css. */
+.constraint-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
 }
 
 .admin-form textarea {

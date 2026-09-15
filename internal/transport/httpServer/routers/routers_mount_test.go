@@ -31,10 +31,13 @@ func TestMount_NoPanic(t *testing.T) {
 }
 
 // TestMount_TaskAssigneeAndTeamMembersAreProtected проверяет (backend §3.4,
-// openspec/changes/add-gantt-task-assignees, и backend §3.3,
-// openspec/changes/backfill-idle-gaps-in-schedule), что маршруты
-// PUT /api/gantt/tasks/{id}/assignee, GET /api/gantt/teams/{id}/members и
-// GET|PUT /api/gantt/teams/{id}/schedule-settings смонтированы и закрыты
+// openspec/changes/add-gantt-task-assignees; backend §3.3,
+// openspec/changes/backfill-idle-gaps-in-schedule; и backend §3.4,
+// openspec/changes/add-task-start-constraints), что маршруты
+// PUT /api/gantt/tasks/{id}/assignee, GET /api/gantt/teams/{id}/members,
+// GET|PUT /api/gantt/teams/{id}/schedule-settings и
+// GET /api/gantt/tasks/{id}/start-constraint/options,
+// PUT /api/gantt/tasks/{id}/start-constraint смонтированы и закрыты
 // аутентификацией: запрос без cookie сессии TelegramAuth возвращает 401, а
 // не 404 (маршрут не существует) — ни middleware.TelegramAuth, ни (для PUT)
 // следующий за ним middleware.RoleAuth не обращаются к handler/service/repo
@@ -59,6 +62,9 @@ func TestMount_TaskAssigneeAndTeamMembersAreProtected(t *testing.T) {
 		{"GET /teams/{id}/members without session", http.MethodGet, "/api/gantt/teams/00000000-0000-0000-0000-000000000000/members"},
 		{"GET /teams/{id}/schedule-settings without session", http.MethodGet, "/api/gantt/teams/00000000-0000-0000-0000-000000000000/schedule-settings"},
 		{"PUT /teams/{id}/schedule-settings without session", http.MethodPut, "/api/gantt/teams/00000000-0000-0000-0000-000000000000/schedule-settings"},
+		// backend §3.4, openspec/changes/add-task-start-constraints.
+		{"GET /tasks/{id}/start-constraint/options without session", http.MethodGet, "/api/gantt/tasks/00000000-0000-0000-0000-000000000000/start-constraint/options"},
+		{"PUT /tasks/{id}/start-constraint without session", http.MethodPut, "/api/gantt/tasks/00000000-0000-0000-0000-000000000000/start-constraint"},
 	}
 
 	for _, tc := range cases {
