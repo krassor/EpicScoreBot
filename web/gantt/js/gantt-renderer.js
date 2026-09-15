@@ -22,12 +22,16 @@ const RESIZE_DEBOUNCE_MS = 150;
 
 let ganttChart = null;
 
-// ── Токены цвета подписи (задача 3.1, fix-gantt-telegram-rendering) ──────
+// ── Токены цвета подписи (задача 3.1/3.1b, fix-gantt-telegram-rendering) ──
 //
 // Резолвятся один раз через getComputedStyle, тем же способом, что и
 // resolveExportTokens() в gantt-image-export.js, — чтобы значения не
 // разъехались с variables.css/gantt.css при правке палитры и не были
-// захардкожены литералом в JS (ux-brief.md, раздел 2, шаг 2).
+// захардкожены литералом в JS (ux-brief.md, раздел 2, шаг 2). `bg` теперь
+// используется не для подложки (задача 3.1b убрала `.bar-label-bg`
+// полностью — плашка поверх светлого бара эпика/стори выглядела чужеродно
+// именно там, где `paint-order` и так работал, см. design.md Решение 2,
+// пересмотрено), а как цвет контура нижней копии текста.
 let labelColorTokens = null;
 function resolveLabelColorTokens() {
     if (!labelColorTokens) {
@@ -39,6 +43,9 @@ function resolveLabelColorTokens() {
             // хардкодится строкой заново.
             textLight: computed.getPropertyValue('--g-text-light').trim(),
             textPrimary: computed.getPropertyValue('--text-primary').trim(),
+            // Цвет контура нижней копии (задача 3.1b) — тот же токен, что
+            // раньше шёл в SVG `stroke` при paint-order, и что был цветом
+            // подложки в промежуточной версии.
             bg: computed.getPropertyValue('--bg-primary').trim(),
         };
     }
@@ -733,17 +740,18 @@ function applyPostRenderEnhancements(tasks) {
         }
     });
 
-    // Подложка и инлайн-цвет подписи (задача 3.1, fix-gantt-telegram-rendering,
-    // ux-brief.md, раздел 2) — отдельным отложенным проходом, а не в цикле выше.
-    // Frappe Gantt 1.2.2 решает класс `big` (подпись не влезает в бар → текст
-    // выносится за его пределы) не синхронно при отрисовке бара, а в
+    // Контур подписи двумя копиями текста + инлайн-цвет (задача 3.1b,
+    // fix-gantt-telegram-rendering, design.md Решение 2, пересмотрено) —
+    // отдельным отложенным проходом, а не в цикле выше. Frappe Gantt 1.2.2
+    // решает класс `big` (подпись не влезает в бар → текст выносится за его
+    // пределы) не синхронно при отрисовке бара, а в
     // requestAnimationFrame(() => this.update_label_position()) внутри
     // draw_label() (сверено по факту в UMD-бандле frappe-gantt@1.2.2 и через
     // Playwright: на момент возврата из `new Gantt(...)`/`refresh()` этот rAF
-    // ещё не выполнился). Если решать `big`/цвет и снимать geometry подписи
-    // здесь же синхронно, для части подписей код увидит промежуточное
-    // состояние — не тот цвет и подложка, смещённая относительно того места,
-    // куда библиотека передвинет текст мгновением позже. Поэтому собственный
+    // ещё не выполнился). Если решать `big`/цвет и клонировать подпись здесь
+    // же синхронно, для части подписей код увидит промежуточное состояние —
+    // не тот цвет и контур, смещённый относительно того места, куда
+    // библиотека передвинет текст мгновением позже. Поэтому собственный
     // requestAnimationFrame планируется здесь: он гарантированно выполняется
     // позже — все rAF библиотеки для этого набора баров уже поставлены в
     // очередь синхронно, раньше нашего (draw_label() вызывается внутри
@@ -761,31 +769,52 @@ function applyPostRenderEnhancements(tasks) {
             // одного раза на одном и том же, ещё не пересобранном библиотекой DOM
             // (on_view_change стреляет синхронно ещё ВНУТРИ конструктора Gantt —
             // до explicit-вызова этой функции сразу после applyFitColumnWidth,
-            // сверено по факту в UMD-бандле). Без удаления прежней подложки
-            // каждый повторный проход добавлял бы ещё один .bar-label-bg поверх
-            // уже существующего — тот же класс дублирования, что уже допустим
-            // для gantt-completed-icon/gantt-pin-invalid-icon рядом (они просто
-            // рисуются друг на друге незаметно), но для подложки лишние узлы
+            // сверено по факту в UMD-бандле). Без удаления прежней копии-контура
+            // каждый повторный проход добавлял бы ещё одну `.bar-label-outline`
+            // поверх уже существующей — тот же класс дублирования, что уже
+            // допустим для gantt-completed-icon/gantt-pin-invalid-icon рядом
+            // (они просто рисуются друг на друге незаметно), но лишние узлы
             // бессмысленно раздувают экспортируемый SVG (задача 3.1a).
-            wrapper.querySelectorAll('.bar-label-bg').forEach(el => el.remove());
+            wrapper.querySelectorAll('.bar-label-outline').forEach(el => el.remove());
 
             const tokens = resolveLabelColorTokens();
             const isBig = label.classList.contains('big');
             label.style.fill = isBig ? tokens.textPrimary : tokens.textLight;
 
-            const box = label.getBBox();
-            const paddingX = 3.5;
-            const paddingY = 1.5;
-            const labelBg = document.createElementNS(SVG_NS, 'rect');
-            labelBg.setAttribute('class', 'bar-label-bg');
-            labelBg.setAttribute('x', String(box.x - paddingX));
-            labelBg.setAttribute('y', String(box.y - paddingY));
-            labelBg.setAttribute('width', String(box.width + paddingX * 2));
-            labelBg.setAttribute('height', String(box.height + paddingY * 2));
-            labelBg.setAttribute('rx', '3');
-            labelBg.style.fill = tokens.bg;
-            labelBg.style.pointerEvents = 'none';
-            label.parentNode.insertBefore(labelBg, label);
+            // Нижняя копия — только контур (design.md Решение 2, пересмотрено):
+            // приём старше paint-order, две копии текста одна поверх другой,
+            // порядок отрисовки задаёт порядок узлов в разметке, а не CSS-
+            // свойство, которое клиент волен не поддержать. Клонируем x/y и
+            // текст с уже спозиционированного оригинала (см. комментарий про
+            // requestAnimationFrame выше — на этом шаге библиотека уже решила
+            // big/позицию), поэтому копия совпадает с оригиналом без ручного
+            // пересчёта геометрии. Класс "bar-label" на копию НЕ навешиваем —
+            // Frappe Gantt ищет подпись бара через querySelector(".bar-label")
+            // (одно совпадение, а не список) при драге и последующих
+            // репозиционированиях; вторая подходящая под тот же селектор нода
+            // стала бы для библиотеки кандидатом вместо оригинала, и во время
+            // драга обновлялась бы не та копия. Font-family/font-size/
+            // font-weight/dominant-baseline копируются из уже посчитанного
+            // computed style оригинала (он зависит от уровня — эпик/стори/
+            // роль, см. `.gantt-epic .bar-label`/`.gantt-story .bar-label`
+            // ниже по файлу), а не дублируются отдельными CSS-правилами под
+            // новым классом — иначе они рисковали бы разъехаться при
+            // следующей правке этих уровней.
+            const computedLabelStyle = getComputedStyle(label);
+            const outline = document.createElementNS(SVG_NS, 'text');
+            outline.setAttribute('class', 'bar-label-outline');
+            outline.setAttribute('x', label.getAttribute('x'));
+            outline.setAttribute('y', label.getAttribute('y'));
+            outline.textContent = label.textContent;
+            // Цвет контура — инлайном, тем же токеном `--bg-primary`, что и
+            // раньше шёл в SVG `stroke` при paint-order (см. критерий
+            // ux-brief.md о резолве через getComputedStyle, а не хардкод-хекс).
+            outline.style.stroke = tokens.bg;
+            outline.style.fontFamily = computedLabelStyle.fontFamily;
+            outline.style.fontSize = computedLabelStyle.fontSize;
+            outline.style.fontWeight = computedLabelStyle.fontWeight;
+            outline.style.dominantBaseline = computedLabelStyle.dominantBaseline;
+            label.parentNode.insertBefore(outline, label);
         });
     });
 }

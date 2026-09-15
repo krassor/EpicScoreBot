@@ -317,14 +317,16 @@ ${rootVars}
 .gantt .handle { fill: var(--g-handle-color); opacity: 0; }
 
 /* ── gantt.css: Text Label Contrast Styles ── */
-/* fix-gantt-telegram-rendering: stroke/paint-order убраны вслед за
-   gantt.css — читаемость в экспорте теперь тоже держат непрозрачная
-   подложка .bar-label-bg и инлайн fill на самом узле подписи
-   (applyPostRenderEnhancements в gantt-renderer.js), которые cloneNode(true)
-   копирует из живого DOM вместе с остальным SVG, а не это CSS-правило. */
+/* fix-gantt-telegram-rendering (задача 3.1b): читаемость держат две копии
+   текста одна поверх другой — нижняя .bar-label-outline (только контур),
+   верхняя .bar-label/.bar-label.big (только заливка, plus инлайн fill на
+   самом узле). Обе копии создаёт applyPostRenderEnhancements в
+   gantt-renderer.js, cloneNode(true) копирует их из живого DOM вместе с
+   остальным SVG — эти правила лишь задают тот же вид, если по какой-то
+   причине инлайн-стили на скопированных узлах не применятся. */
 .gantt .bar-label { fill: #ffffff !important; font-weight: 600; }
 .gantt .bar-label.big { fill: var(--text-primary) !important; font-weight: 600; }
-.gantt .bar-label-bg { fill: var(--bg-primary); pointer-events: none; }
+.gantt .bar-label-outline { fill: none; stroke: var(--bg-primary); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
 
 /* ── gantt.css: Handles for dragging dates ── */
 .gantt .handle-group .handle { fill: rgba(255, 255, 255, 0.35); }
