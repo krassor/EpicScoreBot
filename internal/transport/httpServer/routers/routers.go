@@ -130,6 +130,14 @@ func (r *Router) Mount(mux *chi.Mux) {
 				// см. openspec/changes/add-gantt-quarter-regenerate/design.md.
 				mux.Post("/tasks/generate-quarter", r.ganttHandler.GenerateQuarterTasks)
 
+				// Выгрузка картинки диаграммы Ганта (PNG/SVG, собранной
+				// клиентом) в личный чат Telegram — доступна любому, кому
+				// доступна сама диаграмма, включая "member" (выгрузка
+				// ничего не меняет в данных), без RoleAuth. Адресат берётся
+				// из сессии, не из тела запроса (design.md Решение 7,
+				// openspec/changes/export-gantt-chart-image).
+				mux.Post("/export/image", r.ganttHandler.ExportGanttImage)
+
 				mux.Route("/tasks/{id}", func(mux chi.Router) {
 					mux.Put("/", r.ganttHandler.UpdateTask)
 					mux.Put("/reorder", r.ganttHandler.ReorderTask)

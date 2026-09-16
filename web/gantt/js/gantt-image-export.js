@@ -20,8 +20,24 @@
 
 import { state } from './state.js';
 import { showToast, showErrorModal, withSubmitLock } from './utils.js';
+import { apiPostMultipart } from './api.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// Предел размера файла на отправку ботом (design.md Решение 7: у Bot API свой
+// лимит 50 МБ на загружаемый документ, отдельно от пределов холста для PNG
+// ниже). Проверяется на клиенте ДО сети — тот же смысл, что серверный
+// http.MaxBytesReader/FILE_TOO_LARGE (`gantt_export.go`), только раньше:
+// не гоним мегабайты по мобильной сети ради гарантированного отказа
+// (ux-brief.md §4.3).
+const MAX_UPLOAD_FILE_BYTES = 50 * 1024 * 1024;
+
+// Текст отказа по превышению 50 МБ — общий для клиентской проверки (ниже) и
+// серверного FILE_TOO_LARGE (handleExportError): для пользователя это одна
+// ситуация, пойманная в разных точках (ux-brief.md §4.3).
+const FILE_TOO_LARGE_MESSAGE =
+    'Подготовленный файл получился больше 50 МБ — так много Telegram не позволяет боту отправить. ' +
+    'Выберите более крупный масштаб времени (например, «Неделя» или «Месяц»), чтобы уменьшить размер файла, и попробуйте снова.';
 
 // Пределы холста браузера для растрового формата (design.md Решение 5,
 // задача 3.6) — измерены ФАКТИЧЕСКИ в десктопном Chrome 150 через
@@ -86,64 +102,97 @@ export function initGanttImageExport() {
     const btnSvg = document.getElementById('btn-export-gantt-svg');
     if (!btnPng || !btnSvg) return;
 
-    btnPng.addEventListener('click', () => runExport(btnPng, [btnPng, btnSvg], exportGanttPng));
-    btnSvg.addEventListener('click', () => runExport(btnSvg, [btnPng, btnSvg], exportGanttSvg));
+    btnPng.addEventListener('click', () => runExport(btnPng, [btnPng, btnSvg], 'png', buildGanttPngFile));
+    btnSvg.addEventListener('click', () => runExport(btnSvg, [btnPng, btnSvg], 'svg', buildGanttSvgFile));
 }
 
 // runExport — общая обвязка обратной связи и защиты от повторного запуска
 // (ux-brief.md раздел 3), один в один с паттерном runRegenerateQuarter
-// (app.js). Блокируются ОБЕ кнопки сразу — они делят общий источник
+// (app.js), расширенная на две последовательные фазы: «Подготовка» (сборка
+// на клиенте, без сети — buildFn) и «Отправка» (POST на сервер —
+// sendExportImage). Блокируются ОБЕ кнопки сразу — они делят общий источник
 // (buildExportSvg), запуск второй подготовки параллельно с первой
 // бессмысленен так же, как повторный клик по той же самой.
-async function runExport(activeBtn, allBtns, action) {
+async function runExport(activeBtn, allBtns, format, buildFn) {
     const originalLabel = activeBtn.innerHTML;
     await withSubmitLock(allBtns, async () => {
-        activeBtn.innerHTML = '⏳ Подготовка…';
         try {
-            const outcome = await action();
-            // 'limit-exceeded' — PNG отказал по пределу холста (задача 3.6):
-            // пользователь уже увидел объяснение в showErrorModal, тост с
-            // «сохранено» здесь был бы ложным сообщением об успехе.
-            if (outcome !== 'limit-exceeded') {
-                showToast('Картинка сохранена', 'success');
+            activeBtn.innerHTML = '⏳ Подготовка…';
+
+            let built;
+            try {
+                built = await buildFn();
+            } catch (err) {
+                // Ошибка сборки (фаза 1, без сети) — свой текст, отличный от
+                // сетевых отказов ниже, не изменяется этой задачей
+                // (ux-brief.md §4.7).
+                console.error('Не удалось подготовить картинку диаграммы Ганта:', err);
+                showToast('Не удалось подготовить картинку. Попробуйте ещё раз.', 'error');
+                return;
             }
+
+            // 'limit-exceeded' — PNG отказал по пределу холста браузера
+            // (задача 3.6, ux-brief.md §4.2): buildFn уже показал объяснение
+            // через showErrorModal, сеть не используется — фаза «Отправка»
+            // не наступает, тост об успехе здесь был бы ложным.
+            if (built === 'limit-exceeded') return;
+
+            const { blob, filename } = built;
+
+            // Клиентская проверка 50 МБ — ДО сети (ux-brief.md §4.3), общая
+            // для обоих форматов и для того же текста, что и серверный
+            // FILE_TOO_LARGE (handleExportError).
+            if (blob.size > MAX_UPLOAD_FILE_BYTES) {
+                showErrorModal(FILE_TOO_LARGE_MESSAGE);
+                return;
+            }
+
+            activeBtn.innerHTML = '⏳ Отправка…';
+            await sendExportImage(blob, format, filename);
+
+            // Успех показывается строго после 200 от сервера (ux-brief.md
+            // раздел 5) — до этой строки любой отказ уже вышел через return
+            // или будет перехвачен catch ниже.
+            showToast('Файл отправлен в чат с ботом', 'success');
         } catch (err) {
-            console.error('Не удалось подготовить картинку диаграммы Ганта:', err);
-            showToast('Не удалось подготовить картинку. Попробуйте ещё раз.', 'error');
+            // Сюда попадают только отказы фазы «Отправка» (sendExportImage) —
+            // ошибки фазы «Подготовка» перехвачены и обработаны выше со своим
+            // текстом и не долетают до этого catch.
+            handleExportError(err);
         } finally {
             activeBtn.innerHTML = originalLabel;
         }
     });
 }
 
-// exportGanttSvg — сохраняет собранный самодостаточный SVG как есть.
-// Способ отдачи файла подтверждён задачей 1.1: Blob + временная <a download>
-// (URL.createObjectURL), а не навигация на серверный эндпоинт — экспорт
-// целиком клиентский (design.md Решение 1), сервера в цепочке нет.
-async function exportGanttSvg() {
+// buildGanttSvgFile — собирает самодостаточный SVG и упаковывает его в Blob.
+// Отдачу файла (раньше — downloadBlob, локальное сохранение) заменила
+// отправка на сервер (design.md Решение 1, «Пересмотрено»; задача 6.1) —
+// здесь только сборка, сетевой вызов — в sendExportImage/runExport.
+async function buildGanttSvgFile() {
     const built = buildExportSvg();
     if (!built) throw new Error('gantt-export-no-diagram');
 
     const svgText = serializeSvg(built.svgEl);
     const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
-    downloadBlob(blob, buildExportFileName('svg'));
+    return { blob, filename: buildExportFileName('svg') };
 }
 
-// exportGanttPng — растеризует тот же собранный SVG на canvas (design.md
+// buildGanttPngFile — растеризует тот же собранный SVG на canvas (design.md
 // Решение 4: PNG — производная SVG, не вторая независимая реализация).
 // Предел холста проверяется ДО создания canvas (design.md Решение 5, задача
 // 3.6) — при превышении браузеры по-разному портят результат молча, поэтому
 // заранее считаем размеры и отказываем с объяснением.
-async function exportGanttPng() {
+async function buildGanttPngFile() {
     const built = buildExportSvg();
     if (!built) throw new Error('gantt-export-no-diagram');
 
     const { svgEl, width, height } = built;
     if (width > MAX_CANVAS_DIMENSION_PX || height > MAX_CANVAS_DIMENSION_PX || width * height > MAX_CANVAS_AREA_PX) {
         showErrorModal(
-            'Диаграмма в выбранном масштабе слишком велика для PNG — она не помещается в допустимый размер файла. ' +
-            'Выберите более крупный масштаб времени (например, «Неделя» или «Месяц») либо сохраните диаграмму в SVG — ' +
-            'для него это ограничение не действует.'
+            'Диаграмма в выбранном масштабе слишком велика для PNG — она не помещается в допустимый размер холста ' +
+            'браузера. Выберите более крупный масштаб времени (например, «Неделя» или «Месяц») либо отправьте ' +
+            'диаграмму в формате SVG — на него это ограничение не действует.'
         );
         return 'limit-exceeded';
     }
@@ -151,8 +200,65 @@ async function exportGanttPng() {
     const svgText = serializeSvg(svgEl);
     const canvas = await rasterizeSvgToCanvas(svgText, width, height);
     const pngBlob = await canvasToBlob(canvas);
-    downloadBlob(pngBlob, buildExportFileName('png'));
-    return 'ok';
+    return { blob: pngBlob, filename: buildExportFileName('png') };
+}
+
+// sendExportImage — отправляет собранный файл на сервер multipart-запросом
+// (design.md Решение 7, задача 6.1): POST /api/gantt/export/image, поля
+// file/format/filename. `filename` берётся как есть из buildExportFileName
+// (ux-brief.md, «Не трогать») — сервер сам санитизирует его при необходимости.
+// apiPostMultipart переиспользует авторизацию и handleHttpError из api.js,
+// поэтому 401/403 обрабатываются глобальным оверлеем так же, как у остальных
+// эндпоинтов, а прочие отказы приходят сюда с уже выставленным err.code.
+async function sendExportImage(blob, format, filename) {
+    const formData = new FormData();
+    formData.append('file', blob, filename);
+    formData.append('format', format);
+    formData.append('filename', filename);
+    await apiPostMultipart('/export/image', formData);
+}
+
+// handleExportError — карта error.code → {текст, канал} по ux-brief.md
+// разделу 4 (design.md Решение 7, таблица кодов). Общий
+// KNOWN_ERROR_MESSAGES/ACTION_REQUIRED_ERRORS (utils.js) не годится впрямую —
+// те ключи это строки сообщений конкретных существующих эндпоинтов, а не
+// коды нового контракта. Вызывается только для отказов фазы «Отправка»
+// (сетевых) — отказ фазы «Подготовка» обработан отдельно в runExport.
+function handleExportError(err) {
+    console.error('Не удалось отправить картинку диаграммы Ганта в чат:', err);
+
+    const code = err && err.code;
+
+    if (code === 'BOT_CHAT_NOT_STARTED') {
+        // Действие устранимо самим пользователем — модалка, а не тост
+        // (ux-brief.md §4.1). Один текст на оба исходных случая (chat_id==0
+        // и 403 от Telegram) — пользователю в обоих нужно одно и то же.
+        showErrorModal(
+            'Чтобы получать файлы, нужно один раз открыть личный чат с ботом @EpicScoreBot в Telegram и отправить ему ' +
+            'любое сообщение (например, «/start»). После этого повторите отправку.'
+        );
+        return;
+    }
+    if (code === 'FILE_TOO_LARGE') {
+        // Тот же текст и канал, что у клиентской проверки 50 МБ выше —
+        // для пользователя это одна ситуация, пойманная в разных точках.
+        showErrorModal(FILE_TOO_LARGE_MESSAGE);
+        return;
+    }
+    if (code === 'TELEGRAM_SEND_FAILED') {
+        showToast('Не удалось отправить картинку в чат. Попробуйте ещё раз.', 'error');
+        return;
+    }
+    if (code === 'NOTIFIER_UNAVAILABLE') {
+        showToast('Бот временно недоступен, отправка невозможна. Попробуйте позже.', 'error');
+        return;
+    }
+    // INVALID_FORMAT/INVALID_FILE (400, при штатной работе не должны
+    // происходить — клиент сам собирает файл и передаёт format), сетевой сбой
+    // без err.code (offline, обрыв соединения) и любой не перечисленный явно
+    // код (в т.ч. internal_error/INVALID_REQUEST_BODY) — общий пол для
+    // непредвиденного, без кода и JSON (ux-brief.md §4.6).
+    showToast('Не удалось отправить картинку. Попробуйте ещё раз или обновите страницу.', 'error');
 }
 
 // ── Сборка самодостаточного SVG (задачи 3.1–3.3) ───────────────────────
@@ -570,7 +676,9 @@ function buildLegendLabel(label, x, y) {
     return textEl;
 }
 
-// ── Сериализация, растеризация, отдача файла (задачи 3.4–3.5) ──────────
+// ── Сериализация, растеризация (задачи 3.4–3.5); отдача файла — сборка/
+// отправка выше (buildGanttSvgFile/buildGanttPngFile/sendExportImage,
+// задача 6.1) ────────────────────────────────────────────────────────
 
 function serializeSvg(svgEl) {
     const serialized = new XMLSerializer().serializeToString(svgEl);
@@ -613,22 +721,6 @@ function canvasToBlob(canvas) {
             else reject(new Error('gantt-export-canvas-to-blob-failed'));
         }, 'image/png');
     });
-}
-
-// downloadBlob — способ отдачи файла подтверждён задачей 1.1 фактической
-// проверкой в десктопном Chrome через Playwright: Blob + временная
-// `<a download>` с URL.createObjectURL надёжно инициирует сохранение,
-// в отличие от навигации на серверный эндпоинт (которой здесь и нет —
-// экспорт целиком клиентский).
-function downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // buildExportFileName — имя файла различает команду и момент сохранения

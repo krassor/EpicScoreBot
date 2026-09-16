@@ -100,6 +100,39 @@ export async function apiPost(path, body) {
     }
 }
 
+// apiPostMultipart — POST multipart/form-data (для отправки файлов, например
+// FormData с картинкой диаграммы Ганта — export-gantt-chart-image, задача 6.1).
+// apiGet/apiPost/apiPut/apiDelete шлют только JSON, поэтому обход
+// авторизации/handleHttpError через отдельный fetch() без общего хелпера
+// не годится (ux-brief.md раздел 4) — переиспользуем ту же авторизацию и
+// централизованную обработку ошибок (401/403 и err.code), что и остальные
+// методы. Content-Type НЕ выставляется вручную: для FormData браузер сам
+// формирует заголовок "multipart/form-data; boundary=..." с уникальным
+// boundary — свой Content-Type из getHeaders() (application/json) здесь не
+// подходит и должен быть убран.
+export async function apiPostMultipart(path, formData) {
+    try {
+        const headers = getHeaders();
+        delete headers['Content-Type'];
+
+        const resp = await fetch(`${API_BASE}${path}`, {
+            method: 'POST',
+            headers,
+            body: formData
+        });
+
+        if (!resp.ok) {
+            const errData = await resp.json().catch(() => ({}));
+            handleHttpError(resp.status, errData);
+        }
+
+        return await resp.json();
+    } catch (e) {
+        if (e.message === 'UNAUTHORIZED' || e.message === 'FORBIDDEN') throw e;
+        throw e;
+    }
+}
+
 export async function apiPut(path, body) {
     try {
         const resp = await fetch(`${API_BASE}${path}`, {

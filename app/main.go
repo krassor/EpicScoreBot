@@ -98,8 +98,17 @@ func main() {
 	if tgBot != nil {
 		notifier = tgBot
 	}
+	// docSender — тот же nil-guard и та же typed-nil ловушка, что и у
+	// notifier выше: доставка картинки диаграммы Ганта в чат (ExportGanttImage,
+	// design.md Решение 7 заявки export-gantt-chart-image) недоступна, если
+	// бот не поднялся.
+	var docSender handlers.DocumentSender
+	if tgBot != nil {
+		docSender = tgBot
+	}
 	ganttHandler := handlers.NewGanttHandler(log, ganttService, teamAdminAuth, scoringService, aiClient, cfg.BotConfig, notifier).
-		WithReportServices(epicService, reportService)
+		WithReportServices(epicService, reportService).
+		WithDocumentSender(docSender)
 	router := routers.NewRouter(ganttHandler, cfg.BotConfig.TgbotApiToken)
 	server := httpServer.NewHttpServer(log, router, cfg)
 

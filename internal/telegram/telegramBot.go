@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -219,6 +220,35 @@ func (epicBot *Bot) SendDirectMessage(ctx context.Context, chatID int64, text st
 	_, err := epicBot.b.SendMessage(ctx, p)
 	if err != nil {
 		return fmt.Errorf("bot.SendDirectMessage: %w", err)
+	}
+	return nil
+}
+
+// SendDocumentToChat отправляет байты как документ напрямую в указанный
+// личный чат — используется HTTP-слоем веб-панели (см.
+// handlers.DocumentSender, handlers.ExportGanttImage, design.md Решение 7
+// заявки export-gantt-chart-image) для доставки картинки диаграммы Ганта,
+// собранной клиентом. В отличие от sendDocument ниже (адресует
+// msg.Chat.ID из входящего Telegram-апдейта и читает файл с диска — так
+// уходит PDF-отчёт из бота), здесь адресат и содержимое уже известны
+// вызывающей стороне: chat_id — из HTTP-сессии, данные — из тела запроса.
+func (epicBot *Bot) SendDocumentToChat(ctx context.Context, chatID int64, filename string, data []byte, caption string) error {
+	p := &bot.SendDocumentParams{
+		ChatID: chatID,
+		Document: &models.InputFileUpload{
+			Filename: filename,
+			Data:     bytes.NewReader(data),
+		},
+		Caption: caption,
+	}
+	_, err := epicBot.b.SendDocument(ctx, p)
+	if err != nil {
+		// Ошибка от библиотеки go-telegram/bot оборачивает bot.ErrorForbidden
+		// при коде 403 (бот заблокирован/чат не начат) через %w — этот sentinel
+		// остаётся различим через errors.Is после дополнительного оборачивания
+		// здесь (см. handlers.DocumentSender: handler проверяет её напрямую,
+		// не импортируя internal/telegram).
+		return fmt.Errorf("bot.SendDocumentToChat: %w", err)
 	}
 	return nil
 }

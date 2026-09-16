@@ -65,6 +65,11 @@ func TestMount_TaskAssigneeAndTeamMembersAreProtected(t *testing.T) {
 		// backend §3.4, openspec/changes/add-task-start-constraints.
 		{"GET /tasks/{id}/start-constraint/options without session", http.MethodGet, "/api/gantt/tasks/00000000-0000-0000-0000-000000000000/start-constraint/options"},
 		{"PUT /tasks/{id}/start-constraint without session", http.MethodPut, "/api/gantt/tasks/00000000-0000-0000-0000-000000000000/start-constraint"},
+		// backend §4.4, openspec/changes/export-gantt-chart-image: маршрут под
+		// TelegramAuth, без RoleAuth — здесь проверяется только 401 без
+		// сессии (доступность под "member" покрыта в
+		// handlers/gantt_export_test.go на уровне самого хендлера).
+		{"POST /export/image without session", http.MethodPost, "/api/gantt/export/image"},
 	}
 
 	for _, tc := range cases {

@@ -24,6 +24,7 @@ type GanttHandler struct {
 	scoring    ScoringService
 	ai         AIClient
 	notifier   TelegramNotifier
+	docSender  DocumentSender
 	reportData ReportDataProvider
 	reportGen  PDFReportGenerator
 	cfg        config.BotConfig
@@ -60,6 +61,18 @@ func NewGanttHandler(
 func (h *GanttHandler) WithReportServices(reportData ReportDataProvider, reportGen PDFReportGenerator) *GanttHandler {
 	h.reportData = reportData
 	h.reportGen = reportGen
+	return h
+}
+
+// WithDocumentSender устанавливает отправитель документов в личный чат
+// Telegram, используемый ExportGanttImage (см. handlers/gantt_export.go,
+// design.md Решение 7 заявки export-gantt-chart-image). Тот же приём, что и
+// WithReportServices выше: отдельный метод, а не обязательный параметр
+// NewGanttHandler, чтобы не менять сигнатуру конструктора и не задевать
+// существующие тесты, которые его не используют (см. комментарий у
+// WithReportServices).
+func (h *GanttHandler) WithDocumentSender(sender DocumentSender) *GanttHandler {
+	h.docSender = sender
 	return h
 }
 

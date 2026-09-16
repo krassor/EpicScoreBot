@@ -242,3 +242,26 @@ type AIClient interface {
 type TelegramNotifier interface {
 	SendDirectMessage(ctx context.Context, chatID int64, text string) error
 }
+
+// DocumentSender defines a narrow contract for delivering a file as a
+// Telegram document directly to a chat by ID — используется
+// ExportGanttImage (см. handlers/gantt_export.go, design.md Решение 7
+// заявки export-gantt-chart-image) для доставки собранной клиентом картинки
+// диаграммы Ганта в личный чат пользователя, инициировавшего запрос. По
+// тому же образцу, что и TelegramNotifier, реализуется *telegram.Bot (см.
+// internal/telegram.Bot.SendDocumentToChat) структурно, без импорта пакета
+// telegram в handlers. TelegramNotifier намеренно не расширяется этим
+// методом — его потребитель (рассылка напоминаний) документы не
+// отправляет.
+//
+// Отказ Telegram с кодом 403 (бот заблокирован пользователем либо личный
+// чат ни разу не открыт) должен быть различим программно, а не разбором
+// текста ошибки строкой. Реализация оборачивает для этого случая
+// bot.ErrorForbidden стороннего пакета github.com/go-telegram/bot (тот же
+// пакет уже используется внутри internal/telegram и уже числится в
+// зависимостях проекта — новая зависимость не добавляется) — handler
+// проверяет её через errors.Is(err, tgbot.ErrorForbidden), не импортируя
+// internal/telegram.
+type DocumentSender interface {
+	SendDocumentToChat(ctx context.Context, chatID int64, filename string, data []byte, caption string) error
+}
