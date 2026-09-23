@@ -44,7 +44,44 @@ function handleHttpError(status, errData) {
             appEl.classList.add('hidden');
             document.getElementById('denied-overlay').classList.remove('hidden');
 
-            const error = new Error('FORBIDDEN');
+            // Причина отказа различается кодом от сервера (Решение 4, design.md):
+            // «не задан @username» — исправимо самим пользователем, «не зарегистрирован» —
+            // требует администратора. Заполняем разметку оверлея по коду (ux-brief).
+            const code = errData?.error?.code || '';
+            const message = errData?.error?.message || '';
+
+            const card = document.getElementById('denied-card');
+            const icon = document.getElementById('denied-icon');
+            const title = document.getElementById('denied-title');
+            const messageEl = document.getElementById('denied-message');
+            const hint = document.getElementById('denied-hint');
+            const btnRefresh = document.getElementById('denied-btn-refresh');
+
+            if (code === 'USERNAME_REQUIRED') {
+                card.classList.remove('auth-card--danger');
+                card.classList.add('auth-card--warning');
+                icon.textContent = '🆔';
+                title.textContent = 'Укажите @username в Telegram';
+                messageEl.textContent = message || 'У вас не задан @username в Telegram. Без него мы не можем найти вас в списке участников.';
+                hint.textContent = 'Откройте Telegram → Настройки → укажите @username, затем вернитесь сюда и нажмите «Проверить снова».';
+                btnRefresh.textContent = 'Проверить снова';
+            } else {
+                // По умолчанию: USER_NOT_REGISTERED, пустой/незнакомый код, пустой message.
+                card.classList.remove('auth-card--warning');
+                card.classList.add('auth-card--danger');
+                icon.textContent = '🚫';
+                title.textContent = 'Доступ ограничен';
+                messageEl.textContent = message || 'Вы не являетесь участником ни одной из зарегистрированных команд и не зарегистрированы как администратор.';
+                hint.textContent = 'Если доступ вам уже выдали, обновите проверку.';
+                btnRefresh.textContent = 'Обновить';
+            }
+
+            // Фокус на заголовок — экранный диктор объявляет новый диалог,
+            // клавиатурный фокус не остаётся на body (web-modal-accessibility).
+            title.focus();
+
+            const error = new Error(message || 'FORBIDDEN');
+            error.code = code || 'UNKNOWN_ERROR';
             error.status = 403;
             throw error;
         }

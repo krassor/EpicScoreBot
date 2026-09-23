@@ -32,12 +32,21 @@ func (r *Repository) CreateUser(ctx context.Context, firstName, lastName string,
 }
 
 // FindUserByTelegramID returns a user by Telegram ID.
+//
+// Несмотря на имя параметра (сохранено ради обратной совместимости
+// сигнатуры — design.md, Решение 3 заявки fix-webapp-user-identity),
+// значение — это нормализованный ключ справочника (username, а не
+// числовой Telegram ID): вызывающая сторона передаёт
+// middleware.UserSession.DirectoryKey(). Сравнение приводит обе стороны к
+// нижнему регистру и срезает ведущий "@", поскольку users.telegram_id
+// заполнялся разными путями (бот срезает "@", CSV-импорт — нет) и
+// содержит оба написания. Данные не мигрируются, миграции нет.
 func (r *Repository) FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error) {
 	op := "Repository.FindUserByTelegramID"
 	var user domain.User
 	query := `SELECT id, first_name, last_name, telegram_id, chat_id, weight,
 		created_at, updated_at
-		FROM users WHERE telegram_id = $1`
+		FROM users WHERE lower(ltrim(telegram_id, '@')) = $1`
 	err := r.DB.QueryRowContext(ctx, query, telegramID).
 		Scan(&user.ID, &user.FirstName, &user.LastName,
 			&user.TelegramID, &user.ChatID, &user.Weight,

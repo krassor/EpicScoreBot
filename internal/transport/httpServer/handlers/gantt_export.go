@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"bytes"
-	"database/sql"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -41,10 +41,14 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 // export-gantt-chart-image). Сервер ничего не парсит и не рендерит —
 // только минимально проверяет содержимое (сигнатуру) и пересылает байты.
 //
-// Адресат берётся ИСКЛЮЧИТЕЛЬНО из сессии (session.TelegramID → chat_id
-// пользователя в БД), никогда из тела запроса — это снимает вопрос о
-// поверхности атаки: худшее, чего добивается злоумышленник, — отправка
-// произвольного файла самому себе.
+// Адресат берётся ИСКЛЮЧИТЕЛЬНО из сессии (session.TelegramID — числовой
+// Telegram user ID, совпадающий с ID личного чата с этим пользователем,
+// design.md Решение 1 заявки fix-webapp-user-identity), никогда из тела
+// запроса — это снимает вопрос о поверхности атаки: худшее, чего
+// добивается злоумышленник, — отправка произвольного файла самому себе.
+// Справочник пользователей (users) в резолвинге адресата не участвует
+// вовсе: доставка не зависит ни от того, заведён ли пользователь в
+// справочнике, ни от того, зафиксирован ли системой его chat_id.
 func (h *GanttHandler) ExportGanttImage(w http.ResponseWriter, r *http.Request) {
 	op := "handlers.ExportGanttImage"
 	log := h.log.With(slog.String("op", op))
@@ -115,25 +119,26 @@ func (h *GanttHandler) ExportGanttImage(w http.ResponseWriter, r *http.Request) 
 
 	filename := sanitizeExportImageFilename(r.FormValue("filename"), format)
 
-	// Адресат — ТОЛЬКО из сессии, не из тела запроса.
-	// Отсутствие пользователя в БД (sql.ErrNoRows) — то же состояние, что и
-	// нулевой chat_id: боту некуда писать. Прочие ошибки БД — сбой сервера,
-	// а не действие пользователя: подсказка «откройте чат» здесь назвала бы
-	// неверную причину.
-	user, err := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		log.Error("failed to find user", slog.String("error", err.Error()))
+	// Адресат — ТОЛЬКО из сессии, не из тела запроса (design.md Решение 1).
+	// session.TelegramID — числовой Telegram user ID; в Telegram ID личного
+	// чата с пользователем совпадает с ID самого пользователя, поэтому он
+	// используется как chatID напрямую, без обращения к справочнику
+	// пользователей и без проверки user.ChatID. Оба пути создания сессии
+	// (Login Widget и Mini App, см. middleware/telegram_auth.go) кладут в
+	// это поле число, так что ошибка разбора здесь означает сбой сервера
+	// (повреждённая или подделанная сессия), а не то, что пользователь не
+	// начал чат с ботом — подсказка «откройте чат» тут назвала бы неверную
+	// причину.
+	chatID, err := strconv.ParseInt(session.TelegramID, 10, 64)
+	if err != nil {
+		log.Error("session telegram_id is not a valid chat id",
+			slog.String("telegram_id", session.TelegramID), slog.String("error", err.Error()))
 		writeErrorCode(w, http.StatusInternalServerError, "internal_error", "failed to resolve recipient")
-		return
-	}
-	if err != nil || user == nil || user.ChatID == 0 {
-		writeErrorCode(w, http.StatusConflict, "BOT_CHAT_NOT_STARTED",
-			"откройте личный чат с ботом в Telegram, чтобы получать файлы")
 		return
 	}
 
 	const caption = "📊 Диаграмма Ганта"
-	if err := h.docSender.SendDocumentToChat(r.Context(), user.ChatID, filename, data, caption); err != nil {
+	if err := h.docSender.SendDocumentToChat(r.Context(), chatID, filename, data, caption); err != nil {
 		if errors.Is(err, tgbot.ErrorForbidden) {
 			writeErrorCode(w, http.StatusConflict, "BOT_CHAT_NOT_STARTED",
 				"откройте личный чат с ботом в Telegram, чтобы получать файлы")

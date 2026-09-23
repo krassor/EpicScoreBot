@@ -3,7 +3,6 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"testing"
 
 	"EpicScoreBot/internal/config"
-	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/transport/httpServer/middleware"
 
 	"log/slog"
@@ -21,18 +19,13 @@ import (
 	tgbot "github.com/go-telegram/bot"
 )
 
-// exportImageTestRepo — репозиторий-заглушка для тестов ExportGanttImage,
-// отдающая ровно ту часть Repository, которая нужна хендлеру: пользователя
-// по telegram_id сессии (для разрешения chat_id получателя).
+// exportImageTestRepo — репозиторий-заглушка для тестов ExportGanttImage.
+// После перехода на design.md Решение 1 заявки fix-webapp-user-identity
+// адресат картинки резолвится из session.TelegramID напрямую, без
+// обращения к справочнику пользователей, поэтому хендлеру достаточно
+// встроенного Repository — собственных полей заглушке больше не нужно.
 type exportImageTestRepo struct {
 	Repository
-
-	user    *domain.User
-	userErr error
-}
-
-func (r *exportImageTestRepo) FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error) {
-	return r.user, r.userErr
 }
 
 // exportImageTestSender — заглушка DocumentSender, фиксирующая параметры
@@ -115,7 +108,7 @@ func TestExportGanttImage(t *testing.T) {
 	}
 
 	t.Run("notifier_unavailable_returns_500", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		// DocumentSender не устанавливается — h.docSender остаётся nil,
 		// как и notifier в app/main.go, если бот не поднялся.
 		handler := newHandler(repo, nil)
@@ -131,7 +124,7 @@ func TestExportGanttImage(t *testing.T) {
 	})
 
 	t.Run("invalid_format_returns_400", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
@@ -149,7 +142,7 @@ func TestExportGanttImage(t *testing.T) {
 	})
 
 	t.Run("content_mismatch_returns_400_invalid_file", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
@@ -168,7 +161,7 @@ func TestExportGanttImage(t *testing.T) {
 	})
 
 	t.Run("not_multipart_returns_400_invalid_request_body", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
@@ -188,7 +181,7 @@ func TestExportGanttImage(t *testing.T) {
 	})
 
 	t.Run("missing_file_returns_400_invalid_file", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
@@ -207,7 +200,7 @@ func TestExportGanttImage(t *testing.T) {
 	})
 
 	t.Run("body_too_large_returns_413", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
@@ -225,8 +218,12 @@ func TestExportGanttImage(t *testing.T) {
 		}
 	})
 
-	t.Run("user_not_found_returns_409", func(t *testing.T) {
-		repo := &exportImageTestRepo{userErr: fmt.Errorf("Repository.FindUserByTelegramID: %w", sql.ErrNoRows)}
+	// design.md Решение 1 заявки fix-webapp-user-identity: адресат
+	// резолвится из session.TelegramID напрямую, без обращения к
+	// справочнику пользователей — доставка успешна, даже если пользователь
+	// в users не заведён вовсе (репозиторий не настроен отдавать никого).
+	t.Run("success_without_user_registered_in_directory", func(t *testing.T) {
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
@@ -234,22 +231,25 @@ func TestExportGanttImage(t *testing.T) {
 		rr := httptest.NewRecorder()
 		handler.ExportGanttImage(rr, req)
 
-		if rr.Code != http.StatusConflict {
-			t.Fatalf("expected 409, got %d. Body: %s", rr.Code, rr.Body.String())
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
 		}
-		assertErrorCode(t, rr, "BOT_CHAT_NOT_STARTED")
-		if len(sender.calls) != 0 {
-			t.Error("expected no send attempt for unknown user")
+		if len(sender.calls) != 1 || sender.calls[0].chatID != 42 {
+			t.Fatalf("expected delivery to session's numeric telegram_id (42), got %+v", sender.calls)
 		}
 	})
 
-	// Сбой БД — не повод советовать пользователю «открыть чат с ботом».
-	t.Run("repository_error_returns_500_not_chat_hint", func(t *testing.T) {
-		repo := &exportImageTestRepo{userErr: errors.New("connection refused")}
+	// Неразбираемый session.TelegramID — сбой сервера (оба пути создания
+	// сессии кладут туда число, см. middleware/telegram_auth.go), а не
+	// «чат не начат»: подсказка «откройте чат» здесь назвала бы неверную
+	// причину (design.md Решение 1).
+	t.Run("non_numeric_telegram_id_returns_500_internal_error", func(t *testing.T) {
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
-		req := buildExportImageRequest(t, "svg", "chart.svg", validSVGContent(), session)
+		brokenSession := &middleware.UserSession{TelegramID: "not-a-number", Username: "member_user"}
+		req := buildExportImageRequest(t, "svg", "chart.svg", validSVGContent(), brokenSession)
 		rr := httptest.NewRecorder()
 		handler.ExportGanttImage(rr, req)
 
@@ -258,30 +258,12 @@ func TestExportGanttImage(t *testing.T) {
 		}
 		assertErrorCode(t, rr, "internal_error")
 		if len(sender.calls) != 0 {
-			t.Error("expected no send attempt on repository error")
-		}
-	})
-
-	t.Run("chat_not_started_zero_chat_id_returns_409", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 0}}
-		sender := &exportImageTestSender{}
-		handler := newHandler(repo, sender)
-
-		req := buildExportImageRequest(t, "svg", "chart.svg", validSVGContent(), session)
-		rr := httptest.NewRecorder()
-		handler.ExportGanttImage(rr, req)
-
-		if rr.Code != http.StatusConflict {
-			t.Fatalf("expected 409, got %d. Body: %s", rr.Code, rr.Body.String())
-		}
-		assertErrorCode(t, rr, "BOT_CHAT_NOT_STARTED")
-		if len(sender.calls) != 0 {
-			t.Error("expected no send attempt when chat_id is zero")
+			t.Error("expected no send attempt for non-numeric telegram_id")
 		}
 	})
 
 	t.Run("telegram_forbidden_returns_409_bot_chat_not_started", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{err: fmt.Errorf("bot.SendDocumentToChat: %w", tgbot.ErrorForbidden)}
 		handler := newHandler(repo, sender)
 
@@ -296,7 +278,7 @@ func TestExportGanttImage(t *testing.T) {
 	})
 
 	t.Run("other_send_failure_returns_502", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{err: errors.New("network timeout")}
 		handler := newHandler(repo, sender)
 
@@ -311,7 +293,7 @@ func TestExportGanttImage(t *testing.T) {
 	})
 
 	t.Run("success_returns_200_sent", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 777}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
@@ -336,8 +318,8 @@ func TestExportGanttImage(t *testing.T) {
 			t.Fatalf("expected exactly one send call, got %d", len(sender.calls))
 		}
 		call := sender.calls[0]
-		if call.chatID != 777 {
-			t.Errorf("expected chatID=777, got %d", call.chatID)
+		if call.chatID != 42 {
+			t.Errorf("expected chatID=42 (from session.TelegramID), got %d", call.chatID)
 		}
 		if call.filename != "gantt-team-2026-01-01_12-00.png" {
 			t.Errorf("unexpected filename: %q", call.filename)
@@ -347,16 +329,17 @@ func TestExportGanttImage(t *testing.T) {
 		}
 	})
 
-	// Адресат берётся ИСКЛЮЧИТЕЛЬНО из сессии (session.TelegramID → chat_id
-	// в БД), а не из тела запроса — тело не содержит и не может содержать
-	// получателя вовсе (design.md Решение 7), но отдельно проверяем, что
-	// смена сессии при неизменном теле запроса меняет адресата.
+	// Адресат берётся ИСКЛЮЧИТЕЛЬНО из сессии (session.TelegramID —
+	// числовой Telegram user ID, совпадающий с ID личного чата, design.md
+	// Решение 1), а не из тела запроса — тело не содержит и не может
+	// содержать получателя вовсе, но отдельно проверяем, что смена сессии
+	// при неизменном теле запроса меняет адресата.
 	t.Run("recipient_comes_from_session_not_request_body", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 999}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
-		otherSession := &middleware.UserSession{TelegramID: "other", Username: "someone_else"}
+		otherSession := &middleware.UserSession{TelegramID: "999", Username: "someone_else"}
 		req := buildExportImageRequest(t, "png", "chart.png", validPNGContent(), otherSession)
 		rr := httptest.NewRecorder()
 		handler.ExportGanttImage(rr, req)
@@ -365,12 +348,12 @@ func TestExportGanttImage(t *testing.T) {
 			t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
 		}
 		if len(sender.calls) != 1 || sender.calls[0].chatID != 999 {
-			t.Fatalf("expected recipient resolved from session's user (chat_id=999), got %+v", sender.calls)
+			t.Fatalf("expected recipient resolved from session's telegram_id (chat_id=999), got %+v", sender.calls)
 		}
 	})
 
 	t.Run("unauthenticated_returns_401", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
@@ -387,7 +370,7 @@ func TestExportGanttImage(t *testing.T) {
 	})
 
 	t.Run("empty_filename_falls_back_to_default_name", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 
@@ -404,7 +387,7 @@ func TestExportGanttImage(t *testing.T) {
 	})
 
 	t.Run("unsafe_filename_characters_are_stripped", func(t *testing.T) {
-		repo := &exportImageTestRepo{user: &domain.User{ChatID: 111}}
+		repo := &exportImageTestRepo{}
 		sender := &exportImageTestSender{}
 		handler := newHandler(repo, sender)
 

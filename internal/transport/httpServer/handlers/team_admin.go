@@ -87,7 +87,7 @@ func (h *GanttHandler) AssignTeamAdmin(w http.ResponseWriter, r *http.Request) {
 	// Repository.AssignTeamAdmin.
 	var assignedBy uuid.UUID
 	if session := userSessionFrom(r); session != nil {
-		if superadmin, err := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID); err == nil && superadmin != nil {
+		if superadmin, err := h.repo.FindUserByTelegramID(r.Context(), session.DirectoryKey()); err == nil && superadmin != nil {
 			assignedBy = superadmin.ID
 		}
 	}

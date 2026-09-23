@@ -87,10 +87,15 @@ func TestAssignTeamAdmin(t *testing.T) {
 
 	t.Run("happy_path", func(t *testing.T) {
 		superadminUser := &domain.User{ID: uuid.New(), TelegramID: "1"}
+		// mockRepository.FindUserByTelegramID ищет по ключу, который ему
+		// передают — а хендлер передаёт session.DirectoryKey() (нормализо-
+		// ванный Username, design.md Решение 2 заявки
+		// fix-webapp-user-identity), а не TelegramID сессии. Ключ карты —
+		// "root" (username из superadminCtx ниже), а не числовой "1".
 		repo := &mockRepository{
 			users: map[string]*domain.User{
 				"target": {ID: userID, TelegramID: "target"},
-				"1":      superadminUser,
+				"root":   superadminUser,
 			},
 			team: &domain.Team{ID: teamID, Name: "Team A"},
 		}

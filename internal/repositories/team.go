@@ -83,6 +83,15 @@ func (r *Repository) GetAllTeams(ctx context.Context) ([]domain.Team, error) {
 }
 
 // GetTeamsByUserTelegramID returns all teams a user belongs to.
+//
+// Несмотря на имя параметра (сохранено ради обратной совместимости
+// сигнатуры — design.md, Решение 3 заявки fix-webapp-user-identity),
+// значение — это нормализованный ключ справочника (username, а не
+// числовой Telegram ID): вызывающая сторона передаёт
+// middleware.UserSession.DirectoryKey(). Сравнение нормализует колонку
+// users.telegram_id (нижний регистр, без ведущего "@") тем же приёмом,
+// что и FindUserByTelegramID — по той же причине: разные пути заполнения
+// справочника оставили в нём оба написания.
 func (r *Repository) GetTeamsByUserTelegramID(ctx context.Context, telegramID string) ([]domain.Team, error) {
 	op := "Repository.GetTeamsByUserTelegramID"
 	var teams []domain.Team
@@ -90,7 +99,7 @@ func (r *Repository) GetTeamsByUserTelegramID(ctx context.Context, telegramID st
 		FROM teams t
 		INNER JOIN user_teams ut ON t.id = ut.team_id
 		INNER JOIN users u ON u.id = ut.user_id
-		WHERE u.telegram_id = $1
+		WHERE lower(ltrim(u.telegram_id, '@')) = $1
 		ORDER BY t.name`
 	rows, err := r.DB.QueryContext(ctx, query, telegramID)
 	if err != nil {

@@ -26,6 +26,23 @@ type UserSession struct {
 	FirstName  string `json:"first_name"`
 }
 
+// DirectoryKey возвращает нормализованный ключ опознания сессии в
+// справочнике пользователей users (design.md, Решение 2 заявки
+// fix-webapp-user-identity): нижний регистр, без ведущего "@", без
+// пробельных краёв — тот же признак, по которому пользователя заводит и
+// находит бот (username, а не числовой Telegram ID). Пустая строка
+// означает, что у пользователя не задан @username в Telegram — такую
+// сессию нельзя сопоставить со справочником (см. Решение 4).
+//
+// Значение вычисляется на лету из Username при каждом обращении, а не
+// хранится отдельным полем сериализуемой сессии — иначе ранее выданные
+// cookie (см. CreateSessionToken), выписанные до появления этого метода,
+// молча резолвились бы в пустой ключ вместо корректного (альтернатива Б в
+// design.md отвергнута по этой причине).
+func (s UserSession) DirectoryKey() string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(s.Username), "@"))
+}
+
 // CreateSessionToken generates a signed token: base64(json) + "." + HMAC(base64(json)).
 func CreateSessionToken(session UserSession, secret string) (string, error) {
 	data, err := json.Marshal(session)

@@ -47,9 +47,9 @@ func (h *GanttHandler) SubmitEpicScore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Find user by Telegram ID
-	user, err := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
+	user, err := h.repo.FindUserByTelegramID(r.Context(), session.DirectoryKey())
 	if err != nil || user == nil {
-		h.log.Error("failed to find user by telegram id", slog.String("op", op), slog.String("tg_id", session.TelegramID))
+		h.log.Error("failed to find user by telegram id", slog.String("op", op), slog.String("tg_id", session.DirectoryKey()))
 		writeError(w, http.StatusForbidden, "user not registered in system")
 		return
 	}
@@ -129,9 +129,9 @@ func (h *GanttHandler) SubmitRiskScore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Find user by Telegram ID
-	user, err := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
+	user, err := h.repo.FindUserByTelegramID(r.Context(), session.DirectoryKey())
 	if err != nil || user == nil {
-		h.log.Error("failed to find user by telegram id", slog.String("op", op), slog.String("tg_id", session.TelegramID))
+		h.log.Error("failed to find user by telegram id", slog.String("op", op), slog.String("tg_id", session.DirectoryKey()))
 		writeError(w, http.StatusForbidden, "user not registered in system")
 		return
 	}
@@ -184,7 +184,7 @@ func (h *GanttHandler) GetMyScores(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find user by Telegram ID
-	user, err := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
+	user, err := h.repo.FindUserByTelegramID(r.Context(), session.DirectoryKey())
 	if err != nil || user == nil {
 		writeError(w, http.StatusForbidden, "user not registered")
 		return

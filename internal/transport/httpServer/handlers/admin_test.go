@@ -184,9 +184,15 @@ type mockNotifier struct {
 }
 
 func TestGetProfile(t *testing.T) {
+	// mockRepository.FindUserByTelegramID ищет по ключу, который ему
+	// передаёт хендлер — а он передаёт session.DirectoryKey() (нормализо-
+	// ванный Username: нижний регистр, без ведущего "@"), а не
+	// session.TelegramID (числовой Telegram ID) — design.md Решение 2
+	// заявки fix-webapp-user-identity. Ключ карты — "ivan_tg" (username), а
+	// не числовой "12345".
 	repo := &mockRepository{
 		users: map[string]*domain.User{
-			"12345": {
+			"ivan_tg": {
 				ID:         uuid.New(),
 				TelegramID: "12345",
 				FirstName:  "Ivan",
@@ -247,6 +253,48 @@ func TestGetProfile(t *testing.T) {
 	if resp["role"] != "superadmin" {
 		t.Errorf("expected superadmin role, got %v", resp["role"])
 	}
+
+	// Case 5 и 6 — отдельный репозиторий и хендлер: repo.teamAdminOfAny
+	// после Case 3 уже true и не зависит от переданного ключа (заглушка
+	// mockRepository.IsTeamAdminOfAny игнорирует параметр), поэтому общий
+	// repo превратил бы обоих гостей ниже в "admin".
+
+	// Case 5: у пользователя не задан @username — отказ отличим от «не
+	// зарегистрирован» (design.md Решение 4 заявки
+	// fix-webapp-user-identity), код USERNAME_REQUIRED.
+	t.Run("username_required", func(t *testing.T) {
+		guestRepo := &mockRepository{}
+		guestHandler := NewGanttHandler(slog.Default(), &mockGanttService{}, guestRepo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
+
+		noUsernameSession := &middleware.UserSession{TelegramID: "99999", Username: "", FirstName: "Noname"}
+		reqNoUsername := httptest.NewRequest("GET", "/api/gantt/profile", nil)
+		reqNoUsername = reqNoUsername.WithContext(context.WithValue(reqNoUsername.Context(), middleware.UserSessionKey, noUsernameSession))
+
+		rrNoUsername := httptest.NewRecorder()
+		guestHandler.GetProfile(rrNoUsername, reqNoUsername)
+		if rrNoUsername.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d. Body: %s", rrNoUsername.Code, rrNoUsername.Body.String())
+		}
+		assertErrorCode(t, rrNoUsername, "USERNAME_REQUIRED")
+	})
+
+	// Case 6: username задан, но пользователь не заведён в справочнике —
+	// отказ USER_NOT_REGISTERED, отличный от Case 5.
+	t.Run("user_not_registered", func(t *testing.T) {
+		guestRepo := &mockRepository{}
+		guestHandler := NewGanttHandler(slog.Default(), &mockGanttService{}, guestRepo, &mockScoringService{}, &mockAIClient{}, cfg, &mockNotifier{})
+
+		unknownSession := &middleware.UserSession{TelegramID: "88888", Username: "unknown_guy", FirstName: "Guest"}
+		reqUnknown := httptest.NewRequest("GET", "/api/gantt/profile", nil)
+		reqUnknown = reqUnknown.WithContext(context.WithValue(reqUnknown.Context(), middleware.UserSessionKey, unknownSession))
+
+		rrUnknown := httptest.NewRecorder()
+		guestHandler.GetProfile(rrUnknown, reqUnknown)
+		if rrUnknown.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d. Body: %s", rrUnknown.Code, rrUnknown.Body.String())
+		}
+		assertErrorCode(t, rrUnknown, "USER_NOT_REGISTERED")
+	})
 }
 
 func TestBulkCreateUsers(t *testing.T) {

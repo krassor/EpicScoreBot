@@ -81,7 +81,7 @@ func (h *GanttHandler) SetTeamScheduleSettings(w http.ResponseWriter, r *http.Re
 	}
 
 	if role != "superadmin" {
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, teamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), teamID)
 		if err != nil || !isAdminOf {
 			writeErrorCode(w, http.StatusForbidden, "FORBIDDEN",
 				"вы не администратор этой команды")

@@ -177,7 +177,7 @@ func (h *GanttHandler) UpdateStory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !isSuper {
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, story.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), story.TeamID)
 		if err != nil || !isAdminOf {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return

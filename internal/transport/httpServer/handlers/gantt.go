@@ -124,7 +124,7 @@ func (h *GanttHandler) GetTeams(w http.ResponseWriter, r *http.Request) {
 		role = "superadmin"
 	} else {
 		// 2. Is team-admin (team_admins в БД, team-scoped) хотя бы одной команды?
-		isAdmin, errAdmin := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		isAdmin, errAdmin := h.repo.IsTeamAdminOfAny(r.Context(), session.DirectoryKey())
 		if errAdmin != nil {
 			isAdmin = false
 		}
@@ -133,7 +133,7 @@ func (h *GanttHandler) GetTeams(w http.ResponseWriter, r *http.Request) {
 			// Team-admin видит команды, где он назначен team-admin (не
 			// обязательно совпадает с командами членства через user_teams).
 			var teamIDs []uuid.UUID
-			teamIDs, err = h.repo.AdminTeamIDs(r.Context(), session.TelegramID)
+			teamIDs, err = h.repo.AdminTeamIDs(r.Context(), session.DirectoryKey())
 			if err == nil {
 				for _, tid := range teamIDs {
 					if t, errT := h.repo.GetTeamByID(r.Context(), tid); errT == nil && t != nil {
@@ -144,13 +144,13 @@ func (h *GanttHandler) GetTeams(w http.ResponseWriter, r *http.Request) {
 			role = "admin"
 		} else {
 			// 3. Regular member?
-			user, errDb := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
+			user, errDb := h.repo.FindUserByTelegramID(r.Context(), session.DirectoryKey())
 			if errDb != nil || user == nil {
 				// 4. Access Denied
 				writeError(w, http.StatusForbidden, "access denied")
 				return
 			}
-			teams, err = h.repo.GetTeamsByUserTelegramID(r.Context(), session.TelegramID)
+			teams, err = h.repo.GetTeamsByUserTelegramID(r.Context(), session.DirectoryKey())
 			role = "member"
 		}
 	}
@@ -700,13 +700,13 @@ func (h *GanttHandler) sessionRole(w http.ResponseWriter, r *http.Request) (*mid
 	if isSuperAdminSession(session, &h.cfg) {
 		return session, "superadmin", true
 	}
-	if isAdmin, _ := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID); isAdmin {
+	if isAdmin, _ := h.repo.IsTeamAdminOfAny(r.Context(), session.DirectoryKey()); isAdmin {
 		return session, "admin", true
 	}
 	// Regular member — same DB-existence check GetProfile/GetTeams already
 	// perform: an unrecognized Telegram user is denied outright, not
 	// silently treated as a member.
-	user, err := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
+	user, err := h.repo.FindUserByTelegramID(r.Context(), session.DirectoryKey())
 	if err != nil || user == nil {
 		writeErrorCode(w, http.StatusForbidden, "FORBIDDEN", "access denied")
 		return nil, "", false
@@ -778,7 +778,7 @@ func (h *GanttHandler) SetTaskAssignee(w http.ResponseWriter, r *http.Request) {
 	// (AdminSubmitEpicScore) — superadmin проверку проходит без
 	// ограничения.
 	if role != "superadmin" {
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epic.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), epic.TeamID)
 		if err != nil || !isAdminOf {
 			writeErrorCode(w, http.StatusForbidden, "FORBIDDEN",
 				"вы не администратор команды, которой принадлежит эта задача")
@@ -927,7 +927,7 @@ func (h *GanttHandler) SetTaskStartConstraint(w http.ResponseWriter, r *http.Req
 	// команды, эта проверка не даёт admin-у команды A менять ограничение
 	// задачи команды B.
 	if role != "superadmin" {
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epic.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), epic.TeamID)
 		if err != nil || !isAdminOf {
 			writeErrorCode(w, http.StatusForbidden, "FORBIDDEN",
 				"вы не администратор команды, которой принадлежит эта задача")
@@ -1306,9 +1306,19 @@ func (h *GanttHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 
 	if isSuperAdmin {
 		role = "superadmin"
+	} else if session.DirectoryKey() == "" {
+		// Пустой DirectoryKey() — у пользователя не задан @username в
+		// Telegram, опознать его в справочнике невозможно в принципе. Это
+		// отличная от «не найден в справочнике» причина отказа (design.md
+		// Решение 4 заявки fix-webapp-user-identity): GetProfile — именно
+		// тот ответ, который разбирает фронтенд, поэтому код структурный
+		// (writeErrorCode), а не просто текст в writeError.
+		writeErrorCode(w, http.StatusForbidden, "USERNAME_REQUIRED",
+			"У вас не задан @username в Telegram. Установите его в настройках профиля.")
+		return
 	} else {
 		// 2. Is team-admin (team_admins в БД, team-scoped) хотя бы одной команды?
-		isAdmin, errAdmin := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		isAdmin, errAdmin := h.repo.IsTeamAdminOfAny(r.Context(), session.DirectoryKey())
 		if errAdmin != nil {
 			isAdmin = false
 		}
@@ -1316,10 +1326,14 @@ func (h *GanttHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		if isAdmin {
 			role = "admin"
 		} else {
-			// 3. Regular member?
-			user, errDb := h.repo.FindUserByTelegramID(r.Context(), session.TelegramID)
+			// 3. Regular member? Непустой DirectoryKey() без совпадения в
+			// справочнике — пользователь просто не зарегистрирован
+			// (отдельная причина отказа от «нет @username», design.md
+			// Решение 4).
+			user, errDb := h.repo.FindUserByTelegramID(r.Context(), session.DirectoryKey())
 			if errDb != nil || user == nil {
-				writeError(w, http.StatusForbidden, "access denied")
+				writeErrorCode(w, http.StatusForbidden, "USER_NOT_REGISTERED",
+					"Вы не зарегистрированы в системе. Обратитесь к администратору.")
 				return
 			}
 			role = "member"

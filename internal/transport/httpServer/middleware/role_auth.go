@@ -12,14 +12,22 @@ import (
 )
 
 // UserFinder defines the interface to find a user by their Telegram ID.
+//
+// Несмотря на имя параметра (сохранено ради обратной совместимости
+// сигнатуры Repository.FindUserByTelegramID), вызывающая сторона передаёт
+// сюда UserSession.DirectoryKey() — нормализованный ключ справочника
+// (username), а не UserSession.TelegramID (числовой Telegram ID) —
+// design.md Решение 2 заявки fix-webapp-user-identity.
 type UserFinder interface {
 	FindUserByTelegramID(ctx context.Context, telegramID string) (*domain.User, error)
 }
 
-// TeamAdminChecker сообщает, является ли пользователь (по telegram_id
-// HTTP-сессии) team-admin хотя бы одной команды. Роль "admin" в RoleAuth
-// теперь team-scoped (таблица team_admins в БД) вместо глобального списка
-// BotConfig.Admins — см. design.md изменения add-team-admin.
+// TeamAdminChecker сообщает, является ли пользователь (по DirectoryKey()
+// HTTP-сессии — нормализованному username, design.md Решение 2 заявки
+// fix-webapp-user-identity) team-admin хотя бы одной команды. Роль "admin"
+// в RoleAuth теперь team-scoped (таблица team_admins в БД) вместо
+// глобального списка BotConfig.Admins — см. design.md изменения
+// add-team-admin.
 type TeamAdminChecker interface {
 	IsTeamAdminOfAny(ctx context.Context, telegramID string) (bool, error)
 }
@@ -71,20 +79,39 @@ func RoleAuth(finder UserFinder, teamAdminChecker TeamAdminChecker, cfg config.B
 
 			if isSuperAdmin {
 				role = "superadmin"
+			} else if session.DirectoryKey() == "" {
+				// Пустой DirectoryKey() означает, что у пользователя не
+				// задан @username в Telegram — опознать его в справочнике
+				// невозможно в принципе, и это отличная от «не найден в
+				// справочнике» причина отказа: сообщаем именно её, тем же по
+				// смыслу текстом, что уже выдаёт бот (design.md Решение 4
+				// заявки fix-webapp-user-identity). Проверяется до любого
+				// обращения к справочнику — по пустому ключу там всё равно
+				// нечего искать.
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"error":"У вас не задан @username в Telegram. Установите его в настройках профиля."}`))
+				return
 			} else {
 				// 2. Check team-admin role (team_admins в БД, team-scoped):
-				// admin хотя бы одной команды.
-				isAdmin, _ := teamAdminChecker.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+				// admin хотя бы одной команды. Ключ опознания в справочнике —
+				// DirectoryKey() (нормализованный Username), а не TelegramID
+				// (числовой Telegram ID) — design.md, Решение 2 заявки
+				// fix-webapp-user-identity.
+				isAdmin, _ := teamAdminChecker.IsTeamAdminOfAny(r.Context(), session.DirectoryKey())
 
 				if isAdmin {
 					role = "admin"
 				} else {
-					// 3. Check regular member
-					user, err := finder.FindUserByTelegramID(r.Context(), session.TelegramID)
+					// 3. Check regular member. Отсутствие совпадения в
+					// справочнике при непустом DirectoryKey() — отдельная
+					// причина отказа от «нет @username» (design.md Решение
+					// 4): пользователь просто не зарегистрирован.
+					user, err := finder.FindUserByTelegramID(r.Context(), session.DirectoryKey())
 					if err != nil || user == nil {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusForbidden)
-						w.Write([]byte(`{"error":"access denied"}`))
+						w.Write([]byte(`{"error":"Вы не зарегистрированы в системе. Обратитесь к администратору."}`))
 						return
 					}
 					role = "member"

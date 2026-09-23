@@ -61,7 +61,7 @@ func (h *GanttHandler) NotifyEpicReminders(w http.ResponseWriter, r *http.Reques
 	// AdminSubmitEpicScore/admin_scores.go).
 	isSuper := isSuperAdminSession(session, &h.cfg)
 	if !isSuper {
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epic.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), epic.TeamID)
 		if err != nil || !isAdminOf {
 			writeErrorCode(w, http.StatusForbidden, "FORBIDDEN", "forbidden")
 			return

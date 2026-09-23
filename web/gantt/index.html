@@ -48,12 +48,13 @@
     </div>
 
     <!-- Denied overlay -->
-    <div id="denied-overlay" class="auth-overlay hidden">
-        <div class="auth-card" style="border-color: #ef4444;">
-            <div class="auth-logo" style="color: #ef4444;">🚫</div>
-            <h2>Доступ ограничен</h2>
-            <p>Вы не являетесь участником ни одной из зарегистрированных команд и не зарегистрированы как администратор.</p>
-            <p>Если доступ вам уже выдали, обновите проверку.</p>
+    <div id="denied-overlay" class="auth-overlay hidden" role="alertdialog" aria-modal="true"
+         aria-labelledby="denied-title" aria-describedby="denied-message denied-hint">
+        <div class="auth-card auth-card--danger" id="denied-card">
+            <div class="auth-logo" id="denied-icon">🚫</div>
+            <h2 id="denied-title" tabindex="-1">Доступ ограничен</h2>
+            <p id="denied-message">Вы не являетесь участником ни одной из зарегистрированных команд и не зарегистрированы как администратор.</p>
+            <p id="denied-hint">Если доступ вам уже выдали, обновите проверку.</p>
             <div class="auth-overlay-actions">
                 <button type="button" id="denied-btn-refresh" class="btn btn-primary">Обновить</button>
                 <button type="button" id="denied-btn-logout" class="btn btn-secondary">Выйти</button>

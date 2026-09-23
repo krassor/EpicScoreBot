@@ -369,7 +369,7 @@ func (h *GanttHandler) UpdateEpic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !isSuper {
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epic.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), epic.TeamID)
 		if err != nil || !isAdminOf {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -707,7 +707,7 @@ func (h *GanttHandler) UpdateRisk(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "epic not found")
 			return
 		}
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, riskEpic.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), riskEpic.TeamID)
 		if err != nil || !isAdminOf {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -832,7 +832,7 @@ func (h *GanttHandler) GetUsersList(w http.ResponseWriter, r *http.Request) {
 
 	var allowedTeams map[uuid.UUID]bool
 	if !isSuper {
-		teamIDs, err := h.repo.AdminTeamIDs(r.Context(), session.TelegramID)
+		teamIDs, err := h.repo.AdminTeamIDs(r.Context(), session.DirectoryKey())
 		if err != nil {
 			h.log.Error("failed to get admin team ids", slog.String("op", op), slog.String("error", err.Error()))
 			writeError(w, http.StatusInternalServerError, "failed to get users")
@@ -958,7 +958,7 @@ func (h *GanttHandler) GetUserDetails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !isSuper {
-		adminTeamIDs, err := h.repo.AdminTeamIDs(r.Context(), session.TelegramID)
+		adminTeamIDs, err := h.repo.AdminTeamIDs(r.Context(), session.DirectoryKey())
 		if err != nil {
 			h.log.Error("failed to get admin team ids", slog.String("op", op), slog.String("error", err.Error()))
 			writeError(w, http.StatusInternalServerError, "failed to load user relations")
@@ -1010,7 +1010,7 @@ func (h *GanttHandler) teamsInAdminScope(r *http.Request, session *middleware.Us
 	if isSuper || len(teamUUIDs) == 0 {
 		return true
 	}
-	adminTeamIDs, err := h.repo.AdminTeamIDs(r.Context(), session.TelegramID)
+	adminTeamIDs, err := h.repo.AdminTeamIDs(r.Context(), session.DirectoryKey())
 	if err != nil {
 		return false
 	}

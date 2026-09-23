@@ -114,6 +114,15 @@ a {
     filter: drop-shadow(0 0 10px var(--accent-glow));
 }
 
+/* Модификаторы #denied-overlay: причина отказа различается цветом рамки/иконки
+   (см. ux-brief в fix-webapp-user-identity) — «danger» для окончательного отказа,
+   «warning» для исправимого самим пользователем состояния (нет @username). */
+.auth-card--danger { border-color: var(--color-danger); }
+.auth-card--danger .auth-logo { color: var(--color-danger); }
+
+.auth-card--warning { border-color: var(--color-warning); }
+.auth-card--warning .auth-logo { color: var(--color-warning); }
+
 /* Заголовки внутри оверлеев (auth/denied/connection-error) — все понижены до h2,
    т.к. в документе допускается только один <h1> (web-ui-foundations). */
 .auth-card h2 {

@@ -34,7 +34,7 @@ func (h *GanttHandler) AdminSubmitEpicScore(w http.ResponseWriter, r *http.Reque
 	isSuper := isSuperAdminSession(session, &h.cfg)
 	if !isSuper {
 		// Грубый гейт: superadmin ИЛИ team-admin хотя бы одной команды.
-		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.DirectoryKey())
 		if err != nil || !isAdminAny {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -78,7 +78,7 @@ func (h *GanttHandler) AdminSubmitEpicScore(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !isSuper {
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), epicForScope.TeamID)
 		if err != nil || !isAdminOf {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -149,7 +149,7 @@ func (h *GanttHandler) AdminSubmitRiskScore(w http.ResponseWriter, r *http.Reque
 
 	isSuper := isSuperAdminSession(session, &h.cfg)
 	if !isSuper {
-		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.DirectoryKey())
 		if err != nil || !isAdminAny {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -199,7 +199,7 @@ func (h *GanttHandler) AdminSubmitRiskScore(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusNotFound, "epic not found")
 			return
 		}
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, riskEpic.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), riskEpic.TeamID)
 		if err != nil || !isAdminOf {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -268,7 +268,7 @@ func (h *GanttHandler) AdminOverrideFinalScore(w http.ResponseWriter, r *http.Re
 
 	isSuper := isSuperAdminSession(session, &h.cfg)
 	if !isSuper {
-		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.DirectoryKey())
 		if err != nil || !isAdminAny {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -305,7 +305,7 @@ func (h *GanttHandler) AdminOverrideFinalScore(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusNotFound, "epic not found")
 			return
 		}
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), epicForScope.TeamID)
 		if err != nil || !isAdminOf {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -364,7 +364,7 @@ func (h *GanttHandler) AdminOverrideRoleScore(w http.ResponseWriter, r *http.Req
 
 	isSuper := isSuperAdminSession(session, &h.cfg)
 	if !isSuper {
-		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.DirectoryKey())
 		if err != nil || !isAdminAny {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -408,7 +408,7 @@ func (h *GanttHandler) AdminOverrideRoleScore(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusNotFound, "epic not found")
 			return
 		}
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), epicForScope.TeamID)
 		if err != nil || !isAdminOf {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -462,7 +462,7 @@ func (h *GanttHandler) AdminSubmitExpertRoleScore(w http.ResponseWriter, r *http
 
 	isSuper := isSuperAdminSession(session, &h.cfg)
 	if !isSuper {
-		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.DirectoryKey())
 		if err != nil || !isAdminAny {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -506,7 +506,7 @@ func (h *GanttHandler) AdminSubmitExpertRoleScore(w http.ResponseWriter, r *http
 		return
 	}
 	if !isSuper {
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), epicForScope.TeamID)
 		if err != nil || !isAdminOf {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -570,7 +570,7 @@ func (h *GanttHandler) GetFinalScorePreview(w http.ResponseWriter, r *http.Reque
 
 	isSuper := isSuperAdminSession(session, &h.cfg)
 	if !isSuper {
-		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.TelegramID)
+		isAdminAny, err := h.repo.IsTeamAdminOfAny(r.Context(), session.DirectoryKey())
 		if err != nil || !isAdminAny {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -591,7 +591,7 @@ func (h *GanttHandler) GetFinalScorePreview(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusNotFound, "epic not found")
 			return
 		}
-		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.TelegramID, epicForScope.TeamID)
+		isAdminOf, err := h.repo.IsTeamAdminOf(r.Context(), session.DirectoryKey(), epicForScope.TeamID)
 		if err != nil || !isAdminOf {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
