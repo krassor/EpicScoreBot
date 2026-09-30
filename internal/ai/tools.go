@@ -15,39 +15,39 @@ import (
 // ─── Tool argument schemas ─────────────────────────────────────────────────
 
 type epicByNumberArgs struct {
-	EpicNumber string `json:"epic_number" jsonschema_description:"Epic number, e.g. EP-1"`
+	EpicNumber string `json:"epic_number" jsonschema_description:"Epic number exactly as stored, e.g. EP-1 (exact match)"`
 }
 
 type teamByNameArgs struct {
-	TeamName string `json:"team_name" jsonschema_description:"Team name"`
+	TeamName string `json:"team_name" jsonschema_description:"Team name, exact match; call list_teams if unsure of the spelling"`
 }
 
 type userByTelegramIDArgs struct {
-	TelegramUsername string `json:"telegram_username" jsonschema_description:"Telegram username without @"`
+	TelegramUsername string `json:"telegram_username" jsonschema_description:"Telegram username; case and a leading @ are ignored"`
 }
 
 type listEpicsArgs struct {
-	Status string `json:"status" jsonschema_description:"Filter by status: NEW, SCORING, SCORED, or empty for all"`
+	Status string `json:"status" jsonschema_description:"Epic status filter: NEW (created, not yet sent for scoring), SCORING (scoring in progress), SCORED (final score computed), or empty string for all"`
 }
 
 type teamEpicsArgs struct {
-	TeamName string `json:"team_name" jsonschema_description:"Team name"`
-	Status   string `json:"status" jsonschema_description:"Filter by status: NEW, SCORING, SCORED, or empty for all"`
+	TeamName string `json:"team_name" jsonschema_description:"Team name, exact match; call list_teams if unsure of the spelling"`
+	Status   string `json:"status" jsonschema_description:"Epic status filter: NEW (created, not yet sent for scoring), SCORING (scoring in progress), SCORED (final score computed), or empty string for all"`
 }
 
 type userEpicArgs struct {
-	TelegramUsername string `json:"telegram_username" jsonschema_description:"Telegram username without @"`
-	EpicNumber       string `json:"epic_number" jsonschema_description:"Epic number, e.g. EP-1"`
+	TelegramUsername string `json:"telegram_username" jsonschema_description:"Telegram username; case and a leading @ are ignored"`
+	EpicNumber       string `json:"epic_number" jsonschema_description:"Epic number exactly as stored, e.g. EP-1 (exact match)"`
 }
 
 type userTeamArgs struct {
-	TelegramUsername string `json:"telegram_username" jsonschema_description:"Telegram username without @"`
-	TeamName         string `json:"team_name" jsonschema_description:"Team name"`
+	TelegramUsername string `json:"telegram_username" jsonschema_description:"Telegram username; case and a leading @ are ignored"`
+	TeamName         string `json:"team_name" jsonschema_description:"Team name, exact match; call list_teams if unsure of the spelling"`
 }
 
 type teamRoleArgs struct {
-	TeamName string `json:"team_name" jsonschema_description:"Team name"`
-	RoleName string `json:"role_name" jsonschema_description:"Role name, e.g. Аналитик, Разработчик"`
+	TeamName string `json:"team_name" jsonschema_description:"Team name, exact match; call list_teams if unsure of the spelling"`
+	RoleName string `json:"role_name" jsonschema_description:"Role name, exact match, e.g. Аналитик; call list_roles if unsure of the spelling"`
 }
 
 type emptyArgs struct{}
@@ -63,88 +63,88 @@ func buildTools() ([]openrouter.Tool, error) {
 		// ── Existing tools ──
 		{
 			"get_epic_status",
-			"Get the scoring status of an epic: who has scored it and who hasn't",
+			"Effort-scoring progress of one epic: its status, final_score (null until SCORED), how many team members submitted an effort score, and the names of those who have not. Covers effort scores only — for risk scoring progress use get_users_who_scored_risk",
 			epicByNumberArgs{},
 		},
 		{
 			"list_epics",
-			"List all epics, optionally filtered by status (NEW, SCORING, SCORED)",
+			"All epics across all teams with number, name, status and final_score (omitted until SCORED). Use get_team_epics when the question is about one team",
 			listEpicsArgs{},
 		},
 		{
 			"get_team_members",
-			"Get all members of a team with their roles",
+			"Members of one team: full name, Telegram username and role. Use get_users_by_role_in_team to list only one role",
 			teamByNameArgs{},
 		},
 		{
 			"get_scoring_results",
-			"Get the final scoring results for an epic (weighted averages per role and final score)",
+			"Scoring result of one epic: final_score in person-days (effort adjusted by risk coefficients; null until SCORED) and weighted_avg effort per role. For each person's raw score use get_epic_individual_scores",
 			epicByNumberArgs{},
 		},
 		{
 			"get_user_info",
-			"Get information about a user: their role, teams, and weight",
+			"One user by Telegram username: full name, role, teams and weight (the multiplier applied to their scores in weighted averages)",
 			userByTelegramIDArgs{},
 		},
 		{
 			"list_risks",
-			"Get all risks for an epic with their statuses and scores",
+			"Risks of one epic: description, status, weighted_score (weighted average of probability × impact, range 1–16) and risk_coefficient (the multiplier it applies to the epic's effort); the last two are omitted until the risk is scored",
 			epicByNumberArgs{},
 		},
 		// ── New tools ──
 		{
 			"list_teams",
-			"List all teams",
+			"All teams with name and description. Use it to find the exact team name other tools expect",
 			emptyArgs{},
 		},
 		{
 			"list_users",
-			"List all registered users with their roles",
+			"All registered users with full name, Telegram username, role and weight",
 			emptyArgs{},
 		},
 		{
 			"list_roles",
-			"List all available roles in the system",
+			"All roles with name and description. Use it to find the exact role name other tools expect",
 			emptyArgs{},
 		},
 		{
 			"get_team_epics",
-			"Get epics for a specific team, optionally filtered by status (NEW, SCORING, SCORED)",
+			"Epics of one team with number, name, status and final_score (omitted until SCORED), optionally filtered by status",
 			teamEpicsArgs{},
 		},
 		{
 			"get_unscored_epics",
-			"Get epics that a specific user has not yet finished scoring (effort or risks) in a team",
+			"Epics of a team that the user has not finished scoring — either the effort score or at least one of the epic's risks is still missing. Returns epic number and name only",
 			userTeamArgs{},
 		},
 		{
 			"get_unscored_risks",
-			"Get risks for an epic that a user has not yet scored",
+			"Risks of one epic that the given user has not scored yet (descriptions only)",
 			userEpicArgs{},
 		},
 		{
 			"get_epic_individual_scores",
-			"Get individual epic scores from each user (not aggregated, per-person scores)",
+			"Each person's effort score for one epic in person-days (0–500), with their role; not aggregated and not weighted. For the aggregated result use get_scoring_results",
 			epicByNumberArgs{},
 		},
 		{
 			"get_risk_individual_scores",
-			"Get individual risk scores (probability and impact) from each user for all risks of an epic",
+			"Per-person risk scores for every risk of one epic: probability (1–4), impact (1–4) and their product score (1–16)",
 			epicByNumberArgs{},
 		},
 		{
 			"check_user_scored_epic",
-			"Check if a specific user has already scored the effort of an epic",
+			"Whether one user has submitted an effort score for one epic (true/false). Effort only — for risks use get_unscored_risks",
 			userEpicArgs{},
 		},
 		{
 			"get_users_who_scored_risk",
-			"Get users who have submitted risk scores for all risks of an epic",
+			"For each risk of one epic, the list of users who have scored it. Use it to see risk-scoring progress",
 			epicByNumberArgs{},
 		},
 		{
 			"get_users_by_role_in_team",
-			"Get members of a team filtered by a specific role",
+			"Members of one team who hold the given role: full name and Telegram username",
 			teamRoleArgs{},
 		},
 	}
@@ -168,6 +168,13 @@ func buildTools() ([]openrouter.Tool, error) {
 }
 
 // ─── Tool executor ─────────────────────────────────────────────────────────
+
+// normalizeUsername приводит username к ключу справочника users: нижний
+// регистр, без ведущего "@" и пробельных краёв — FindUserByTelegramID
+// нормализует только сторону БД, а модель передаёт username как в вопросе.
+func normalizeUsername(username string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(username), "@"))
+}
 
 // executeTool runs a single tool call and returns a JSON-serialisable result.
 func executeTool(ctx context.Context, repo Repository, name, argsJSON string) (string, error) {
@@ -312,7 +319,7 @@ func executeTool(ctx context.Context, repo Repository, name, argsJSON string) (s
 		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
 		}
-		user, err := repo.FindUserByTelegramID(ctx, args.TelegramUsername)
+		user, err := repo.FindUserByTelegramID(ctx, normalizeUsername(args.TelegramUsername))
 		if err != nil || user == nil {
 			return `{"error":"user not found"}`, nil
 		}
@@ -476,7 +483,7 @@ func executeTool(ctx context.Context, repo Repository, name, argsJSON string) (s
 		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
 		}
-		user, err := repo.FindUserByTelegramID(ctx, args.TelegramUsername)
+		user, err := repo.FindUserByTelegramID(ctx, normalizeUsername(args.TelegramUsername))
 		if err != nil || user == nil {
 			return `{"error":"user not found"}`, nil
 		}
@@ -509,7 +516,7 @@ func executeTool(ctx context.Context, repo Repository, name, argsJSON string) (s
 		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
 		}
-		user, err := repo.FindUserByTelegramID(ctx, args.TelegramUsername)
+		user, err := repo.FindUserByTelegramID(ctx, normalizeUsername(args.TelegramUsername))
 		if err != nil || user == nil {
 			return `{"error":"user not found"}`, nil
 		}
@@ -632,7 +639,7 @@ func executeTool(ctx context.Context, repo Repository, name, argsJSON string) (s
 		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
 		}
-		user, err := repo.FindUserByTelegramID(ctx, args.TelegramUsername)
+		user, err := repo.FindUserByTelegramID(ctx, normalizeUsername(args.TelegramUsername))
 		if err != nil || user == nil {
 			return `{"error":"user not found"}`, nil
 		}

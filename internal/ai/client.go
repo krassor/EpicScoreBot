@@ -13,21 +13,39 @@ import (
 
 const maxToolRounds = 5
 
-// telegramFormatSuffix is appended to the system prompt so the LLM produces
-// text compatible with Telegram's HTML parser.
+// Channel определяет, куда уйдёт ответ, и тем самым — допустимую разметку.
+type Channel int
+
+const (
+	// ChannelTelegram — сообщение Telegram с parse_mode=HTML.
+	ChannelTelegram Channel = iota
+	// ChannelWeb — AI-чат веб-интерфейса (web/gantt/js/ai-chat.js).
+	ChannelWeb
+)
+
+// telegramFormatSuffix дописывается к системному промпту для ответов в
+// Telegram: сообщение уходит с parse_mode=HTML, который понимает лишь
+// ограниченный набор тегов.
 const telegramFormatSuffix = `
 
-IMPORTANT — formatting rules (Telegram HTML):
-- Use <b>bold</b> for emphasis (NOT markdown **bold** or *bold*).
-- Use <i>italic</i> for secondary emphasis.
-- Use <code>code</code> for inline code.
-- NEVER use markdown tables (| ... |). Instead, format structured data as
-  bullet-point lists, one item per line, for example:
-  • Иванов Иван (@ivan) — Аналитик
-  • Петров Пётр (@petr) — Разработчик
-- Use blank lines to separate sections.
-- Do NOT use any markdown formatting at all. Only use HTML tags listed above.
-- Keep the answer concise and readable in a mobile Telegram chat.`
+Ответ отправляется в Telegram с parse_mode=HTML, поэтому оформляй его только HTML-тегами <b>, <i> и <code>. Markdown (**, *, #, таблицы с |) Telegram не рендерит — пользователь увидит служебные символы. Символы <, > и & вне тегов пиши как &lt;, &gt; и &amp;, иначе Telegram отклонит сообщение целиком.
+Структурированные данные выводи списком, по одному элементу на строку, например:
+• Иванов Иван (@ivan) — Аналитик
+• Петров Пётр (@petr) — Разработчик
+Разделяй смысловые блоки пустой строкой. Ответ читают в мобильном чате — пиши кратко.`
+
+// webFormatSuffix дописывается к системному промпту для веб-чата: он
+// экранирует HTML и поддерживает только **жирный** и переносы строк.
+const webFormatSuffix = `
+
+Ответ показывается в веб-чате, который отображает текст как есть: HTML-теги и прочий Markdown выводятся буквально. Для выделения используй только **жирный**, структурированные данные — списком по одному элементу на строку, смысловые блоки разделяй пустой строкой.`
+
+func formatSuffix(ch Channel) string {
+	if ch == ChannelWeb {
+		return webFormatSuffix
+	}
+	return telegramFormatSuffix
+}
 
 // Client wraps the OpenRouter API and provides Ask() for Q&A over project data.
 type Client struct {
@@ -66,15 +84,15 @@ func New(logger *slog.Logger, cfg *config.Config, repo Repository) *Client {
 }
 
 // Ask sends a question to the LLM, executing tool calls as needed, and returns
-// the final natural-language answer.
-func (c *Client) Ask(ctx context.Context, question string) (string, error) {
+// the final natural-language answer formatted for the given channel.
+func (c *Client) Ask(ctx context.Context, question string, ch Channel) (string, error) {
 	op := "ai.Ask()"
 	log := c.log.With(slog.String("op", op))
 
 	requestCtx, cancel := context.WithTimeout(ctx, c.cfg.BotConfig.AI.GetTimeout())
 	defer cancel()
 
-	systemPrompt := c.cfg.BotConfig.AI.SystemRolePrompt + telegramFormatSuffix
+	systemPrompt := c.cfg.BotConfig.AI.SystemRolePrompt + formatSuffix(ch)
 
 	messages := []openrouter.ChatCompletionMessage{
 		openrouter.SystemMessage(systemPrompt),
@@ -95,6 +113,16 @@ func (c *Client) Ask(ctx context.Context, question string) (string, error) {
 
 		if len(resp.Choices) == 0 {
 			return "", fmt.Errorf("empty response from LLM")
+		}
+
+		// Учёт расхода токенов — без него не измерить эффект правок промпта.
+		if resp.Usage != nil {
+			log.Info("AI usage",
+				slog.Int("round", round),
+				slog.Int("prompt_tokens", resp.Usage.PromptTokens),
+				slog.Int("completion_tokens", resp.Usage.CompletionTokens),
+				slog.Float64("cost", resp.Usage.Cost),
+			)
 		}
 
 		choice := resp.Choices[0]

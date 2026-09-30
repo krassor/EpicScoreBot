@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"EpicScoreBot/internal/ai"
 	"EpicScoreBot/internal/utils/logger/sl"
 
 	tgbot "github.com/go-telegram/bot"
@@ -46,7 +47,7 @@ func (epicBot *Bot) handleMention(ctx context.Context, update *models.Update) {
 		Action: models.ChatActionTyping,
 	})
 
-	answer, err := epicBot.ai.Ask(ctx, question)
+	answer, err := epicBot.ai.Ask(ctx, question, ai.ChannelTelegram)
 	if err != nil {
 		log.Error("AI ask failed", sl.Err(err))
 		return

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"EpicScoreBot/internal/ai"
 	"EpicScoreBot/internal/gantt"
 	"EpicScoreBot/internal/models/domain"
 	"EpicScoreBot/internal/report"
@@ -231,7 +232,7 @@ type PDFReportGenerator interface {
 
 // AIClient defines the contract for interacting with the AI assistant.
 type AIClient interface {
-	Ask(ctx context.Context, question string) (string, error)
+	Ask(ctx context.Context, question string, ch ai.Channel) (string, error)
 }
 
 // TelegramNotifier defines the contract for sending a direct Telegram message

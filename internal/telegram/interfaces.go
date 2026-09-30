@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 
+	"EpicScoreBot/internal/ai"
 	"EpicScoreBot/internal/report"
 
 	"github.com/google/uuid"
@@ -21,5 +22,5 @@ type ScoringService interface {
 
 // AIClient defines the AI question-answering contract.
 type AIClient interface {
-	Ask(ctx context.Context, question string) (string, error)
+	Ask(ctx context.Context, question string, ch ai.Channel) (string, error)
 }

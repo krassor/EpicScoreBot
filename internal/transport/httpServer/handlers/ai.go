@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+
+	"EpicScoreBot/internal/ai"
 )
 
 // AskAI handles requests to ask a question to the AI assistant.
@@ -26,7 +28,7 @@ func (h *GanttHandler) AskAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	answer, err := h.ai.Ask(r.Context(), req.Question)
+	answer, err := h.ai.Ask(r.Context(), req.Question, ai.ChannelWeb)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get answer from AI: "+err.Error())
 		return
