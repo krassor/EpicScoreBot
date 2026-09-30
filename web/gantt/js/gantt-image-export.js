@@ -73,6 +73,7 @@ const TOKEN_NAMES = [
     '--color-default', '--color-default-progress',
     '--color-success', '--color-warning', '--color-danger',
     '--text-muted', '--text-primary', '--text-secondary',
+    '--gantt-label-weight', '--gantt-label-weight-epic', '--gantt-label-outline-width',
 ];
 
 // Состав легенды продублирован из index.html (`.gantt-legend`,
@@ -430,9 +431,9 @@ ${rootVars}
    gantt-renderer.js, cloneNode(true) копирует их из живого DOM вместе с
    остальным SVG — эти правила лишь задают тот же вид, если по какой-то
    причине инлайн-стили на скопированных узлах не применятся. */
-.gantt .bar-label { fill: #ffffff !important; font-weight: 600; }
-.gantt .bar-label.big { fill: var(--text-primary) !important; font-weight: 600; }
-.gantt .bar-label-outline { fill: none; stroke: var(--bg-primary); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+.gantt .bar-label { fill: #ffffff !important; font-weight: var(--gantt-label-weight); }
+.gantt .bar-label.big { fill: var(--text-primary) !important; font-weight: var(--gantt-label-weight); }
+.gantt .bar-label-outline { fill: none; stroke: var(--bg-primary); stroke-width: var(--gantt-label-outline-width); stroke-linejoin: round; pointer-events: none; }
 
 /* ── gantt.css: Handles for dragging dates ── */
 .gantt .handle-group .handle { fill: rgba(255, 255, 255, 0.35); }
@@ -440,11 +441,11 @@ ${rootVars}
 /* ── gantt.css: Custom Task Colors based on Role ── */
 .gantt .gantt-epic .bar { fill: var(--color-epic); fill-opacity: 1; stroke: none; rx: 6px; }
 .gantt .gantt-epic .bar-progress { fill: var(--color-epic-progress); rx: 6px; }
-.gantt .gantt-epic .bar-label { font-weight: 700; font-size: 13px; }
+.gantt .gantt-epic .bar-label { font-weight: var(--gantt-label-weight-epic); font-size: 13px; }
 
 .gantt .gantt-story .bar { fill: var(--color-story); fill-opacity: 0.45; stroke: var(--color-story); stroke-width: 1.5px; rx: 4px; }
 .gantt .gantt-story .bar-progress { fill: var(--color-story-progress); rx: 4px; }
-.gantt .gantt-story .bar-label { font-weight: 600; font-size: 12px; }
+.gantt .gantt-story .bar-label { font-weight: var(--gantt-label-weight); font-size: 12px; }
 
 .gantt .gantt-analyst .bar { fill: var(--color-role-analyst); }
 .gantt .gantt-analyst .bar-progress { fill: var(--color-role-analyst-progress); }

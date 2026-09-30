@@ -122,6 +122,12 @@
     --g-actions-background: var(--bg-tertiary);
     --g-popup-actions: var(--bg-card);
     --g-bar-border: transparent;
+
+    /* thinner-gantt-labels: единый источник начертания подписей и толщины
+       их контура — для экрана и для картинки экспорта (gantt-image-export.js) */
+    --gantt-label-weight: 400;
+    --gantt-label-weight-epic: 500;
+    --gantt-label-outline-width: 2px;
 }
 
 /* Text Label Contrast Styles */
@@ -145,21 +151,24 @@
    независимо от поддержки `paint-order`. Заливка дополнительно дублируется
    инлайн-стилем на самом узле (см. gantt-renderer.js) — второй канал на
    случай, если сама заливка `fill: #ffffff` по какой-то причине не
-   применится. */
+   применится. Начертание и толщина контура вынесены в токены
+   `--gantt-label-*` (заявка thinner-gantt-labels) — те же токены читает
+   `buildStyleText()` в gantt-image-export.js, чтобы экран и картинка не
+   расходились. */
 .gantt .bar-label {
     fill: #ffffff !important;
-    font-weight: 600;
+    font-weight: var(--gantt-label-weight);
 }
 
 .gantt .bar-label.big {
     fill: var(--text-primary) !important;
-    font-weight: 600;
+    font-weight: var(--gantt-label-weight);
 }
 
 .gantt .bar-label-outline {
     fill: none;
     stroke: var(--bg-primary);
-    stroke-width: 3px;
+    stroke-width: var(--gantt-label-outline-width);
     stroke-linejoin: round;
     pointer-events: none;
 }
@@ -181,7 +190,7 @@
     rx: 6px;
 }
 .gantt .gantt-epic .bar-label {
-    font-weight: 700;
+    font-weight: var(--gantt-label-weight-epic);
     font-size: 13px;
 }
 
@@ -197,7 +206,7 @@
     rx: 4px;
 }
 .gantt .gantt-story .bar-label {
-    font-weight: 600;
+    font-weight: var(--gantt-label-weight);
     font-size: 12px;
 }
 
